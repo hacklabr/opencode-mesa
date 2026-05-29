@@ -19,6 +19,7 @@ import {
   retomarDiscussaoTool,
   cancelarDiscussaoTool,
 } from "./tools/discussion-tools"
+import { buildSystemPrompt } from "./utils/prompts"
 
 export const mesaDeDiscussao: Plugin = async () => {
   return {
@@ -42,6 +43,21 @@ export const mesaDeDiscussao: Plugin = async () => {
       pausar_discussao: pausarDiscussaoTool,
       retomar_discussao: retomarDiscussaoTool,
       cancelar_discussao: cancelarDiscussaoTool,
+    },
+
+    "experimental.chat.system.transform": async (_input, output) => {
+      // note: the system transform hook does not receive `agent` in input,
+      // so we inject a general mesa-de-discussao context that applies
+      // when mesa tools are available in the session
+      const mesaContext = [
+        "<mesa-de-discussao>",
+        "You have access to the Mesa de Discussao plugin tools for structured discussion with AI specialists.",
+        "If the user asks to start a briefing, create a team, or discuss a project, guide them to use the appropriate agent (briefing-writer or gestor).",
+        "Available agents: briefing-writer (for discovery and briefing creation), gestor (for team orchestration and discussion).",
+        "</mesa-de-discussao>",
+      ].join("\n")
+
+      output.system.push(mesaContext)
     },
   }
 }
