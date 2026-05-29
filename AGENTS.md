@@ -23,7 +23,9 @@
 
 ## Código
 
-- Idioma: PT-BR para docs/comunicacao, EN para código (variáveis, funções, tipos, comentários).
+- Idioma: PT-BR para comunicacao com o usuario, EN para código (variáveis, funções, tipos, comentários).
+- Documentação técnica: toda em EN, na pasta `docs/`.
+- Interface (strings de tool, mensagens de sistema, outputs): em EN, internacionalizável (i18n). Nunca hardcoded em PT-BR.
 - Nenhum comentario desnecessário. Código deve ser auto-explicativo. Comente APENAS o "porquê" quando não óbvio.
 - Tipos fortes: `strict: true` no tsconfig. Nenhum `any` sem justificativa explícita em comentário.
 - Seguir padrões do ecossistema OpenCode: plugins como funcao que retorna hooks, tools via `tool()` helper.
