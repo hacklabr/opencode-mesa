@@ -26,7 +26,7 @@ else
 fi
 
 info "Installing dependencies"
-npm install --prefix "$INSTALL_DIR" --production
+npm install --prefix "$INSTALL_DIR"
 
 info "Building plugin"
 npm run build --prefix "$INSTALL_DIR"
