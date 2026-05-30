@@ -51,7 +51,9 @@ if [ -f "$CONFIG_FILE" ]; then
   else
     node -e "
       const fs = require('fs');
-      const cfg = JSON.parse(fs.readFileSync('$CONFIG_FILE', 'utf-8'));
+      const raw = fs.readFileSync('$CONFIG_FILE', 'utf-8');
+      const json = raw.replace(/,\s*([}\]])/g, '\$1');
+      const cfg = JSON.parse(json);
       cfg.plugin = cfg.plugin || [];
       const path = '$PLUGIN_PATH';
       if (!cfg.plugin.includes(path)) { cfg.plugin.push(path); }
