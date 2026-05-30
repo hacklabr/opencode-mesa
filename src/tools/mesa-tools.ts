@@ -4,12 +4,12 @@ import { PLUGIN_VERSION } from "../config"
 import { loadState } from "../state"
 
 export const mesaStatusTool = tool({
-  description: "Returns the current status and version of the Mesa de Discussao plugin.",
+  description: "Returns the current status and version of the Mesa plugin.",
   args: {},
   async execute(_args, context) {
     const state = await loadState(context.directory)
     return {
-      title: "Mesa de Discussao Status",
+      title: "Mesa Status",
       output: JSON.stringify(
         {
           version: PLUGIN_VERSION,

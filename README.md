@@ -1,4 +1,4 @@
-# Mesa de Discussao — OpenCode Plugin
+# Mesa — OpenCode Plugin
 
 Structured discussion tables with specialized AI agents for OpenCode.
 
@@ -27,7 +27,7 @@ This plugin enables a team of AI specialists to discuss, analyze, and produce te
 
 ```json
 {
-  "plugin": ["opencode-mesa-de-discussao"]
+  "plugin": ["opencode-mesa"]
 }
 ```
 
@@ -122,10 +122,10 @@ The plugin includes 144+ specialists from [agency-agents](https://github.com/msi
 
 ## State Persistence
 
-All discussion state is stored in `mesa-de-discussao/` within the workspace:
+All discussion state is stored in `.mesa/` within the workspace:
 
 ```
-mesa-de-discussao/
+.mesa/
 ├── state.json              # Current discussion state
 ├── briefing-atual.md       # Active briefing
 ├── briefings/              # Saved briefings

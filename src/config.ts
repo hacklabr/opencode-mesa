@@ -1,6 +1,6 @@
 export const PLUGIN_VERSION = "0.1.0"
 
-export const PLUGIN_STATE_DIR = "mesa-de-discussao"
+export const PLUGIN_STATE_DIR = ".mesa"
 
 export const DEFAULT_MAX_TURNS = 2
 

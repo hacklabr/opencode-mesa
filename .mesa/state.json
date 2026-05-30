@@ -1,0 +1,24 @@
+{
+  "workspaceId": "/home/rafael/_devel/opencode-tabula",
+  "currentPhase": "PLANNING",
+  "briefing": {
+    "path": "/home/rafael/_devel/opencode-tabula/mesa-de-discussao/briefings/briefing-mesa-discussao-visao-global-ux.md",
+    "status": "draft",
+    "slug": "mesa-discussao-visao-global-ux"
+  },
+  "team": [],
+  "discussion": {
+    "topic": "",
+    "currentTurn": 0,
+    "maxTurns": 2,
+    "analyses": [],
+    "votes": [],
+    "consensusRound": 0
+  },
+  "specification": {
+    "path": null,
+    "status": "pending"
+  },
+  "createdAt": "2026-05-29T23:48:24.044Z",
+  "updatedAt": "2026-05-29T23:48:24.045Z"
+}

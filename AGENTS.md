@@ -1,4 +1,4 @@
-# Plugin Mesa de Discussao (opencode-tabula)
+# Plugin Mesa (opencode-tabula)
 
 ## Stack
 
@@ -35,7 +35,7 @@
 
 - Arquivos de tool: um por domínio (`briefing-tools.ts`, `gestor-tools.ts`, `discussion-tools.ts`).
 - System prompts de agentes: arquivos `.md` em `src/agents/`.
-- Estado persistido em JSON simples dentro do workspace (`mesa-de-discussao/`).
+- Estado persistido em JSON simples dentro do workspace (`.mesa/`).
 - Nenhum `console.log` em produção. Usar mecanismo de logging do plugin quando disponível.
 
 ## Regra Crítica de Edição

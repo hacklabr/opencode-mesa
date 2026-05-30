@@ -1,5 +1,5 @@
 {
-  "name": "opencode-mesa-de-discussao",
+  "name": "opencode-mesa",
   "version": "0.1.0",
   "description": "OpenCode plugin for structured discussion tables with specialized AI agents",
   "type": "module",

@@ -21,7 +21,7 @@ import {
 } from "./tools/discussion-tools"
 import { buildSystemPrompt } from "./utils/prompts"
 
-export const mesaDeDiscussao: Plugin = async () => {
+export const mesa: Plugin = async () => {
   return {
     tool: {
       mesa_status: mesaStatusTool,
@@ -47,10 +47,10 @@ export const mesaDeDiscussao: Plugin = async () => {
 
     "experimental.chat.system.transform": async (_input, output) => {
       const mesaContext = [
-        "<mesa-de-discussao>",
+        "<mesa-plugin>",
         "## MANDATORY RULE — DO NOT VIOLATE",
         "",
-        "You have access to the Mesa de Discussao plugin — a structured workflow for producing",
+        "You have access to the Mesa plugin — a structured workflow for producing",
         "high-quality specifications through multi-specialist AI discussion.",
         "",
         "### WHEN the user wants ANY of the following, you MUST use the Mesa workflow:",
@@ -61,9 +61,9 @@ export const mesaDeDiscussao: Plugin = async () => {
         "- Any request that involves structured analysis before implementation",
         "",
         "### WHAT you MUST do:",
-        "1. Tell the user: \"This requires the Mesa de Discussao workflow.\"",
+        "1. Tell the user: \"This requires the Mesa workflow.\"",
         "2. Suggest the user switch to the `briefing-writer` agent by typing: `/agent briefing-writer`",
-        "   - Or use the command: `/mesa` to start the workflow automatically.",
+        "   - Or use the command: `/briefing` to start the workflow automatically.",
         "3. NEVER attempt to produce specifications, improvement plans, or analysis documents",
         "   by yourself. ALWAYS delegate to the Mesa workflow.",
         "",
@@ -78,8 +78,8 @@ export const mesaDeDiscussao: Plugin = async () => {
         "- `briefing-writer`: Conducts structured discovery to create professional briefings.",
         "- `gestor`: Orchestrates specialist teams, manages discussion rounds and specifications.",
         "",
-        "To start: user types `/agent briefing-writer` or `/mesa`.",
-        "</mesa-de-discussao>",
+        "To start: user types `/agent briefing-writer` or `/briefing`.",
+        "</mesa-plugin>",
       ].join("\n")
 
       output.system.push(mesaContext)
@@ -99,11 +99,11 @@ export const mesaDeDiscussao: Plugin = async () => {
       if (mesaTools.includes(input.toolID)) {
         output.description = output.description.replace(
           "$",
-          "\n\nIMPORTANT: This tool is part of the Mesa de Discussao structured workflow. It should be used by the `gestor` or `briefing-writer` agents, not by the default agent directly."
+          "\n\nIMPORTANT: This tool is part of the Mesa structured workflow. It should be used by the `gestor` or `briefing-writer` agents, not by the default agent directly."
         )
       }
     },
   }
 }
 
-export default mesaDeDiscussao
+export default mesa

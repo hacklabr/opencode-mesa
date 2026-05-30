@@ -6,7 +6,7 @@ import { PLUGIN_STATE_DIR } from "../config"
 
 export const criarBriefingTool = tool({
   description:
-    "Creates and saves a new briefing document in the workspace. The briefing is stored in the mesa-de-discussao directory.",
+    "Creates and saves a new briefing document in the workspace. The briefing is stored in the .mesa directory.",
   args: {
     slug: tool.schema
       .string()
