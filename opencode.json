@@ -6,11 +6,11 @@
   "agent": {
     "briefing-writer": {
       "description": "Briefing Writer - Conducts structured discovery sessions to produce professional briefings",
-      "model": "kimi-k2.6"
+      "prompt": "{file:./src/agents/briefing-writer.md}"
     },
     "gestor": {
       "description": "Gestor - Orchestrates specialist teams for structured discussion and specification",
-      "model": "kimi-k2.6"
+      "prompt": "{file:./src/agents/gestor.md}"
     }
   }
 }

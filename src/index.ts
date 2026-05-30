@@ -19,7 +19,6 @@ import {
   retomarDiscussaoTool,
   cancelarDiscussaoTool,
 } from "./tools/discussion-tools"
-import { buildSystemPrompt } from "./utils/prompts"
 
 export const mesa: Plugin = async () => {
   return {
