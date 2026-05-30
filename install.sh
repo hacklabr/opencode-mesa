@@ -19,7 +19,9 @@ command -v npm >/dev/null 2>&1  || error "npm is required"
 
 if [ -d "$INSTALL_DIR" ]; then
   info "Updating existing installation at $INSTALL_DIR"
-  git -C "$INSTALL_DIR" pull --ff-only || error "Failed to update. Remove $INSTALL_DIR and retry."
+  git -C "$INSTALL_DIR" fetch --unshallow 2>/dev/null || true
+  git -C "$INSTALL_DIR" fetch origin
+  git -C "$INSTALL_DIR" reset --hard origin/main
 else
   info "Cloning Mesa into $INSTALL_DIR"
   git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
