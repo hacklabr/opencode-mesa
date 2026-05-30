@@ -49,22 +49,7 @@ if [ -f "$CONFIG_FILE" ]; then
   if grep -q "opencode-mesa" "$CONFIG_FILE" 2>/dev/null; then
     info "Plugin already configured in $CONFIG_FILE"
   else
-    TMPSCRIPT="$(mktemp /tmp/mesa-config-XXXXXX.js)"
-    cat > "$TMPSCRIPT" <<'SCRIPT'
-      const fs = require('fs');
-      const file = process.argv[1];
-      const pluginPath = process.argv[2];
-      const raw = fs.readFileSync(file, 'utf-8');
-      let json = raw;
-      let prev;
-      do { prev = json; json = json.replace(/,\s*([}\]])/g, '$1'); } while (json !== prev);
-      const cfg = JSON.parse(json);
-      cfg.plugin = cfg.plugin || [];
-      if (!cfg.plugin.includes(pluginPath)) { cfg.plugin.push(pluginPath); }
-      fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
-SCRIPT
-    node "$TMPSCRIPT" "$CONFIG_FILE" "$PLUGIN_PATH"
-    rm -f "$TMPSCRIPT"
+    node "$INSTALL_DIR/src/setup/add-plugin.cjs" "$CONFIG_FILE" "$PLUGIN_PATH"
     info "Plugin added to $CONFIG_FILE"
   fi
 else
