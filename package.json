@@ -16,7 +16,8 @@
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "setup:agents": "node src/setup/generate-agents.js"
   },
   "dependencies": {
     "@opencode-ai/plugin": "latest",

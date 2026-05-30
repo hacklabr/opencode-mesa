@@ -2,7 +2,6 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState } from "../state"
 import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry } from "../config"
 import { canTransition } from "./gestor-tools"
-import { getPersonaById } from "./catalog-tools"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { PLUGIN_STATE_DIR } from "../config"
@@ -64,28 +63,39 @@ export const abrirRodadaAnaliseTool = tool({
 
       await saveState(context.directory, state)
 
-      const participantsWithPrompts = await Promise.all(
-        args.participants.map(async (id) => {
-          const name = state.team.find((t) => t.personaId === id)?.name ?? id
-          const persona = await getPersonaById(id)
-          return { id, name, systemPrompt: persona?.systemPrompt ?? "" }
-        })
-      )
+      const participantsWithNames = args.participants.map((id) => {
+        const name = state.team.find((t) => t.personaId === id)?.name ?? id
+        return { id, name }
+      })
 
-      const participantList = participantsWithPrompts
-        .map((p) => `  ${p.name} (${p.id})`)
+      const participantList = participantsWithNames
+        .map((p) => `  ${p.name} (subagent_type="${p.id}")`)
         .join("\n")
 
-      const personaContexts = participantsWithPrompts
-        .map((p) => {
-          if (!p.systemPrompt) return `### ${p.name}\n(No persona context available)`
-          return `### ${p.name}\n${p.systemPrompt}`
-        })
-        .join("\n\n---\n\n")
+      const taskInstructions = participantsWithNames
+        .map(
+          (p, i) =>
+            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="${p.id}", prompt="Analyze the following briefing for ${args.topic}...", description="${p.name} analysis")\``
+        )
+        .join("\n\n")
 
       return {
         title: "Analysis Round Opened",
-        output: `Topic: ${args.topic}\n\nParticipants (in order):\n${participantList}\n\nTurns: ${state.discussion.maxTurns}\nPhase: ANALYSIS\n\nEach specialist should analyze the briefing in order, adopting their respective persona context below.\n\n## Persona Contexts\n\n${personaContexts}\n\nUse the output to guide the discussion.`,
+        output: [
+          `Topic: ${args.topic}`,
+          ``,
+          `Participants (in order):`,
+          participantList,
+          ``,
+          `Turns: ${state.discussion.maxTurns} | Phase: ANALYSIS`,
+          ``,
+          `## How to run this round`,
+          ``,
+          `For each specialist, invoke them via the **task** tool with their persona ID as subagent_type.`,
+          `After each specialist returns their analysis, call \`registrar_analise\` to record it.`,
+          ``,
+          taskInstructions,
+        ].join("\n"),
       }
     } catch (err) {
       return `Error opening analysis round: ${err instanceof Error ? err.message : String(err)}`

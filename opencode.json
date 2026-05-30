@@ -2,15 +2,5 @@
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
     "file:///home/rafael/_devel/opencode-tabula/dist/index.js"
-  ],
-  "agent": {
-    "briefing-writer": {
-      "description": "Briefing Writer - Conducts structured discovery sessions to produce professional briefings",
-      "prompt": "{file:./src/agents/briefing-writer.md}"
-    },
-    "gestor": {
-      "description": "Gestor - Orchestrates specialist teams for structured discussion and specification",
-      "prompt": "{file:./src/agents/gestor.md}"
-    }
-  }
+  ]
 }

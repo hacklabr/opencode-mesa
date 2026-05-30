@@ -1,7 +1,6 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState } from "../state"
 import type { DiscussionPhase, SpecialistEntry, SpecialistStatus } from "../config"
-import { getPersonaById } from "./catalog-tools"
 
 const VALID_TRANSITIONS: Record<DiscussionPhase, DiscussionPhase[]> = {
   PLANNING: ["ANALYSIS", "PAUSED", "CANCELLED"],
@@ -132,9 +131,9 @@ export const convocarEquipeTool = tool({
 
 export const delegarTarefaTool = tool({
   description:
-    "Delegates a specific task directly to a specialist without opening a formal discussion round.",
+    "Defines a task for a specialist. Records the delegation in Mesa state and returns instructions to invoke the specialist via the task tool.",
   args: {
-    personaId: tool.schema.string().describe("The specialist persona ID to delegate to"),
+    personaId: tool.schema.string().describe("The specialist persona ID (also the subagent_type for the task tool)"),
     task: tool.schema.string().describe("Clear description of the task to delegate"),
     context_info: tool.schema
       .string()
@@ -150,30 +149,28 @@ export const delegarTarefaTool = tool({
         return `Error: Specialist "${args.personaId}" not found in the current team. Summon them first.`
       }
 
-      const persona = await getPersonaById(args.personaId)
-      const systemPrompt = persona?.systemPrompt ?? ""
-
-      const message = [
-        `## Task Delegation`,
-        ``,
-        `**To**: ${specialist.name} (${specialist.personaId})`,
-        `**From**: Gestor`,
-        ``,
-        `### Persona Context`,
-        `You are now acting as **${specialist.name}**.`,
-        systemPrompt ? `\n${systemPrompt}` : "",
+      const promptParts = [
+        `## Task from Gestor`,
         ``,
         `### Task`,
         args.task,
       ]
 
       if (args.context_info) {
-        message.push(``, `### Context`, args.context_info)
+        promptParts.push(``, `### Context`, args.context_info)
       }
 
       return {
-        title: `Task delegated to ${specialist.name}`,
-        output: message.join("\n"),
+        title: `Task ready for ${specialist.name}`,
+        output: [
+          `Task defined for **${specialist.name}** (${args.personaId}).`,
+          ``,
+          `Now invoke the specialist using the **task** tool:`,
+          `\`task(subagent_type="${args.personaId}", prompt="...", description="...")\``,
+          ``,
+          `### Prompt content for the specialist:`,
+          promptParts.join("\n"),
+        ].join("\n"),
         metadata: { personaId: args.personaId },
       }
     } catch (err) {
