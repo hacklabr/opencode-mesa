@@ -37,9 +37,12 @@ node "$INSTALL_DIR/src/setup/generate-agents.js"
 
 PLUGIN_PATH="file://$INSTALL_DIR/dist/index.js"
 
+CONFIG_DIR="$HOME/.config/opencode"
+CONFIG_FILE="$CONFIG_DIR/opencode.json"
+
 info ""
-info "Configuring plugin..."
-CONFIG_FILE="opencode.json"
+info "Configuring plugin globally..."
+mkdir -p "$CONFIG_DIR"
 
 if [ -f "$CONFIG_FILE" ]; then
   if grep -q "opencode-mesa" "$CONFIG_FILE" 2>/dev/null; then
