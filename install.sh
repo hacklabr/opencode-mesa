@@ -33,7 +33,8 @@ info "Building plugin"
 npm run build --prefix "$INSTALL_DIR"
 
 info "Generating specialist agents (2 primary + 173 subagents)"
-node "$INSTALL_DIR/src/setup/generate-agents.js"
+GLOBAL_AGENTS_DIR="$HOME/.config/opencode/agents"
+node "$INSTALL_DIR/src/setup/generate-agents.js" "$GLOBAL_AGENTS_DIR"
 
 PLUGIN_PATH="file://$INSTALL_DIR/dist/index.js"
 
@@ -69,8 +70,12 @@ EOCFG
 fi
 
 info ""
-info "Restart opencode to load the agents. Switch with Tab or /agent."
+info "Done. Restart opencode to load the plugin."
+info ""
+info "Agents are generated globally in $GLOBAL_AGENTS_DIR"
+info "To also generate agents in a specific project, run:"
+info "  node $INSTALL_DIR/src/setup/generate-agents.js /path/to/project/.opencode/agents"
+info ""
+info "Switch agents with Tab or /agent:"
 info "  /agent briefing-writer  — start a discovery session"
 info "  /agent gestor           — orchestrate a specialist team"
-info ""
-info "Done."
