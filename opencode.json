@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "briefing-writer": {
+      "description": "Briefing Writer - Conducts structured discovery sessions to produce professional briefings",
+      "model": "kimi-k2.6"
+    },
+    "gestor": {
+      "description": "Gestor - Orchestrates specialist teams for structured discussion and specification",
+      "model": "kimi-k2.6"
+    }
+  },
+  "command": {
+    "mesa": {
+      "description": "Start a structured discussion table with AI specialists",
+      "prompt": "Switch to the briefing-writer agent. You are now the Briefing Writer. Introduce yourself and begin the structured discovery process. Ask the user about their project scope, goals, and what they want to achieve. Use the criar_briefing tool when ready to save the briefing. Follow the methodology in your system prompt.",
+      "agent": "briefing-writer"
+    }
+  }
+}
