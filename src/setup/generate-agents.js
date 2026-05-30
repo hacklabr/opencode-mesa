@@ -95,6 +95,39 @@ async function writePrimaryAgents() {
   return generated
 }
 
+async function writeSubagents(personas) {
+  const generated = []
+  for (const persona of personas) {
+    const description = persona.emoji
+      ? `${persona.emoji} ${persona.description}`
+      : persona.description
+
+    const frontmatter = [
+      "---",
+      `description: ${description}`,
+      "mode: subagent",
+      "hidden: true",
+      "permission:",
+      "  edit: deny",
+      "  bash: deny",
+      "  write: deny",
+      "  task:",
+      "    \"*\": deny",
+      "---",
+      "",
+    ].join("\n")
+
+    const body =
+      persona.systemPrompt || `You are ${persona.name}. ${persona.description}`
+
+    const content = frontmatter + body + "\n"
+    const outPath = join(outputDir, `${persona.id}.md`)
+    await writeFile(outPath, content, "utf-8")
+    generated.push(persona.id)
+  }
+  return generated
+}
+
 async function main() {
   await mkdir(outputDir, { recursive: true })
 
@@ -109,8 +142,8 @@ async function main() {
   console.log(`Primary agents: ${primaries.join(", ")}`)
 
   const personas = await loadCatalogPersonas()
-  console.log(`Catalog loaded: ${personas.length} specialist personas available via list_specialists tool`)
-  console.log(`(Specialists are NOT registered as agents — gestor delegates via task tool with inline prompts)`)
+  const subagents = await writeSubagents(personas)
+  console.log(`Subagents generated: ${subagents.length} (hidden, mode: subagent)`)
 
   console.log(`\nOutput: ${outputDir}`)
   console.log("Restart opencode to load the new agents.")

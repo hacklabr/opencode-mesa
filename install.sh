@@ -34,7 +34,7 @@ npm install --prefix "$INSTALL_DIR"
 info "Building plugin"
 npm run build --prefix "$INSTALL_DIR"
 
-info "Generating specialist agents (2 primary + 173 subagents)"
+info "Generating agents (2 primary + 173 hidden subagents)"
 GLOBAL_AGENTS_DIR="$HOME/.config/opencode/agents"
 node "$INSTALL_DIR/src/setup/generate-agents.js" "$GLOBAL_AGENTS_DIR"
 
