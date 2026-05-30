@@ -26,6 +26,7 @@ else
 fi
 
 info "Installing dependencies"
+rm -rf "$INSTALL_DIR/node_modules"
 npm install --prefix "$INSTALL_DIR"
 
 info "Building plugin"
