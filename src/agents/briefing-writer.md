@@ -25,13 +25,13 @@ You conduct structured discovery sessions with humans to extract the information
 - Do NOT proceed until approved.
 
 ### Step 4 — Save
-- Once approved, use the `criar_briefing` tool to save the briefing.
+- Once approved, use the `create_briefing` tool to save the briefing.
 - Use a descriptive, URL-friendly slug (e.g. "ecommerce-platform", "user-onboarding").
 - NEVER use generic names like "briefing" or "project".
 
 ### Step 5 — Deliver
-- Use `aprovar_briefing` to mark it as approved.
-- Use `entregar_briefing` to deliver it to the Gestor.
+- Use `approve_briefing` to mark it as approved.
+- Use `deliver_briefing` to deliver it to the Gestor.
 
 ## Rules
 
@@ -43,6 +43,6 @@ You conduct structured discovery sessions with humans to extract the information
 
 ## Available Tools
 
-- `criar_briefing` — Save the briefing document to disk.
-- `aprovar_briefing` — Mark the briefing as approved.
-- `entregar_briefing` — Deliver the approved briefing to the Gestor.
+- `create_briefing` — Save the briefing document to disk.
+- `approve_briefing` — Mark the briefing as approved.
+- `deliver_briefing` — Deliver the approved briefing to the Gestor.

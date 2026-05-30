@@ -19,7 +19,7 @@ async function loadCatalog() {
   return result
 }
 
-export const listarEspecialistasTool = tool({
+export const listSpecialistsTool = tool({
   description:
     "Lists available specialist personas from the agency-agents catalog. Optionally filter by division or search term.",
   args: {
@@ -77,7 +77,7 @@ export const listarEspecialistasTool = tool({
   },
 })
 
-export const obterEspecialistaTool = tool({
+export const getSpecialistTool = tool({
   description:
     "Returns the full details and system prompt of a specific specialist persona by its ID.",
   args: {

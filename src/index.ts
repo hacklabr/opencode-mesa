@@ -1,47 +1,47 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { mesaStatusTool } from "./tools/mesa-tools"
-import { listarEspecialistasTool, obterEspecialistaTool } from "./tools/catalog-tools"
-import { criarBriefingTool, aprovarBriefingTool, entregarBriefingTool } from "./tools/briefing-tools"
+import { listSpecialistsTool, getSpecialistTool } from "./tools/catalog-tools"
+import { createBriefingTool, approveBriefingTool, deliverBriefingTool } from "./tools/briefing-tools"
 import {
-  analisarBriefingTool,
-  proporEquipeTool,
-  convocarEquipeTool,
-  delegarTarefaTool,
-  definirFasesTool,
+  analyzeBriefingTool,
+  proposeTeamTool,
+  summonTeamTool,
+  delegateTaskTool,
+  definePhasesTool,
 } from "./tools/gestor-tools"
 import {
-  abrirRodadaAnaliseTool,
-  registrarAnaliseTool,
-  solicitarConsensoTool,
-  gerarEspecificacaoTool,
-  aprovarEspecificacaoTool,
-  pausarDiscussaoTool,
-  retomarDiscussaoTool,
-  cancelarDiscussaoTool,
+  openAnalysisRoundTool,
+  registerAnalysisTool,
+  requestConsensusTool,
+  generateSpecificationTool,
+  approveSpecificationTool,
+  pauseDiscussionTool,
+  resumeDiscussionTool,
+  cancelDiscussionTool,
 } from "./tools/discussion-tools"
 
 export const mesa: Plugin = async () => {
   return {
     tool: {
       mesa_status: mesaStatusTool,
-      listar_especialistas: listarEspecialistasTool,
-      obter_especialista: obterEspecialistaTool,
-      criar_briefing: criarBriefingTool,
-      aprovar_briefing: aprovarBriefingTool,
-      entregar_briefing: entregarBriefingTool,
-      analisar_briefing: analisarBriefingTool,
-      propor_equipe: proporEquipeTool,
-      convocar_equipe: convocarEquipeTool,
-      delegar_tarefa: delegarTarefaTool,
-      definir_fases: definirFasesTool,
-      abrir_rodada_analise: abrirRodadaAnaliseTool,
-      registrar_analise: registrarAnaliseTool,
-      solicitar_consenso: solicitarConsensoTool,
-      gerar_especificacao: gerarEspecificacaoTool,
-      aprovar_especificacao: aprovarEspecificacaoTool,
-      pausar_discussao: pausarDiscussaoTool,
-      retomar_discussao: retomarDiscussaoTool,
-      cancelar_discussao: cancelarDiscussaoTool,
+      list_specialists: listSpecialistsTool,
+      get_specialist: getSpecialistTool,
+      create_briefing: createBriefingTool,
+      approve_briefing: approveBriefingTool,
+      deliver_briefing: deliverBriefingTool,
+      analyze_briefing: analyzeBriefingTool,
+      propose_team: proposeTeamTool,
+      summon_team: summonTeamTool,
+      delegate_task: delegateTaskTool,
+      define_phases: definePhasesTool,
+      open_analysis_round: openAnalysisRoundTool,
+      register_analysis: registerAnalysisTool,
+      request_consensus: requestConsensusTool,
+      generate_specification: generateSpecificationTool,
+      approve_specification: approveSpecificationTool,
+      pause_discussion: pauseDiscussionTool,
+      resume_discussion: resumeDiscussionTool,
+      cancel_discussion: cancelDiscussionTool,
     },
 
     "experimental.chat.system.transform": async (_input, output) => {
@@ -86,13 +86,13 @@ export const mesa: Plugin = async () => {
 
     "tool.definition": async (input, output) => {
       const mesaTools = [
-        "mesa_status", "listar_especialistas", "obter_especialista",
-        "criar_briefing", "aprovar_briefing", "entregar_briefing",
-        "analisar_briefing", "propor_equipe", "convocar_equipe",
-        "delegar_tarefa", "definir_fases",
-        "abrir_rodada_analise", "registrar_analise", "solicitar_consenso",
-        "gerar_especificacao", "aprovar_especificacao",
-        "pausar_discussao", "retomar_discussao", "cancelar_discussao",
+        "mesa_status", "list_specialists", "get_specialist",
+        "create_briefing", "approve_briefing", "deliver_briefing",
+        "analyze_briefing", "propose_team", "summon_team",
+        "delegate_task", "define_phases",
+        "open_analysis_round", "register_analysis", "request_consensus",
+        "generate_specification", "approve_specification",
+        "pause_discussion", "resume_discussion", "cancel_discussion",
       ]
 
       if (mesaTools.includes(input.toolID)) {

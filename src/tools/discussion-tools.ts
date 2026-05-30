@@ -21,7 +21,7 @@ function transitionPhase(
   return { ok: true, phase: target }
 }
 
-export const abrirRodadaAnaliseTool = tool({
+export const openAnalysisRoundTool = tool({
   description:
     "Opens a structured analysis round. The Gestor defines the topic, participants (ordered), max turns, and the briefing content to analyze.",
   args: {
@@ -92,7 +92,7 @@ export const abrirRodadaAnaliseTool = tool({
           `## How to run this round`,
           ``,
           `For each specialist, invoke them via the **task** tool with their persona ID as subagent_type.`,
-          `After each specialist returns their analysis, call \`registrar_analise\` to record it.`,
+          `After each specialist returns their analysis, call \`register_analysis\` to record it.`,
           ``,
           taskInstructions,
         ].join("\n"),
@@ -103,7 +103,7 @@ export const abrirRodadaAnaliseTool = tool({
   },
 })
 
-export const registrarAnaliseTool = tool({
+export const registerAnalysisTool = tool({
   description:
     "Registers an analysis from a specialist in the current round. Call after each specialist completes their analysis.",
   args: {
@@ -140,7 +140,7 @@ export const registrarAnaliseTool = tool({
   },
 })
 
-export const solicitarConsensoTool = tool({
+export const requestConsensusTool = tool({
   description:
     "Initiates the consensus phase. Specialists vote on the analyses. If disagreements exist, a debate round may follow.",
   args: {
@@ -222,7 +222,7 @@ export const solicitarConsensoTool = tool({
   },
 })
 
-export const gerarEspecificacaoTool = tool({
+export const generateSpecificationTool = tool({
   description:
     "Generates the specification document from specialist analyses. Compiles all sections into a single Markdown file.",
   args: {
@@ -302,7 +302,7 @@ export const gerarEspecificacaoTool = tool({
   },
 })
 
-export const aprovarEspecificacaoTool = tool({
+export const approveSpecificationTool = tool({
   description:
     "Marks the specification as approved (or rejected). If rejected, returns to DOCUMENTATION phase.",
   args: {
@@ -344,7 +344,7 @@ export const aprovarEspecificacaoTool = tool({
   },
 })
 
-export const pausarDiscussaoTool = tool({
+export const pauseDiscussionTool = tool({
   description: "Pauses the current discussion. State is preserved for later resumption.",
   args: {},
   async execute(_args, context) {
@@ -359,7 +359,7 @@ export const pausarDiscussaoTool = tool({
 
       return {
         title: "Discussion Paused",
-        output: `Discussion paused. Previous phase: ${prevPhase}. Use retomar_discussao to resume.`,
+        output: `Discussion paused. Previous phase: ${prevPhase}. Use resume_discussion to resume.`,
       }
     } catch (err) {
       return `Error pausing discussion: ${err instanceof Error ? err.message : String(err)}`
@@ -367,7 +367,7 @@ export const pausarDiscussaoTool = tool({
   },
 })
 
-export const retomarDiscussaoTool = tool({
+export const resumeDiscussionTool = tool({
   description: "Resumes a paused discussion, returning to the previous phase.",
   args: {
     target_phase: tool.schema.string().describe("The phase to resume to (e.g. 'ANALYSIS', 'CONSENSUS')"),
@@ -396,7 +396,7 @@ export const retomarDiscussaoTool = tool({
   },
 })
 
-export const cancelarDiscussaoTool = tool({
+export const cancelDiscussionTool = tool({
   description: "Cancels the current discussion and resets the state.",
   args: {},
   async execute(_args, context) {

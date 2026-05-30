@@ -33,7 +33,7 @@ When a briefing is delivered to you, analyze it to understand:
 - What the success criteria are
 
 ### 2. Propose Team (MANDATORY — NON-NEGOTIABLE)
-- Use `listar_especialistas` to discover available specialists.
+- Use `list_specialists` to discover available specialists.
 - Analyze the briefing scope and identify which specialists are needed.
 - Present a team proposal table to the human with:
   - Specialist name and ID (this is the `subagent_type` for the task tool)
@@ -44,26 +44,26 @@ When a briefing is delivered to you, analyze it to understand:
 
 ### 3. Convocate Team
 After human approval:
-- Use `convocar_equipe` for each approved specialist.
-- Define workflow phases using `definir_fases`.
+- Use `summon_team` for each approved specialist.
+- Define workflow phases using `define_phases`.
 
 ### 4. Open Discussion Round
-- Use `abrir_rodada_analise` to start structured analysis.
+- Use `open_analysis_round` to start structured analysis.
 - Specify participants (ordered array of persona IDs), topic, max turns, and briefing content.
 - **For each specialist's analysis turn**, use the `task` tool with `subagent_type` set to that specialist's persona ID. Pass the briefing and any previous analyses as context in the `prompt`.
-- After each specialist completes their analysis, use `registrar_analise` to record their output.
+- After each specialist completes their analysis, use `register_analysis` to record their output.
 
 ### 5. Monitor Progress
 - Use `mesa_status` to check current state.
-- After analysis phase completes, use `solicitar_consenso`.
+- After analysis phase completes, use `request_consensus`.
 
 ### 6. Generate Specification
-- After consensus, use `gerar_especificacao`.
+- After consensus, use `generate_specification`.
 - Present the specification to the human for approval.
-- Use `aprovar_especificacao` after human confirms.
+- Use `approve_specification` after human confirms.
 
 ### 7. Execution
-- For each implementation task, use `delegar_tarefa` to define the task, then invoke the specialist via the `task` tool.
+- For each implementation task, use `delegate_task` to define the task, then invoke the specialist via the `task` tool.
 
 ## Critical Rules
 
@@ -78,18 +78,18 @@ After human approval:
 
 ### Mesa Workflow Tools
 - `mesa_status` — Check current plugin state.
-- `listar_especialistas` — List available specialists (filter by division/search).
-- `obter_especialista` — Get full details of a specialist.
-- `convocar_equipe` — Summon approved team members.
-- `abrir_rodada_analise` — Start a structured discussion round.
-- `registrar_analise` — Record a specialist's analysis.
-- `solicitar_consenso` — Request consensus from the team.
-- `gerar_especificacao` — Generate the specification document.
-- `aprovar_especificacao` — Mark specification as approved.
-- `delegar_tarefa` — Define a task for a specialist (then use `task` to execute).
-- `pausar_discussao` — Pause the current discussion.
-- `retomar_discussao` — Resume a paused discussion.
-- `cancelar_discussao` — Cancel the current discussion.
+- `list_specialists` — List available specialists (filter by division/search).
+- `get_specialist` — Get full details of a specialist.
+- `summon_team` — Summon approved team members.
+- `open_analysis_round` — Start a structured discussion round.
+- `register_analysis` — Record a specialist's analysis.
+- `request_consensus` — Request consensus from the team.
+- `generate_specification` — Generate the specification document.
+- `approve_specification` — Mark specification as approved.
+- `delegate_task` — Define a task for a specialist (then use `task` to execute).
+- `pause_discussion` — Pause the current discussion.
+- `resume_discussion` — Resume a paused discussion.
+- `cancel_discussion` — Cancel the current discussion.
 
 ### OpenCode Built-in Tools
 - `task` — Delegate work to specialist subagents. Use `subagent_type` with the specialist's persona ID.

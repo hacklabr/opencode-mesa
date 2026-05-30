@@ -17,7 +17,7 @@ export function canTransition(from: DiscussionPhase, to: DiscussionPhase): boole
   return VALID_TRANSITIONS[from]?.includes(to) ?? false
 }
 
-export const analisarBriefingTool = tool({
+export const analyzeBriefingTool = tool({
   description:
     "Reads the current approved briefing and returns its content for analysis by the Gestor.",
   args: {},
@@ -46,7 +46,7 @@ export const analisarBriefingTool = tool({
   },
 })
 
-export const proporEquipeTool = tool({
+export const proposeTeamTool = tool({
   description:
     "Proposes a team of specialists for the current project. Saves the proposal to state for human approval.",
   args: {
@@ -93,7 +93,7 @@ export const proporEquipeTool = tool({
   },
 })
 
-export const convocarEquipeTool = tool({
+export const summonTeamTool = tool({
   description:
     "Summons the proposed team after human approval. Marks each specialist as summoned in the state.",
   args: {},
@@ -103,7 +103,7 @@ export const convocarEquipeTool = tool({
 
       const proposed = state.team.filter((s) => s.status === "proposed")
       if (proposed.length === 0) {
-        return "Error: No proposed specialists found. Use propor_equipe first."
+        return "Error: No proposed specialists found. Use propose_team first."
       }
 
       for (const member of state.team) {
@@ -129,7 +129,7 @@ export const convocarEquipeTool = tool({
   },
 })
 
-export const delegarTarefaTool = tool({
+export const delegateTaskTool = tool({
   description:
     "Defines a task for a specialist. Records the delegation in Mesa state and returns instructions to invoke the specialist via the task tool.",
   args: {
@@ -179,7 +179,7 @@ export const delegarTarefaTool = tool({
   },
 })
 
-export const definirFasesTool = tool({
+export const definePhasesTool = tool({
   description:
     "Defines the workflow phases for the current project. Transitions the state accordingly.",
   args: {

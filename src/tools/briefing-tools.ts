@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { promises as fs } from "node:fs"
 import { PLUGIN_STATE_DIR } from "../config"
 
-export const criarBriefingTool = tool({
+export const createBriefingTool = tool({
   description:
     "Creates and saves a new briefing document in the workspace. The briefing is stored in the .mesa directory.",
   args: {
@@ -53,7 +53,7 @@ export const criarBriefingTool = tool({
   },
 })
 
-export const aprovarBriefingTool = tool({
+export const approveBriefingTool = tool({
   description:
     "Marks the current briefing as approved and updates the state. Must be called after human approval.",
   args: {},
@@ -83,7 +83,7 @@ export const aprovarBriefingTool = tool({
   },
 })
 
-export const entregarBriefingTool = tool({
+export const deliverBriefingTool = tool({
   description:
     "Delivers the approved briefing to the Gestor. Updates the state phase to PLANNING and copies the briefing content.",
   args: {},
@@ -91,7 +91,7 @@ export const entregarBriefingTool = tool({
     try {
       const state = await loadState(context.directory)
       if (state.briefing.status !== "approved") {
-        return "Error: Briefing must be approved before delivery. Use aprovar_briefing first."
+        return "Error: Briefing must be approved before delivery. Use approve_briefing first."
       }
       if (!state.briefing.path) {
         return "Error: No briefing path found."

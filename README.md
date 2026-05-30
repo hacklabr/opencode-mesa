@@ -92,39 +92,39 @@ To regenerate after catalog changes: `npm run setup:agents`
 
 | Tool | Description |
 |------|-------------|
-| `listar_especialistas` | Lists available specialists (filter by division/search) |
-| `obter_especialista` | Gets full details of a specialist by ID |
+| `list_specialists` | Lists available specialists (filter by division/search) |
+| `get_specialist` | Gets full details of a specialist by ID |
 
 ### Briefing
 
 | Tool | Description |
 |------|-------------|
-| `criar_briefing` | Saves a new briefing document |
-| `aprovar_briefing` | Marks the current briefing as approved |
-| `entregar_briefing` | Delivers the approved briefing to the Gestor |
+| `create_briefing` | Saves a new briefing document |
+| `approve_briefing` | Marks the current briefing as approved |
+| `deliver_briefing` | Delivers the approved briefing to the Gestor |
 
 ### Gestor (Manager)
 
 | Tool | Description |
 |------|-------------|
-| `analisar_briefing` | Reads the current briefing for analysis |
-| `propor_equipe` | Proposes a team of specialists with justifications |
-| `convocar_equipe` | Summons approved team members |
-| `delegar_tarefa` | Defines a task for a specialist (Gestor then invokes via `task`) |
-| `definir_fases` | Defines the workflow phases |
+| `analyze_briefing` | Reads the current briefing for analysis |
+| `propose_team` | Proposes a team of specialists with justifications |
+| `summon_team` | Summons approved team members |
+| `delegate_task` | Defines a task for a specialist (Gestor then invokes via `task`) |
+| `define_phases` | Defines the workflow phases |
 
 ### Discussion
 
 | Tool | Description |
 |------|-------------|
-| `abrir_rodada_analise` | Opens a structured analysis round |
-| `registrar_analise` | Registers a specialist's analysis |
-| `solicitar_consenso` | Initiates consensus voting |
-| `gerar_especificacao` | Generates the specification document |
-| `aprovar_especificacao` | Approves or rejects the specification |
-| `pausar_discussao` | Pauses the current discussion |
-| `retomar_discussao` | Resumes a paused discussion |
-| `cancelar_discussao` | Cancels the current discussion |
+| `open_analysis_round` | Opens a structured analysis round |
+| `register_analysis` | Registers a specialist's analysis |
+| `request_consensus` | Initiates consensus voting |
+| `generate_specification` | Generates the specification document |
+| `approve_specification` | Approves or rejects the specification |
+| `pause_discussion` | Pauses the current discussion |
+| `resume_discussion` | Resumes a paused discussion |
+| `cancel_discussion` | Cancels the current discussion |
 
 ## State Persistence
 
