@@ -38,13 +38,35 @@ node "$INSTALL_DIR/src/setup/generate-agents.js"
 PLUGIN_PATH="file://$INSTALL_DIR/dist/index.js"
 
 info ""
-info "Add the following to your project's opencode.json:"
+info "Configuring plugin..."
+CONFIG_FILE="opencode.json"
+
+if [ -f "$CONFIG_FILE" ]; then
+  if grep -q "opencode-mesa" "$CONFIG_FILE" 2>/dev/null; then
+    info "Plugin already configured in $CONFIG_FILE"
+  else
+    node -e "
+      const fs = require('fs');
+      const cfg = JSON.parse(fs.readFileSync('$CONFIG_FILE', 'utf-8'));
+      cfg.plugin = cfg.plugin || [];
+      const path = '$PLUGIN_PATH';
+      if (!cfg.plugin.includes(path)) { cfg.plugin.push(path); }
+      fs.writeFileSync('$CONFIG_FILE', JSON.stringify(cfg, null, 2) + '\n');
+    "
+    info "Plugin added to $CONFIG_FILE"
+  fi
+else
+  cat > "$CONFIG_FILE" <<EOCFG
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "plugin": ["$PLUGIN_PATH"]
+}
+EOCFG
+  info "Created $CONFIG_FILE with plugin configured"
+fi
+
 info ""
-printf '  %s\n' "{"
-printf '    %s\n' "\"plugin\": [\"$PLUGIN_PATH\"]"
-printf '  %s\n' "}"
-info ""
-info "Then restart opencode. Switch agents with Tab or /agent."
+info "Restart opencode to load the agents. Switch with Tab or /agent."
 info "  /agent briefing-writer  — start a discovery session"
 info "  /agent gestor           — orchestrate a specialist team"
 info ""
