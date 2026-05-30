@@ -101,6 +101,11 @@ export const obterEspecialistaTool = tool({
   },
 })
 
+export async function getPersonaById(personaId: string): Promise<Persona | null> {
+  const { personas } = await loadCatalog()
+  return personas.find((p) => p.id === personaId) ?? null
+}
+
 export function clearCatalogCache(): void {
   cachedPersonas = null
   cachedSummary = null

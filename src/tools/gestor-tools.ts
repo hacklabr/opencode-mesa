@@ -1,6 +1,7 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState } from "../state"
 import type { DiscussionPhase, SpecialistEntry, SpecialistStatus } from "../config"
+import { getPersonaById } from "./catalog-tools"
 
 const VALID_TRANSITIONS: Record<DiscussionPhase, DiscussionPhase[]> = {
   PLANNING: ["ANALYSIS", "PAUSED", "CANCELLED"],
@@ -149,11 +150,18 @@ export const delegarTarefaTool = tool({
         return `Error: Specialist "${args.personaId}" not found in the current team. Summon them first.`
       }
 
+      const persona = await getPersonaById(args.personaId)
+      const systemPrompt = persona?.systemPrompt ?? ""
+
       const message = [
         `## Task Delegation`,
         ``,
         `**To**: ${specialist.name} (${specialist.personaId})`,
         `**From**: Gestor`,
+        ``,
+        `### Persona Context`,
+        `You are now acting as **${specialist.name}**.`,
+        systemPrompt ? `\n${systemPrompt}` : "",
         ``,
         `### Task`,
         args.task,

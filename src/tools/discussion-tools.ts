@@ -2,6 +2,7 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState } from "../state"
 import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry } from "../config"
 import { canTransition } from "./gestor-tools"
+import { getPersonaById } from "./catalog-tools"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { PLUGIN_STATE_DIR } from "../config"
@@ -63,13 +64,28 @@ export const abrirRodadaAnaliseTool = tool({
 
       await saveState(context.directory, state)
 
-      const participantList = args.participants
-        .map((id) => `  ${state.team.find((t) => t.personaId === id)?.name ?? id}`)
+      const participantsWithPrompts = await Promise.all(
+        args.participants.map(async (id) => {
+          const name = state.team.find((t) => t.personaId === id)?.name ?? id
+          const persona = await getPersonaById(id)
+          return { id, name, systemPrompt: persona?.systemPrompt ?? "" }
+        })
+      )
+
+      const participantList = participantsWithPrompts
+        .map((p) => `  ${p.name} (${p.id})`)
         .join("\n")
+
+      const personaContexts = participantsWithPrompts
+        .map((p) => {
+          if (!p.systemPrompt) return `### ${p.name}\n(No persona context available)`
+          return `### ${p.name}\n${p.systemPrompt}`
+        })
+        .join("\n\n---\n\n")
 
       return {
         title: "Analysis Round Opened",
-        output: `Topic: ${args.topic}\n\nParticipants (in order):\n${participantList}\n\nTurns: ${state.discussion.maxTurns}\nPhase: ANALYSIS\n\nEach specialist should analyze the briefing in order. Use the output to guide the discussion.`,
+        output: `Topic: ${args.topic}\n\nParticipants (in order):\n${participantList}\n\nTurns: ${state.discussion.maxTurns}\nPhase: ANALYSIS\n\nEach specialist should analyze the briefing in order, adopting their respective persona context below.\n\n## Persona Contexts\n\n${personaContexts}\n\nUse the output to guide the discussion.`,
       }
     } catch (err) {
       return `Error opening analysis round: ${err instanceof Error ? err.message : String(err)}`
