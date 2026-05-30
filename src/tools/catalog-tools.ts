@@ -3,17 +3,15 @@ import { loadCatalogFromDirectory, type Persona, type CatalogSummary } from "../
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
+const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
+const CATALOG_DIR = join(PLUGIN_ROOT, "catalog", "agency-agents")
+
 let cachedPersonas: Persona[] | null = null
 let cachedSummary: CatalogSummary | null = null
 
-async function getCatalogDir(): Promise<string> {
-  return join(dirname(fileURLToPath(import.meta.url)), "catalog", "agency-agents")
-}
-
 async function loadCatalog() {
   if (cachedPersonas) return { personas: cachedPersonas, summary: cachedSummary! }
-  const catalogDir = await getCatalogDir()
-  const result = await loadCatalogFromDirectory(catalogDir)
+  const result = await loadCatalogFromDirectory(CATALOG_DIR)
   cachedPersonas = result.personas
   cachedSummary = result.summary
   return result
