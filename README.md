@@ -10,42 +10,37 @@ Each specialist runs as a **real subagent** with its own system prompt, session,
 
 ## Installation
 
-### 1. Build the plugin
+### Quick install
 
 ```bash
-git clone <repo-url> opencode-mesa
-cd opencode-mesa
-npm install
-npm run build
+curl -fsSL https://raw.githubusercontent.com/hacklabr/opencode-mesa/main/install.sh | bash
 ```
 
-### 2. Generate specialist agents
+This clones, builds, generates all agents, and prints the plugin path to add to your `opencode.json`.
 
-This creates 2 primary agents (briefing-writer, gestor) and 173 specialist subagents in `.opencode/agents/`:
+### Manual install
 
 ```bash
-npm run setup:agents
+git clone https://github.com/hacklabr/opencode-mesa.git ~/.local/share/opencode-mesa
+cd ~/.local/share/opencode-mesa
+npm install && npm run build && npm run setup:agents
 ```
 
-### 3. Configure OpenCode
-
-Add Mesa to your project's `opencode.json`:
+Then add to your project's `opencode.json`:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    "file:///absolute/path/to/opencode-mesa/dist/index.js"
-  ]
+  "plugin": ["file:///home/YOURUSER/.local/share/opencode-mesa/dist/index.js"]
 }
 ```
 
-### 4. Restart OpenCode
+Restart opencode to load the agents.
 
-The agents are loaded from `.opencode/agents/` at startup. After restarting, switch agents with `Tab` or `/agent`:
+### Custom install location
 
-- `/agent briefing-writer` — start a discovery session
-- `/agent gestor` — orchestrate a specialist team
+```bash
+curl -fsSL https://raw.githubusercontent.com/hacklabr/opencode-mesa/main/install.sh | bash -s -- https://github.com/hacklabr/opencode-mesa /path/to/install
+```
 
 ## Workflow
 
