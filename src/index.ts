@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { mesaStatusTool } from "./tools/mesa-tools"
 import { listSpecialistsTool, getSpecialistTool } from "./tools/catalog-tools"
-import { createBriefingTool, approveBriefingTool, deliverBriefingTool } from "./tools/briefing-tools"
+import { createBriefingTool, approveBriefingTool, deliverBriefingTool, importBriefingTool } from "./tools/briefing-tools"
 import {
   analyzeBriefingTool,
   proposeTeamTool,
@@ -29,6 +29,7 @@ export const mesa: Plugin = async () => {
       create_briefing: createBriefingTool,
       approve_briefing: approveBriefingTool,
       deliver_briefing: deliverBriefingTool,
+      import_briefing: importBriefingTool,
       analyze_briefing: analyzeBriefingTool,
       propose_team: proposeTeamTool,
       summon_team: summonTeamTool,
@@ -87,7 +88,7 @@ export const mesa: Plugin = async () => {
     "tool.definition": async (input, output) => {
       const mesaTools = [
         "mesa_status", "list_specialists", "get_specialist",
-        "create_briefing", "approve_briefing", "deliver_briefing",
+        "create_briefing", "approve_briefing", "deliver_briefing", "import_briefing",
         "analyze_briefing", "propose_team", "summon_team",
         "delegate_task", "define_phases",
         "open_analysis_round", "register_analysis", "request_consensus",

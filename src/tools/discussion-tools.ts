@@ -1,10 +1,12 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState } from "../state"
 import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry } from "../config"
-import { canTransition } from "./gestor-tools"
+import { canTransition, VALID_TRANSITIONS, requirePhase } from "./gestor-tools"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
+import { randomUUID } from "node:crypto"
 import { PLUGIN_STATE_DIR } from "../config"
+import { logAction } from "../audit"
 
 function transitionPhase(
   current: DiscussionPhase,
@@ -13,9 +15,7 @@ function transitionPhase(
   if (!canTransition(current, target)) {
     return {
       ok: false,
-      error: `Invalid transition: ${current} → ${target}. Allowed: ${(
-        [] as DiscussionPhase[]
-      ).join(", ")}`,
+      error: `Invalid transition: ${current} → ${target}. Allowed: ${VALID_TRANSITIONS[current]?.join(", ") ?? "none"}`,
     }
   }
   return { ok: true, phase: target }
@@ -41,6 +41,9 @@ export const openAnalysisRoundTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "PLANNING")
+      if (phaseError) return `Error: ${phaseError}`
+
       const result = transitionPhase(state.currentPhase, "ANALYSIS")
       if (!result.ok) return `Error: ${result.error}`
 
@@ -62,6 +65,7 @@ export const openAnalysisRoundTool = tool({
       }
 
       await saveState(context.directory, state)
+      await logAction(context.directory, "analysis_round_opened", state.currentPhase, { topic: args.topic })
 
       const participantsWithNames = args.participants.map((id) => {
         const name = state.team.find((t) => t.personaId === id)?.name ?? id
@@ -115,6 +119,8 @@ export const registerAnalysisTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "ANALYSIS")
+      if (phaseError) return `Error: ${phaseError}`
 
       const entry: AnalysisEntry = {
         agentId: args.agent_id,
@@ -159,6 +165,9 @@ export const requestConsensusTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "ANALYSIS")
+      if (phaseError) return `Error: ${phaseError}`
+
       const result = transitionPhase(state.currentPhase, "CONSENSUS")
       if (!result.ok) return `Error: ${result.error}`
 
@@ -180,6 +189,7 @@ export const requestConsensusTool = tool({
       const hasDisagreement = args.votes.some((v) => v.vote === 0)
 
       await saveState(context.directory, state)
+      await logAction(context.directory, "consensus_requested", state.currentPhase, { round: args.round })
 
       const voteSummary = args.votes
         .map((v) => {
@@ -248,7 +258,7 @@ export const generateSpecificationTool = tool({
       const specsDir = join(context.directory, PLUGIN_STATE_DIR, "especificacoes")
       await fs.mkdir(specsDir, { recursive: true })
 
-      const id = Date.now().toString(36)
+      const id = randomUUID().slice(0, 8)
       const specPath = join(specsDir, `spec-${id}.md`)
 
       const voteLines = state.discussion.votes
@@ -288,8 +298,13 @@ export const generateSpecificationTool = tool({
 
       state.specification.path = specPath
       state.specification.status = "draft"
-      state.currentPhase = "APPROVAL"
+
+      const approvalResult = transitionPhase("DOCUMENTATION", "APPROVAL")
+      if (!approvalResult.ok) return `Error: ${approvalResult.error}`
+
+      state.currentPhase = approvalResult.phase
       await saveState(context.directory, state)
+      await logAction(context.directory, "specification_generated", state.currentPhase, { path: specPath })
 
       return {
         title: "Specification Generated",
@@ -323,15 +338,20 @@ export const approveSpecificationTool = tool({
         state.currentPhase = result.phase
         state.specification.status = "approved"
         await saveState(context.directory, state)
+        await logAction(context.directory, "specification_approved", state.currentPhase)
 
         return {
           title: "Specification Approved",
           output: `Specification approved. Phase changed to EXECUTION. The Gestor may now delegate implementation tasks.`,
         }
       } else {
-        state.currentPhase = "DOCUMENTATION"
+        const result = transitionPhase(state.currentPhase, "DOCUMENTATION")
+        if (!result.ok) return `Error: ${result.error}`
+
+        state.currentPhase = result.phase
         state.specification.status = "rejected"
         await saveState(context.directory, state)
+        await logAction(context.directory, "specification_rejected", state.currentPhase, { feedback: args.feedback })
 
         return {
           title: "Specification Rejected",
@@ -350,16 +370,17 @@ export const pauseDiscussionTool = tool({
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory)
-      const prevPhase = state.currentPhase
+      state.previousPhase = state.currentPhase
       const result = transitionPhase(state.currentPhase, "PAUSED")
       if (!result.ok) return `Error: ${result.error}`
 
       state.currentPhase = result.phase
       await saveState(context.directory, state)
+      await logAction(context.directory, "discussion_paused", state.currentPhase, { previousPhase: state.previousPhase })
 
       return {
         title: "Discussion Paused",
-        output: `Discussion paused. Previous phase: ${prevPhase}. Use resume_discussion to resume.`,
+        output: `Discussion paused. Previous phase: ${state.previousPhase}. Use resume_discussion to resume.`,
       }
     } catch (err) {
       return `Error pausing discussion: ${err instanceof Error ? err.message : String(err)}`
@@ -383,12 +404,19 @@ export const resumeDiscussionTool = tool({
       const result = transitionPhase("PAUSED", target)
       if (!result.ok) return `Error: ${result.error}`
 
+      let warning = ""
+      if (state.previousPhase && args.target_phase !== state.previousPhase) {
+        warning = `\nWarning: Workflow was paused from ${state.previousPhase}, resuming to ${args.target_phase} instead.`
+      }
+
       state.currentPhase = result.phase
+      state.previousPhase = null
       await saveState(context.directory, state)
+      await logAction(context.directory, "discussion_resumed", state.currentPhase)
 
       return {
         title: "Discussion Resumed",
-        output: `Discussion resumed at phase: ${result.phase}.`,
+        output: `Discussion resumed at phase: ${result.phase}.${warning}`,
       }
     } catch (err) {
       return `Error resuming discussion: ${err instanceof Error ? err.message : String(err)}`
@@ -402,11 +430,15 @@ export const cancelDiscussionTool = tool({
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory)
-      state.currentPhase = "CANCELLED"
+      const result = transitionPhase(state.currentPhase, "CANCELLED")
+      if (!result.ok) return `Error: ${result.error}`
+
+      state.currentPhase = result.phase
       state.discussion.analyses = []
       state.discussion.votes = []
       state.discussion.currentTurn = 0
       await saveState(context.directory, state)
+      await logAction(context.directory, "discussion_cancelled", state.currentPhase)
 
       return {
         title: "Discussion Cancelled",

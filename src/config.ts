@@ -20,6 +20,8 @@ export type BriefingStatus = "draft" | "approved" | "delivered"
 
 export type SpecialistStatus = "proposed" | "summoned" | "active" | "dismissed"
 
+export type SpecificationStatus = "pending" | "draft" | "approved" | "rejected"
+
 export interface AnalysisEntry {
   agentId: string
   agentName: string
@@ -62,10 +64,12 @@ export interface DiscussionState {
   }
   specification: {
     path: string | null
-    status: "pending" | "draft" | "approved" | "rejected"
+    status: SpecificationStatus
   }
   createdAt: string
   updatedAt: string
+  stateVersion: number
+  previousPhase: DiscussionPhase | null
 }
 
 export function createInitialState(workspaceId: string): DiscussionState {
@@ -86,5 +90,7 @@ export function createInitialState(workspaceId: string): DiscussionState {
     specification: { path: null, status: "pending" },
     createdAt: now,
     updatedAt: now,
+    stateVersion: 1,
+    previousPhase: null,
   }
 }

@@ -1,8 +1,10 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState } from "../state"
-import type { DiscussionPhase, SpecialistEntry, SpecialistStatus } from "../config"
+import type { DiscussionPhase, DiscussionState, SpecialistEntry, SpecialistStatus } from "../config"
+import { getPersonaById } from "./catalog-tools"
+import { logAction } from "../audit"
 
-const VALID_TRANSITIONS: Record<DiscussionPhase, DiscussionPhase[]> = {
+export const VALID_TRANSITIONS: Record<DiscussionPhase, DiscussionPhase[]> = {
   PLANNING: ["ANALYSIS", "PAUSED", "CANCELLED"],
   ANALYSIS: ["CONSENSUS", "PAUSED", "CANCELLED"],
   CONSENSUS: ["DOCUMENTATION", "ANALYSIS", "PAUSED", "CANCELLED"],
@@ -17,6 +19,16 @@ export function canTransition(from: DiscussionPhase, to: DiscussionPhase): boole
   return VALID_TRANSITIONS[from]?.includes(to) ?? false
 }
 
+export function requirePhase(
+  state: DiscussionState,
+  ...allowed: DiscussionPhase[]
+): string | null {
+  if (!allowed.includes(state.currentPhase)) {
+    return `Operation not allowed in ${state.currentPhase} phase. Required: ${allowed.join(" or ")}.`
+  }
+  return null
+}
+
 export const analyzeBriefingTool = tool({
   description:
     "Reads the current approved briefing and returns its content for analysis by the Gestor.",
@@ -24,6 +36,9 @@ export const analyzeBriefingTool = tool({
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "PLANNING")
+      if (phaseError) return `Error: ${phaseError}`
+
       if (!state.briefing.path) {
         return "Error: No briefing found. A briefing must be created and delivered first."
       }
@@ -64,6 +79,17 @@ export const proposeTeamTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "PLANNING")
+      if (phaseError) return `Error: ${phaseError}`
+
+      const invalidIds: string[] = []
+      for (const s of args.specialists) {
+        const persona = await getPersonaById(s.personaId)
+        if (!persona) invalidIds.push(s.personaId)
+      }
+      if (invalidIds.length > 0) {
+        return `Error: Invalid specialist IDs not found in catalog: ${invalidIds.join(", ")}`
+      }
 
       const team: SpecialistEntry[] = args.specialists.map((s) => ({
         personaId: s.personaId,
@@ -100,6 +126,12 @@ export const summonTeamTool = tool({
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "PLANNING")
+      if (phaseError) return `Error: ${phaseError}`
+
+      if (state.briefing.status !== "approved" && state.briefing.status !== "delivered") {
+        return "Error: Briefing must be approved or delivered before summoning a team."
+      }
 
       const proposed = state.team.filter((s) => s.status === "proposed")
       if (proposed.length === 0) {
@@ -113,6 +145,7 @@ export const summonTeamTool = tool({
       }
 
       await saveState(context.directory, state)
+      await logAction(context.directory, "team_summoned", state.currentPhase, { count: state.team.filter(s => s.status === "summoned").length })
 
       const summonedList = state.team
         .filter((s) => s.status === "summoned")
@@ -143,6 +176,9 @@ export const delegateTaskTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "EXECUTION")
+      if (phaseError) return `Error: ${phaseError}`
+
       const specialist = state.team.find((s) => s.personaId === args.personaId)
 
       if (!specialist) {

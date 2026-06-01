@@ -88,7 +88,7 @@ describe("state persistence", () => {
     )
   })
 
-  test.afterAll(async () => {
+afterAll(async () => {
     await fs.rm(join(testDir, ".mesa"), { recursive: true, force: true })
   })
 })
