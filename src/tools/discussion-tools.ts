@@ -10,6 +10,9 @@ import { logAction } from "../audit"
 import { successResponse, errorResponse } from "../utils/responses"
 import { PhaseError, MesaError } from "../errors"
 
+const MAX_SECTION_CHARS = 8000
+const MAX_TOTAL_CHARS = 128000
+
 function transitionPhase(
   current: DiscussionPhase,
   target: DiscussionPhase
@@ -448,7 +451,7 @@ export const requestConsensusTool = tool({
 
 export const generateSpecificationTool = tool({
   description:
-    "Generates the specification document from specialist analyses. Compiles all sections into a single Markdown file.",
+    "Generates the specification document from specialist-written sections. Enforces per-section budget (8k chars), total budget (128k chars), and optional template compliance. Sections must be written by specialists, not by the Manager.",
   args: {
     sections: tool.schema
       .array(
@@ -460,6 +463,10 @@ export const generateSpecificationTool = tool({
       )
       .describe("Array of specification sections from each specialist"),
     topic: tool.schema.string().describe("The specification topic/title"),
+    template: tool.schema
+      .array(tool.schema.string())
+      .optional()
+      .describe("Required sub-headers that each section must contain (e.g., ['Context', 'Decision', 'Implementation Boundaries', 'Risks']). Sections missing these headers will be rejected."),
   },
   async execute(args, context) {
     try {
@@ -469,6 +476,40 @@ export const generateSpecificationTool = tool({
       const toDoc = transitionPhase(state.currentPhase, "DOCUMENTATION")
       if (!toDoc.ok) throw new PhaseError(toDoc.error)
       state.currentPhase = toDoc.phase
+
+      // Budget Gate 1: Per-section size validation
+      const oversized = args.sections.filter((s) => s.content.length > MAX_SECTION_CHARS)
+      if (oversized.length > 0) {
+        // Revert phase change
+        state.currentPhase = "CONSENSUS"
+        return errorResponse(
+          `Sections exceed size budget (${MAX_SECTION_CHARS} chars each):\n` +
+          oversized.map((s) => `  - ${s.specialist_name}: ${s.content.length} chars (trim ${s.content.length - MAX_SECTION_CHARS})`).join("\n") +
+          `\n\nTrim these sections before regenerating. Tip: Cut detail, don't summarize.`
+        )
+      }
+
+      // Template compliance gate
+      if (args.template && args.template.length > 0) {
+        const nonCompliant = args.sections.filter((s) => {
+          const contentLower = s.content.toLowerCase()
+          return args.template!.some((header) => !contentLower.includes(header.toLowerCase()))
+        })
+        if (nonCompliant.length > 0) {
+          // Revert phase change
+          state.currentPhase = "CONSENSUS"
+          const missingInfo = nonCompliant.map((s) => {
+            const contentLower = s.content.toLowerCase()
+            const missing = args.template!.filter((h) => !contentLower.includes(h.toLowerCase()))
+            return `  - ${s.specialist_name}: missing headers: ${missing.join(", ")}`
+          }).join("\n")
+          return errorResponse(
+            `Sections do not comply with required template:\n${missingInfo}\n\n` +
+            `Required headers: ${args.template.join(", ")}\n` +
+            `Each section must contain all required headers.`
+          )
+        }
+      }
 
       const specsDir = join(context.directory, PLUGIN_STATE_DIR, "specifications")
       await fs.mkdir(specsDir, { recursive: true })
@@ -508,6 +549,17 @@ export const generateSpecificationTool = tool({
         voteLines,
         ``,
       ].join("\n")
+
+      // Budget Gate 2: Total document size validation
+      if (document.length > MAX_TOTAL_CHARS) {
+        // Revert phase change
+        state.currentPhase = "CONSENSUS"
+        return errorResponse(
+          `Specification exceeds total budget: ${document.length} chars (max ${MAX_TOTAL_CHARS}).\n` +
+          `Current sections: ${args.sections.length} × avg ${Math.round(document.length / args.sections.length)} chars.\n` +
+          `Reduce section content or remove sections.`
+        )
+      }
 
       await fs.writeFile(specPath, document, "utf-8")
 

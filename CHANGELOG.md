@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-01
+
+### Added
+- **Specification budget enforcement**: `generate_specification` now enforces per-section (8k chars) and total document (128k chars) limits — oversized specs are rejected with actionable guidance
+- **Template compliance validation**: New optional `template` parameter accepts required sub-headers; sections missing them are rejected with specific missing-header details
+- **Specialist authorship model**: Manager prompt updated to delegate section writing to specialists (not rewrite). Manager writes only glue sections (exec summary, integration points, implementation order)
+- **Phase reversion on rejection**: Budget/template gates revert phase to CONSENSUS on failure so the Manager can fix and retry
+- **7 new tests** for budget and template enforcement (113 total, 0 failures)
+
+### Changed
+- Manager prompt section 6 ("Generate Specification") rewritten with 3-step process: delegate writing → compile sections → write glue
+- Added section 5c ("Section Writing Delegation") defining the transition from consensus to specification authorship
+- `generate_specification` tool description updated to document budget limits and template enforcement
+
 ## [1.1.0] - 2026-06-01
 
 ### Added

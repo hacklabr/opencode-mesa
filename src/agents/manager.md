@@ -156,11 +156,53 @@ Before requesting consensus votes, run a **deliberation round**:
 - Each vote MUST include a substantive `reason` explaining their position — not just "I agree" but WHY.
 - Present the vote results clearly to the human, showing each specialist's reasoning.
 
+#### 5c. Section Writing Delegation
+After consensus is reached, transition to specification authorship:
+- Each specialist writes their OWN section — the Manager does NOT write sections.
+- Pass the consensus results and the specialist's own analyses as context.
+- Include the mandatory template with token budget in each delegation prompt.
+- Collect all sections before calling `generate_specification`.
+
 ### 6. Generate Specification
-- After consensus, use `generate_specification`.
-- Present the specification to the human for approval.
-- The specification is a **narrative document** — it describes WHAT needs to be done, not HOW. No code.
-- Use `approve_specification` after human confirms.
+
+After consensus, the Manager delegates section writing to each specialist:
+
+**Step 1: Delegate Section Writing**
+For EACH specialist who participated in the analysis, invoke them via `task` with:
+```
+task(subagent_type="mesa/{specialist_id}", prompt="Write your specification section for {topic}.
+
+CONstraints:
+- Maximum 2,000 tokens (~8,000 characters)
+- Use this template with ALL required headers:
+  ## Context & Constraints
+  ## Decision
+  ## Implementation Boundaries
+  ## Risks & Open Questions
+
+Your section should cover ONLY your domain expertise. Be concrete and actionable — this spec will be implemented from.
+
+Base your section on your analysis and the consensus decisions reached.", description="{specialist_name} spec section")
+```
+
+**Step 2: Compile Sections**
+After all specialists return their sections, call `generate_specification` with:
+- `sections`: array of specialist-written sections (AS-IS, no rewrite)
+- `topic`: the specification topic
+- `template`: required headers for validation (e.g., `["Context & Constraints", "Decision", "Implementation Boundaries", "Risks & Open Questions"]`)
+
+**Step 3: Write Glue Sections**
+The Manager writes these cross-cutting sections itself:
+- **Executive Summary** (~500 tokens): what the spec covers and key decisions
+- **Integration Points** (~500 tokens): how specialist domains connect
+- **Implementation Order** (~300 tokens): suggested build sequence
+
+**CRITICAL RULES (NON-NEGOTIABLE):**
+- Do NOT rewrite specialist content. Compile sections AS-IS.
+- Do NOT add technical depth that wasn't in the specialist's section.
+- Do NOT summarize specialist content — the tool enforces size limits.
+- If the tool rejects a section for exceeding budget, ask the specialist to CUT (not summarize) their section.
+- If the tool rejects for missing template headers, ask the specialist to add them.
 
 ### 7. Execution Phase (Post-Specification)
 After the specification is approved, the workflow shifts to **implementation delegation**:

@@ -927,3 +927,219 @@ describe("request_consensus validation gates", () => {
     expect(output).toContain("Consensus")
   })
 })
+
+describe("generate_specification budget enforcement", () => {
+  beforeEach(async () => {
+    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
+  })
+
+  afterEach(async () => {
+    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
+  })
+
+  test("rejects section exceeding 8k chars", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "CONSENSUS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.participants = ["eng-1"]
+    state.discussion.analyses = [
+      { agentId: "eng-1", agentName: "Engineer", content: "Analysis", turn: 1, timestamp: new Date().toISOString() },
+    ]
+    state.discussion.votes = [
+      { agentId: "eng-1", agentName: "Engineer", vote: 1, reason: "OK", round: 1 },
+    ]
+    state.discussion.consensusRound = 1
+    await saveState(TEST_DIR, state)
+
+    const longContent = "x".repeat(8001)
+    const result = await generateSpecificationTool.execute(
+      {
+        sections: [{ specialist_name: "Engineer", specialist_id: "eng-1", content: longContent }],
+        topic: "Test Spec",
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("exceed size budget")
+    expect(result).toContain("Engineer")
+
+    // Verify phase reverted to CONSENSUS
+    const loaded = JSON.parse(
+      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
+    )
+    expect(loaded.currentPhase).toBe("CONSENSUS")
+  })
+
+  test("rejects total document exceeding 128k chars", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "CONSENSUS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+      { personaId: "eng-2", name: "Architect", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.participants = ["eng-1", "eng-2"]
+    state.discussion.consensusRound = 1
+    await saveState(TEST_DIR, state)
+
+    // Each section under 8k but total over 128k
+    const bigSection = "x".repeat(65000)
+    const result = await generateSpecificationTool.execute(
+      {
+        sections: [
+          { specialist_name: "Engineer", specialist_id: "eng-1", content: bigSection },
+          { specialist_name: "Architect", specialist_id: "eng-2", content: bigSection },
+        ],
+        topic: "Big Spec",
+      },
+      makeContext()
+    )
+
+    // Per-section 8k budget fires first, so we get per-section error
+    expect(result).toContain("exceed size budget")
+
+    const loaded = JSON.parse(
+      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
+    )
+    expect(loaded.currentPhase).toBe("CONSENSUS")
+  })
+
+  test("accepts sections within budget", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "CONSENSUS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.participants = ["eng-1"]
+    state.discussion.consensusRound = 1
+    await saveState(TEST_DIR, state)
+
+    const result = await generateSpecificationTool.execute(
+      {
+        sections: [{ specialist_name: "Engineer", specialist_id: "eng-1", content: "## Context\nTest content\n## Decision\nWe decided X\n## Implementation\nDo Y\n## Risks\nNone" }],
+        topic: "Good Spec",
+      },
+      makeContext()
+    )
+
+    const output = (result as { title: string }).title
+    expect(output).toContain("Specification Generated")
+
+    const loaded = JSON.parse(
+      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
+    )
+    expect(loaded.currentPhase).toBe("APPROVAL")
+  })
+})
+
+describe("generate_specification template enforcement", () => {
+  beforeEach(async () => {
+    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
+  })
+
+  afterEach(async () => {
+    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
+  })
+
+  test("rejects section missing required template headers", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "CONSENSUS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.participants = ["eng-1"]
+    state.discussion.consensusRound = 1
+    await saveState(TEST_DIR, state)
+
+    // Missing "Decision" and "Risks"
+    const result = await generateSpecificationTool.execute(
+      {
+        sections: [{ specialist_name: "Engineer", specialist_id: "eng-1", content: "## Context\nSome context\n## Implementation\nDo the thing" }],
+        topic: "Template Test",
+        template: ["Context", "Decision", "Implementation", "Risks"],
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("do not comply")
+    expect(result).toContain("Decision")
+    expect(result).toContain("Risks")
+  })
+
+  test("accepts section with all required headers", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "CONSENSUS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.participants = ["eng-1"]
+    state.discussion.consensusRound = 1
+    await saveState(TEST_DIR, state)
+
+    const result = await generateSpecificationTool.execute(
+      {
+        sections: [{ specialist_name: "Engineer", specialist_id: "eng-1", content: "## Context\nTest\n## Decision\nWe chose X\n## Implementation\nDo Y\n## Risks\nNone" }],
+        topic: "Template Pass",
+        template: ["Context", "Decision", "Implementation", "Risks"],
+      },
+      makeContext()
+    )
+
+    const output = (result as { title: string }).title
+    expect(output).toContain("Specification Generated")
+  })
+
+  test("template validation is case-insensitive", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "CONSENSUS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.participants = ["eng-1"]
+    state.discussion.consensusRound = 1
+    await saveState(TEST_DIR, state)
+
+    const result = await generateSpecificationTool.execute(
+      {
+        sections: [{ specialist_name: "Engineer", specialist_id: "eng-1", content: "## context & constraints\nTest\n## decision\nX\n## implementation boundaries\nY\n## risks & open questions\nNone" }],
+        topic: "Case Test",
+        template: ["Context & Constraints", "Decision", "Implementation Boundaries", "Risks & Open Questions"],
+      },
+      makeContext()
+    )
+
+    const output = (result as { title: string }).title
+    expect(output).toContain("Specification Generated")
+  })
+
+  test("no template validation when template not provided", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "CONSENSUS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.participants = ["eng-1"]
+    state.discussion.consensusRound = 1
+    await saveState(TEST_DIR, state)
+
+    // Free-form content, no template
+    const result = await generateSpecificationTool.execute(
+      {
+        sections: [{ specialist_name: "Engineer", specialist_id: "eng-1", content: "Just some free-form content without any headers" }],
+        topic: "No Template",
+      },
+      makeContext()
+    )
+
+    const output = (result as { title: string }).title
+    expect(output).toContain("Specification Generated")
+  })
+})
