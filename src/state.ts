@@ -1,4 +1,4 @@
-import { rename, unlink, writeFile, readFile, mkdir, readdir } from "node:fs/promises"
+import { rename, unlink, writeFile, readFile, mkdir, readdir, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { z, ZodError } from "zod"
 import type { DiscussionState } from "./types"
@@ -62,6 +62,8 @@ export const DiscussionStateSchema = z.object({
     analyses: z.array(AnalysisEntrySchema),
     votes: z.array(ConsensusVoteEntrySchema),
     consensusRound: z.number(),
+    participants: z.array(z.string()).default([]),
+    debateNeeded: z.boolean().default(false),
   }),
   specification: z.object({
     path: z.string().nullable(),
@@ -77,10 +79,15 @@ export const DiscussionStateSchema = z.object({
 async function cleanupOrphanedTmpFiles(stateDir: string): Promise<void> {
   try {
     const entries = await readdir(stateDir)
+    const now = Date.now()
+    const STALE_THRESHOLD_MS = 60_000 // 60 seconds
     for (const entry of entries) {
       if (entry.endsWith(".tmp")) {
         try {
-          await unlink(join(stateDir, entry))
+          const fileStat = await stat(join(stateDir, entry))
+          if (now - fileStat.mtimeMs > STALE_THRESHOLD_MS) {
+            await unlink(join(stateDir, entry))
+          }
         } catch {
           // ignore individual cleanup failures
         }

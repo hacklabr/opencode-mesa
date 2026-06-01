@@ -23,6 +23,17 @@ function transitionPhase(
   return { ok: true, phase: target }
 }
 
+/**
+ * Matches an agent_id against a list of known participants by suffix.
+ * Handles cases where subagents return IDs without their division prefix.
+ * e.g., "ux-researcher" matches "design-ux-researcher"
+ */
+function matchParticipant(agentId: string, participants: string[]): string | null {
+  if (participants.includes(agentId)) return agentId
+  const match = participants.find(p => p.endsWith(agentId) || agentId.endsWith(p))
+  return match ?? null
+}
+
 export const openAnalysisRoundTool = tool({
   description:
     "Opens a structured analysis round. The Manager defines the topic, participants (ordered), max turns, and the briefing content to analyze.",
@@ -50,11 +61,30 @@ export const openAnalysisRoundTool = tool({
       const phaseError = requirePhase(state, "PLANNING")
       if (phaseError) throw new PhaseError(phaseError)
 
+      // BUG-12: Clean up orphan briefing file from previous round
+      const oldBriefingPath = join(context.directory, PLUGIN_STATE_DIR, "briefing-for-discussion.md")
+      try {
+        await fs.unlink(oldBriefingPath)
+      } catch {
+        // file may not exist — that's fine
+      }
+
       const existingAnalyses = state.discussion.analyses.length
       const existingVotes = state.discussion.votes.length
       if ((existingAnalyses > 0 || existingVotes > 0) && !args.force) {
         return errorResponse(
           `Warning: This will clear ${existingAnalyses} existing analyses and ${existingVotes} votes. Set force=true to proceed.`
+        )
+      }
+
+      // BUG-08: Validate participants against summoned team
+      const unknownParticipants = args.participants.filter(
+        (id) => !state.team.some((t) => t.personaId === id)
+      )
+      if (unknownParticipants.length > 0) {
+        return errorResponse(
+          `Unknown participants not in team: ${unknownParticipants.join(", ")}. ` +
+          `Summon them first with summon_team.`
         )
       }
 
@@ -65,9 +95,20 @@ export const openAnalysisRoundTool = tool({
       state.discussion.topic = args.topic
       state.discussion.currentTurn = 1
       state.discussion.maxTurns = args.max_turns ?? 2
+
+      if (args.force && (existingAnalyses > 0 || existingVotes > 0)) {
+        await logAction(context.directory, "analysis_round_force_cleared", state.currentPhase, {
+          clearedAnalyses: existingAnalyses,
+          clearedVotes: existingVotes,
+          newTopic: args.topic,
+        })
+      }
+
       state.discussion.analyses = []
       state.discussion.votes = []
       state.discussion.consensusRound = 0
+      state.discussion.participants = args.participants
+      state.discussion.debateNeeded = false
       state.specification = { path: null, status: "pending" }
 
       if (args.briefing_content) {
@@ -77,6 +118,7 @@ export const openAnalysisRoundTool = tool({
           "briefing-for-discussion.md"
         )
         await fs.writeFile(briefingFile, args.briefing_content, "utf-8")
+        await logAction(context.directory, "briefing_for_discussion_written", state.currentPhase, { path: briefingFile })
       }
 
       await saveState(context.directory, state)
@@ -101,7 +143,7 @@ export const openAnalysisRoundTool = tool({
       return successResponse(
         "Analysis Round Opened",
         [
-          `${formatPhaseHeader(state.currentPhase)}`,
+          `${formatPhaseHeader(state.currentPhase, { topic: args.topic, currentTurn: 1, maxTurns: state.discussion.maxTurns, participants: args.participants })}`,
           ``,
           `Topic: ${args.topic}`,
           ``,
@@ -140,15 +182,44 @@ export const registerAnalysisTool = tool({
       const phaseError = requirePhase(state, "ANALYSIS")
       if (phaseError) throw new PhaseError(phaseError)
 
+      // BUG-13: Agent ID suffix matching
+      const participants = state.discussion.participants
+      const matchedId = participants.length > 0
+        ? matchParticipant(args.agent_id, participants)
+        : args.agent_id
+
+      // BUG-05/08: Participant validation
+      if (participants.length > 0 && !matchedId) {
+        return errorResponse(
+          `${args.agent_name} (${args.agent_id}) is not a participant in this round. ` +
+          `Participants: ${participants.join(", ")}`
+        )
+      }
+
+      // BUG-02: Enforce maxTurns
+      if (args.turn > state.discussion.maxTurns) {
+        return errorResponse(
+          `Turn ${args.turn} exceeds maxTurns (${state.discussion.maxTurns}). ` +
+          `All turns completed. Proceed to consensus.`
+        )
+      }
+
+      // BUG-01: Derive current turn from analyses, validate turn progression
+      if (args.turn < 1) {
+        return errorResponse(`Turn must be 1 or greater. Got: ${args.turn}.`)
+      }
+
+      // Dedup check (existing) — use matchedId
+      const effectiveId = matchedId ?? args.agent_id
       const existing = state.discussion.analyses.find(
-        (a) => a.agentId === args.agent_id && a.turn === args.turn
+        (a) => a.agentId === effectiveId && a.turn === args.turn
       )
       if (existing) {
         return errorResponse(`Analysis already registered for ${args.agent_name} turn ${args.turn}.`)
       }
 
       const entry: AnalysisEntry = {
-        agentId: args.agent_id,
+        agentId: effectiveId,
         agentName: args.agent_name,
         content: args.content,
         turn: args.turn,
@@ -158,12 +229,71 @@ export const registerAnalysisTool = tool({
       state.discussion.analyses.push(entry)
       await saveState(context.directory, state)
 
-      const total = state.team.filter((s) => s.status === "summoned" || s.status === "active").length
+      // BUG-15: Calculate progress against participants, not team
+      const total = participants.length > 0
+        ? participants.length
+        : state.team.filter((s) => s.status === "summoned" || s.status === "active").length
       const current = state.discussion.analyses.filter((a) => a.turn === args.turn).length
+
+      // BUG-20: Content preview for human observability
+      const contentPreview = args.content.length > 300
+        ? args.content.slice(0, 300) + "..."
+        : args.content
+
+      // BUG-19: Enriched header
+      const header = formatPhaseHeader(state.currentPhase, {
+        topic: state.discussion.topic,
+        currentTurn: args.turn,
+        maxTurns: state.discussion.maxTurns,
+        participants,
+        analysesCount: current,
+      })
+
+      // Soft warning for out-of-order registration
+      let warning = ""
+      if (participants.length > 0) {
+        const participantIndex = participants.indexOf(effectiveId)
+        if (participantIndex > 0) {
+          const registeredThisTurn = new Set(
+            state.discussion.analyses
+              .filter((a) => a.turn === args.turn)
+              .map((a) => a.agentId)
+          )
+          const skipped = participants
+            .slice(0, participantIndex)
+            .filter((id) => !registeredThisTurn.has(id))
+            .map((id) => state.team.find((t) => t.personaId === id)?.name ?? id)
+
+          if (skipped.length > 0) {
+            warning = `\n\nNote: ${skipped.join(", ")} have not registered yet for turn ${args.turn}. Consider waiting for their analyses.`
+          }
+        }
+      }
+
+      // Next-step hint
+      let nextStep = ""
+      if (current < total) {
+        nextStep = `Next: Register analysis from the next specialist for turn ${args.turn}.`
+      } else if (args.turn < state.discussion.maxTurns) {
+        nextStep = `Turn ${args.turn} complete! All ${total} analyses received. Proceed to turn ${args.turn + 1}.`
+      } else {
+        nextStep = `All turns complete (${state.discussion.maxTurns}/${state.discussion.maxTurns}). Call request_consensus to proceed.`
+      }
 
       return successResponse(
         `Analysis Registered: ${args.agent_name}`,
-        `${formatPhaseHeader(state.currentPhase)}\n\nSpecialist ${args.agent_name} completed turn ${args.turn}.\nProgress: ${current}/${total} analyses for turn ${args.turn}.`
+        [
+          header,
+          ``,
+          `Specialist ${args.agent_name} completed turn ${args.turn}.`,
+          `Progress: ${current}/${total} analyses for turn ${args.turn}.`,
+          warning,
+          ``,
+          `## Analysis Preview`,
+          contentPreview,
+          ``,
+          nextStep,
+        ].join("\n")
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -201,6 +331,32 @@ export const requestConsensusTool = tool({
         }
       }
 
+      // BUG-04: Completeness gate — verify all participants completed all turns
+      const participants = state.discussion.participants
+      if (participants.length > 0) {
+        const lastTurn = Math.max(...state.discussion.analyses.map((a) => a.turn), 1)
+        const completedForLastTurn = new Set(
+          state.discussion.analyses
+            .filter((a) => a.turn === lastTurn)
+            .map((a) => a.agentId)
+        )
+        const missing = participants.filter((id) => {
+          // Check both exact match and suffix match
+          return !completedForLastTurn.has(id) &&
+            !Array.from(completedForLastTurn).some(cid => cid.endsWith(id) || id.endsWith(cid))
+        })
+        if (missing.length > 0) {
+          const missingNames = missing.map(
+            (id) => state.team.find((t) => t.personaId === id)?.name ?? id
+          )
+          return errorResponse(
+            `Cannot proceed to consensus. Not all analyses complete for turn ${lastTurn}.\n` +
+            `Missing: ${missingNames.join(", ")}.\n` +
+            `Register their analyses first.`
+          )
+        }
+      }
+
       const existingVotes = state.discussion.votes.filter((v) => v.round === args.round)
       for (const v of args.votes) {
         if (existingVotes.some((ev) => ev.agentId === v.agent_id)) {
@@ -213,6 +369,21 @@ export const requestConsensusTool = tool({
 
       state.currentPhase = result.phase
       state.discussion.consensusRound = args.round
+
+      // BUG-05/13: Validate votes come from participants
+      for (const v of args.votes) {
+        const matchedVoter = participants.length > 0
+          ? matchParticipant(v.agent_id, participants)
+          : v.agent_id
+        if (participants.length > 0 && !matchedVoter) {
+          return errorResponse(
+            `${v.agent_name} (${v.agent_id}) is not a participant in this round and cannot vote. ` +
+            `Participants: ${participants.join(", ")}`
+          )
+        }
+        // Use matched ID for vote recording
+        v.agent_id = matchedVoter ?? v.agent_id
+      }
 
       for (const v of args.votes) {
         const entry: ConsensusVoteEntry = {
@@ -227,6 +398,8 @@ export const requestConsensusTool = tool({
 
       const allAgree = args.votes.every((v) => v.vote === 1 || v.vote === 2)
       const hasDisagreement = args.votes.some((v) => v.vote === 0)
+
+      state.discussion.debateNeeded = hasDisagreement
 
       await saveState(context.directory, state)
       await logAction(context.directory, "consensus_requested", state.currentPhase, { round: args.round })
@@ -246,7 +419,7 @@ export const requestConsensusTool = tool({
       if (allAgree) {
         return successResponse(
           "Consensus Reached",
-          `${formatPhaseHeader(state.currentPhase)}\n\nAll specialists agree.\n\nVotes:\n${voteSummary}\n\nConsensus achieved. Proceed to specification generation.`
+          `${formatPhaseHeader(state.currentPhase, { topic: state.discussion.topic })}\n\nAll specialists agree.\n\nVotes:\n${voteSummary}\n\nConsensus achieved. Proceed to specification generation.`
         )
       }
 
@@ -258,13 +431,13 @@ export const requestConsensusTool = tool({
 
         return successResponse(
           "Consensus Not Reached — Debate Required",
-          `${formatPhaseHeader(state.currentPhase)}\n\nVotes:\n${voteSummary}\n\nDisagreeing: ${disagreeing}\n\nA debate round is needed. Ask disagreeing specialists to present their concerns and re-vote.`
+          `${formatPhaseHeader(state.currentPhase, { topic: state.discussion.topic })}\n\nVotes:\n${voteSummary}\n\nDisagreeing: ${disagreeing}\n\nA debate round is needed. Ask disagreeing specialists to present their concerns and re-vote.`
         )
       }
 
       return successResponse(
         "Consensus Phase",
-        `${formatPhaseHeader(state.currentPhase)}\n\nVotes:\n${voteSummary}`
+        `${formatPhaseHeader(state.currentPhase, { topic: state.discussion.topic })}\n\nVotes:\n${voteSummary}`
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -292,15 +465,10 @@ export const generateSpecificationTool = tool({
     try {
       const state = await loadState(context.directory)
 
-      const step1 = transitionPhase(state.currentPhase, "DOCUMENTATION")
-      if (!step1.ok) throw new PhaseError(step1.error)
-
-      const step2 = transitionPhase("DOCUMENTATION", "APPROVAL")
-      if (!step2.ok) {
-        throw new PhaseError(`Cannot transition DOCUMENTATION → APPROVAL: ${step2.error}`)
-      }
-
-      state.currentPhase = step1.phase
+      // Transition CONSENSUS → DOCUMENTATION
+      const toDoc = transitionPhase(state.currentPhase, "DOCUMENTATION")
+      if (!toDoc.ok) throw new PhaseError(toDoc.error)
+      state.currentPhase = toDoc.phase
 
       const specsDir = join(context.directory, PLUGIN_STATE_DIR, "specifications")
       await fs.mkdir(specsDir, { recursive: true })
@@ -345,14 +513,18 @@ export const generateSpecificationTool = tool({
 
       state.specification.path = specPath
       state.specification.status = "draft"
-      state.currentPhase = step2.phase
+
+      // Transition DOCUMENTATION → APPROVAL
+      const toApproval = transitionPhase(state.currentPhase, "APPROVAL")
+      if (!toApproval.ok) throw new PhaseError(toApproval.error)
+      state.currentPhase = toApproval.phase
 
       await saveState(context.directory, state)
       await logAction(context.directory, "specification_generated", state.currentPhase, { path: specPath })
 
       return successResponse(
         "Specification Generated",
-        `${formatPhaseHeader(state.currentPhase)}\n\nSpecification saved to: ${specPath}\n\nThe specification is now awaiting human approval.`,
+        `${formatPhaseHeader(state.currentPhase, { topic: args.topic })}\n\nSpecification saved to: ${specPath}\n\nThe specification is now awaiting human approval.`,
         { path: specPath }
       )
     } catch (err) {

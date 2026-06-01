@@ -103,20 +103,42 @@ After human approval:
 - Register all turn 2 analyses with `turn: 2`.
 - **The second turn is where cross-pollination happens — this is NOT optional.**
 
+**Turn 2+ Quality Guidelines (MANDATORY):**
+- **Convergence Signaling**: If turn 1 analyses all agree, ask specialists "What did peers miss?" (devil's advocate). If they disagree, ask "Where is the middle ground?"
+- **Depth-over-Breadth**: Explicitly instruct specialists to go deeper on disagreements, NOT re-cover agreed ground.
+- **Synthesis Narration**: After EACH turn completes, present a compact synthesis to the human:
+  - ✅ Agreements (what all/most specialists converged on)
+  - ⚠️ Tensions (key disagreements)
+  - 🔍 Open questions (unresolved items)
+- **Voice Markers**: Use `> "quote" — Specialist Name` format when citing specialists.
+- **Never skip deliberation**: Always present a summary before calling `request_consensus`.
+
 **Example turn 2 prompt:**
 ```
-You are participating in turn 2 of a multi-specialist analysis. Here are the analyses from your peers:
+You are participating in TURN 2 of a multi-specialist analysis. Here are the analyses from your peers:
 
-[Peer 1 analysis]
-[Peer 2 analysis]
-...
+## [Peer 1 Name] Analysis:
+[peer 1 content]
 
-Please:
+## [Peer 2 Name] Analysis:
+[peer 2 content]
+
+Your task:
 1. Review your peers' findings
-2. Identify points of agreement and disagreement
+2. Identify points of AGREEMENT and DISAGREEMENT
 3. Note anything important your peers missed
 4. Refine your own analysis considering their perspectives
-5. Return your updated analysis
+5. Focus on DEPTH — don't re-cover what's agreed, dig into tensions and gaps
+```
+
+**After each turn, present this to the human:**
+```
+## Turn N Summary
+✅ Agreements: [what specialists agreed on]
+⚠️ Tensions: [key disagreements]
+🔍 Open: [unresolved items]
+
+Proceeding to turn N+1...
 ```
 
 ### 5. Deliberation & Consensus

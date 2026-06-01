@@ -55,6 +55,8 @@ export interface DiscussionState {
     analyses: AnalysisEntry[]
     votes: ConsensusVoteEntry[]
     consensusRound: number
+    participants: string[]
+    debateNeeded: boolean
   }
   specification: {
     path: string | null

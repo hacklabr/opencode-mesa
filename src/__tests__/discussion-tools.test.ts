@@ -74,6 +74,9 @@ describe("open_analysis_round tool", () => {
   test("resets specification state on open", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
     state.specification = { path: "/old/spec.md", status: "draft" }
     state.discussion.votes = [
       { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
@@ -151,6 +154,49 @@ describe("open_analysis_round tool", () => {
       "utf-8"
     )
     expect(file).toBe("## Briefing for analysis")
+  })
+
+  test("rejects unknown participants not in team (BUG-08)", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "PLANNING"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    await saveState(TEST_DIR, state)
+
+    const result = await openAnalysisRoundTool.execute(
+      {
+        topic: "Test",
+        participants: ["eng-1", "unknown-agent"],
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("Unknown participants")
+    expect(result).toContain("unknown-agent")
+  })
+
+  test("stores participants in state (BUG-03)", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "PLANNING"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+      { personaId: "design-1", name: "Designer", division: "design", status: "summoned" },
+    ]
+    await saveState(TEST_DIR, state)
+
+    await openAnalysisRoundTool.execute(
+      {
+        topic: "Test Participants",
+        participants: ["eng-1", "design-1"],
+      },
+      makeContext()
+    )
+
+    const loaded = JSON.parse(
+      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
+    )
+    expect(loaded.discussion.participants).toEqual(["eng-1", "design-1"])
   })
 })
 
@@ -633,5 +679,251 @@ describe("cancel_discussion tool", () => {
     const result = await cancelDiscussionTool.execute({}, makeContext())
 
     expect(result).toHaveProperty("title", "Discussion Cancelled")
+  })
+})
+
+describe("register_analysis validation gates", () => {
+  beforeEach(async () => {
+    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "ANALYSIS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+      { personaId: "design-1", name: "Designer", division: "design", status: "summoned" },
+    ]
+    state.discussion.topic = "Test Topic"
+    state.discussion.maxTurns = 2
+    state.discussion.participants = ["eng-1", "design-1"]
+    await saveState(TEST_DIR, state)
+  })
+
+  afterEach(async () => {
+    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
+  })
+
+  test("rejects non-participant (BUG-05)", async () => {
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "unknown-agent",
+        agent_name: "Unknown",
+        content: "Test analysis",
+        turn: 1,
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("not a participant")
+  })
+
+  test("rejects turn exceeding maxTurns (BUG-02)", async () => {
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Test analysis",
+        turn: 3,
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("exceeds maxTurns")
+  })
+
+  test("rejects turn less than 1 (BUG-01)", async () => {
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Test analysis",
+        turn: 0,
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("Turn must be 1 or greater")
+  })
+
+  test("matches agent ID by suffix (BUG-13)", async () => {
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "1",  // suffix of "eng-1"
+        agent_name: "Engineer",
+        content: "Test analysis content here",
+        turn: 1,
+      },
+      makeContext()
+    )
+
+    const output = (result as { title: string }).title
+    expect(output).toContain("Analysis Registered")
+
+    // Verify stored with full ID
+    const loaded = JSON.parse(
+      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
+    )
+    expect(loaded.discussion.analyses[0].agentId).toBe("eng-1")
+  })
+
+  test("shows content preview in response (BUG-20)", async () => {
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "This is a detailed analysis that should be previewed in the response for human observability",
+        turn: 1,
+      },
+      makeContext()
+    )
+
+    const output = (result as { output: string }).output
+    expect(output).toContain("Analysis Preview")
+    expect(output).toContain("detailed analysis")
+  })
+
+  test("shows next-step hint when turn incomplete", async () => {
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Test",
+        turn: 1,
+      },
+      makeContext()
+    )
+
+    const output = (result as { output: string }).output
+    expect(output).toContain("Next: Register analysis from the next specialist")
+  })
+
+  test("shows turn complete hint when all analysts done", async () => {
+    // Register first analyst
+    await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "First analysis",
+        turn: 1,
+      },
+      makeContext()
+    )
+
+    // Register second analyst
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "design-1",
+        agent_name: "Designer",
+        content: "Second analysis",
+        turn: 1,
+      },
+      makeContext()
+    )
+
+    const output = (result as { output: string }).output
+    expect(output).toContain("Turn 1 complete")
+  })
+})
+
+describe("request_consensus validation gates", () => {
+  beforeEach(async () => {
+    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
+  })
+
+  afterEach(async () => {
+    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
+  })
+
+  test("blocks consensus when analyses incomplete (BUG-04)", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "ANALYSIS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+      { personaId: "design-1", name: "Designer", division: "design", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.maxTurns = 2
+    state.discussion.participants = ["eng-1", "design-1"]
+    state.discussion.analyses = [
+      { agentId: "eng-1", agentName: "Engineer", content: "Analysis 1", turn: 1, timestamp: new Date().toISOString() },
+      { agentId: "design-1", agentName: "Designer", content: "Analysis 2", turn: 1, timestamp: new Date().toISOString() },
+      // Only eng-1 has turn 2 — design-1 is missing
+      { agentId: "eng-1", agentName: "Engineer", content: "Analysis 1 turn 2", turn: 2, timestamp: new Date().toISOString() },
+    ]
+    await saveState(TEST_DIR, state)
+
+    const result = await requestConsensusTool.execute(
+      {
+        votes: [
+          { agent_id: "eng-1", agent_name: "Engineer", vote: 1, reason: "OK" },
+          { agent_id: "design-1", agent_name: "Designer", vote: 1, reason: "OK" },
+        ],
+        round: 1,
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("Not all analyses complete")
+    expect(result).toContain("Designer")
+  })
+
+  test("blocks consensus from non-participant voters (BUG-05)", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "ANALYSIS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.maxTurns = 1
+    state.discussion.participants = ["eng-1"]
+    state.discussion.analyses = [
+      { agentId: "eng-1", agentName: "Engineer", content: "Analysis", turn: 1, timestamp: new Date().toISOString() },
+    ]
+    await saveState(TEST_DIR, state)
+
+    const result = await requestConsensusTool.execute(
+      {
+        votes: [
+          { agent_id: "eng-1", agent_name: "Engineer", vote: 1, reason: "OK" },
+          { agent_id: "intruder", agent_name: "Intruder", vote: 1, reason: "Hacking" },
+        ],
+        round: 1,
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("not a participant")
+    expect(result).toContain("Intruder")
+  })
+
+  test("allows consensus when all analyses complete for all turns", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "ANALYSIS"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+      { personaId: "design-1", name: "Designer", division: "design", status: "summoned" },
+    ]
+    state.discussion.topic = "Test"
+    state.discussion.maxTurns = 2
+    state.discussion.participants = ["eng-1", "design-1"]
+    state.discussion.analyses = [
+      { agentId: "eng-1", agentName: "Engineer", content: "T1", turn: 1, timestamp: new Date().toISOString() },
+      { agentId: "design-1", agentName: "Designer", content: "T1", turn: 1, timestamp: new Date().toISOString() },
+      { agentId: "eng-1", agentName: "Engineer", content: "T2", turn: 2, timestamp: new Date().toISOString() },
+      { agentId: "design-1", agentName: "Designer", content: "T2", turn: 2, timestamp: new Date().toISOString() },
+    ]
+    await saveState(TEST_DIR, state)
+
+    const result = await requestConsensusTool.execute(
+      {
+        votes: [
+          { agent_id: "eng-1", agent_name: "Engineer", vote: 1, reason: "I agree with the approach" },
+          { agent_id: "design-1", agent_name: "Designer", vote: 2, reason: "Agree with UX reservations" },
+        ],
+        round: 1,
+      },
+      makeContext()
+    )
+
+    const output = (result as { title: string }).title
+    expect(output).toContain("Consensus")
   })
 })

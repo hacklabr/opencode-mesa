@@ -49,6 +49,8 @@ export function createInitialState(workspaceId: string): DiscussionState {
       analyses: [],
       votes: [],
       consensusRound: 0,
+      participants: [],
+      debateNeeded: false,
     },
     specification: { path: null, status: "pending" },
     phases: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION"],

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-01
+
+### Added
+- **Multi-turn enforcement (Option C Hybrid)**: Code now enforces turn ordering, participant validation, and completeness gates — multi-turn discussions can no longer be skipped
+- **participants[] in state**: Participants are now persisted in discussion state, enabling accurate progress tracking and validation
+- **Completeness gate on consensus**: `request_consensus` blocks if any participant hasn't completed all turns
+- **Agent ID suffix matching**: Subagents returning partial IDs (e.g., `ux-researcher` vs `design-ux-researcher`) are now correctly matched
+- **Rich phase headers**: `formatPhaseHeader` now shows topic, turn progress, and analysis count when context is available
+- **Content preview in register_analysis**: Tool responses now include a 300-char analysis preview for human observability
+- **Next-step hints**: `register_analysis` responses guide the Manager on what to do next
+- **Soft ordering warnings**: Advisory note when specialists register out of the suggested order
+- **Debate round state tracking**: `debateNeeded` flag set when consensus fails with disagreements
+- **Enhanced Manager prompt**: Turn 2+ quality guidelines (convergence signaling, depth-over-breadth, synthesis narration, voice markers, turn summary templates)
+- **13 new tests** covering all validation gates (106 total, 0 failures)
+
+### Fixed
+- **BUG-01**: `currentTurn` was a dead field — turn progression now derived from analyses
+- **BUG-02**: `maxTurns` was never enforced — turn overflow now rejected
+- **BUG-03**: Participants were ephemeral — now persisted in state
+- **BUG-04**: No completeness gate on consensus — now blocks incomplete rounds
+- **BUG-05**: Non-participants could register analyses and votes — now validated
+- **BUG-06**: Atomic save could corrupt state with aggressive `.tmp` cleanup — now only cleans stale files (>60s)
+- **BUG-08**: `open_analysis_round` accepted unknown participants — now validates against team
+- **BUG-09**: `generate_specification` did phantom double-transition — now clean sequential transitions
+- **BUG-10**: `force=true` destroyed data with no audit trail — now logged
+- **BUG-11**: Debate round had zero state representation — `debateNeeded` flag added
+- **BUG-12**: Orphan `briefing-for-discussion.md` never cleaned up — now removed on new round
+- **BUG-13**: Agent ID mismatch between task invocation and register_analysis — suffix matching added
+- **BUG-15**: Progress counter showed nonsensical numbers — now uses participants[]
+
 ## [1.0.3] - 2026-06-01
 
 ### Fixed
