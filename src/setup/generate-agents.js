@@ -97,6 +97,9 @@ async function writePrimaryAgents() {
 }
 
 async function writeSubagents(personas) {
+  const subagentsDir = join(outputDir, "mesa")
+  await mkdir(subagentsDir, { recursive: true })
+
   const generated = []
   for (const persona of personas) {
     const description = persona.emoji
@@ -122,7 +125,7 @@ async function writeSubagents(personas) {
       persona.systemPrompt || `You are ${persona.name}. ${persona.description}`
 
     const content = frontmatter + body + "\n"
-    const outPath = join(outputDir, `${persona.id}.md`)
+    const outPath = join(subagentsDir, `${persona.id}.md`)
     await writeFile(outPath, content, "utf-8")
     generated.push(persona.id)
   }
@@ -132,19 +135,12 @@ async function writeSubagents(personas) {
 async function main() {
   await mkdir(outputDir, { recursive: true })
 
-  const existing = await readdir(outputDir).catch(() => [])
-  for (const file of existing) {
-    if (file.endsWith(".md")) {
-      await rm(join(outputDir, file))
-    }
-  }
-
   const primaries = await writePrimaryAgents()
   console.log(`Primary agents: ${primaries.join(", ")}`)
 
   const personas = await loadCatalogPersonas()
   const subagents = await writeSubagents(personas)
-  console.log(`Subagents generated: ${subagents.length} (hidden, mode: subagent)`)
+  console.log(`Subagents generated: ${subagents.length} in mesa/ (hidden, mode: subagent)`)
 
   console.log(`\nOutput: ${outputDir}`)
   console.log("Restart opencode to load the new agents.")

@@ -42,7 +42,7 @@ These rules apply to EVERY phase of the workflow, without exception:
 
 Each specialist is a registered subagent with their own system prompt. To delegate work, use the **`task` tool** with:
 
-- `subagent_type`: the specialist's persona ID (e.g. `engineering-frontend-developer`, `product-product-manager`)
+- `subagent_type`: the specialist's persona ID prefixed with `mesa/` (e.g. `mesa/engineering-frontend-developer`, `mesa/product-product-manager`)
 - `prompt`: a detailed task description including all relevant context (task instructions, briefing content, code references, previous analyses)
 - `description`: a short 3-5 word label for the task
 
@@ -51,7 +51,7 @@ The specialist's system prompt is automatically injected by OpenCode when you us
 
 Example:
 ```
-task(subagent_type="engineering-backend-architect", prompt="Analyze the briefing for API design...", description="API architecture analysis")
+task(subagent_type="mesa/engineering-backend-architect", prompt="Analyze the briefing for API design...", description="API architecture analysis")
 ```
 
 **BAD — DO NOT DO THIS:**
@@ -73,7 +73,7 @@ When a briefing is delivered to you, analyze it to understand:
 - Use `list_specialists` to discover available specialists.
 - Analyze the briefing scope and identify which specialists are needed.
 - Present a team proposal table to the human with:
-  - Specialist name and ID (this is the `subagent_type` for the task tool)
+  - Specialist name and ID (this is the `subagent_type` for the task tool, prefixed with `mesa/`)
   - Division
   - Justification (why this specialist is needed)
   - Role in the discussion
@@ -87,7 +87,7 @@ After human approval:
 ### 4. Open Discussion Round
 - Use `open_analysis_round` to start structured analysis.
 - Specify participants (ordered array of persona IDs), topic, max turns, and briefing content.
-- **For each specialist's analysis turn**, use the `task` tool with `subagent_type` set to that specialist's persona ID. Pass the briefing and any previous analyses as context in the `prompt`.
+- **For each specialist's analysis turn**, use the `task` tool with `subagent_type` set to `mesa/` + the specialist's persona ID (e.g., `mesa/engineering-backend-architect`). Pass the briefing and any previous analyses as context in the `prompt`.
 - After each specialist completes their analysis, use `register_analysis` to record their output.
 
 ### 5. Monitor Progress
