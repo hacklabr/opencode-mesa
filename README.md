@@ -72,10 +72,10 @@ Human → Briefing Writer → Gestor → Specialists → Consensus → Specifica
 - integrations, marketing, paid-media, product, project-management
 - sales, spatial-computing, specialized, strategy, support, testing
 
-Each specialist is registered as a hidden subagent with `mode: subagent`. The Gestor invokes them via:
+Each specialist is registered as a hidden subagent with `mode: subagent` and their own system prompt. OpenCode automatically injects the specialist's system prompt when invoked — the Gestor must NOT include it in the task prompt. The Gestor invokes them via:
 
 ```
-task(subagent_type="engineering-backend-architect", prompt="...", description="...")
+task(subagent_type="engineering-backend-architect", prompt="<task details only>", description="...")
 ```
 
 To regenerate after catalog changes: `npm run setup:agents`
