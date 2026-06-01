@@ -2,6 +2,8 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { loadCatalogFromDirectory, type Persona, type CatalogSummary } from "../catalog/loader"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
+import { formatPhaseHeader } from "../workflow/transitions"
+import { successResponse, errorResponse } from "../utils/responses"
 
 const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CATALOG_DIR = join(PLUGIN_ROOT, "catalog", "agency-agents")
@@ -10,7 +12,7 @@ let cachedPersonas: Persona[] | null = null
 let cachedSummary: CatalogSummary | null = null
 
 async function loadCatalog() {
-  if (cachedPersonas) return { personas: cachedPersonas, summary: cachedSummary! }
+  if (cachedPersonas && cachedSummary) return { personas: cachedPersonas, summary: cachedSummary }
   const result = await loadCatalogFromDirectory(CATALOG_DIR)
   cachedPersonas = result.personas
   cachedSummary = result.summary
@@ -29,6 +31,14 @@ export const listSpecialistsTool = tool({
       .string()
       .optional()
       .describe("Search term to filter by name or description"),
+    page: tool.schema
+      .number()
+      .optional()
+      .describe("Page number (1-based, default: 1)"),
+    page_size: tool.schema
+      .number()
+      .optional()
+      .describe("Page size (default: 20, max: 100)"),
   },
   async execute(args) {
     try {
@@ -49,28 +59,42 @@ export const listSpecialistsTool = tool({
         )
       }
 
-      return {
-        title: "Available Specialists",
-        output: JSON.stringify(
-          {
-            totalAvailable: filtered.length,
-            divisions: args.division
-              ? [args.division]
-              : summary.divisions,
-            personas: filtered.map((p) => ({
-              id: p.id,
-              name: p.name,
-              division: p.division,
-              emoji: p.emoji,
-              description: p.description.slice(0, 200),
-            })),
-          },
-          null,
-          2
-        ),
-      }
+      const pageSize = Math.min(Math.max(args.page_size ?? 20, 1), 100)
+      const page = Math.max(args.page ?? 1, 1)
+      const total = filtered.length
+      const start = (page - 1) * pageSize
+      const end = Math.min(start + pageSize, total)
+      const pageItems = filtered.slice(start, end)
+
+      const divisionLabel = args.division ? `'${args.division}'` : "all"
+      const header = `Showing ${total > 0 ? start + 1 : 0}-${end} of ${total} specialists in division ${divisionLabel}`
+
+      const tableRows = pageItems.map((p) =>
+        `| ${p.emoji || "—"} | ${p.name} | \`${p.id}\` | ${p.division} |`
+      )
+
+      const table = [
+        `| Emoji | Name | ID | Division |`,
+        `|-------|------|----|----------|`,
+        ...tableRows,
+      ].join("\n")
+
+      const output = [
+        formatPhaseHeader("catalog"),
+        ``,
+        header,
+        ``,
+        table,
+      ].join("\n")
+
+      return successResponse("Available Specialists", output, {
+        total,
+        page,
+        pageSize,
+        divisionFilter: args.division ?? null,
+      })
     } catch (err) {
-      return `Error loading catalog: ${err instanceof Error ? err.message : String(err)}`
+      return errorResponse(`Error loading catalog: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -86,15 +110,17 @@ export const getSpecialistTool = tool({
       const { personas } = await loadCatalog()
       const persona = personas.find((p) => p.id === args.id)
       if (!persona) {
-        return `Specialist not found: ${args.id}`
+        return errorResponse(
+          `Specialist not found: ${args.id}\n\nUse list_specialists to browse available specialists.`
+        )
       }
 
-      return {
-        title: `Specialist: ${persona.name}`,
-        output: JSON.stringify(persona, null, 2),
-      }
+      return successResponse(
+        `Specialist: ${persona.name}`,
+        `${formatPhaseHeader("catalog")}\n\n${JSON.stringify(persona, null, 2)}`
+      )
     } catch (err) {
-      return `Error loading specialist: ${err instanceof Error ? err.message : String(err)}`
+      return errorResponse(`Error loading specialist: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })

@@ -1,12 +1,14 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState } from "../state"
-import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry } from "../config"
-import { canTransition, VALID_TRANSITIONS, requirePhase } from "./gestor-tools"
+import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry } from "../types"
+import { canTransition, VALID_TRANSITIONS, requirePhase, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { PLUGIN_STATE_DIR } from "../config"
 import { logAction } from "../audit"
+import { successResponse, errorResponse } from "../utils/responses"
+import { PhaseError, MesaError } from "../errors"
 
 function transitionPhase(
   current: DiscussionPhase,
@@ -23,7 +25,7 @@ function transitionPhase(
 
 export const openAnalysisRoundTool = tool({
   description:
-    "Opens a structured analysis round. The Gestor defines the topic, participants (ordered), max turns, and the briefing content to analyze.",
+    "Opens a structured analysis round. The Manager defines the topic, participants (ordered), max turns, and the briefing content to analyze.",
   args: {
     topic: tool.schema.string().describe("The discussion topic"),
     participants: tool.schema
@@ -37,15 +39,27 @@ export const openAnalysisRoundTool = tool({
       .string()
       .optional()
       .describe("Briefing content for specialists to analyze"),
+    force: tool.schema
+      .boolean()
+      .optional()
+      .describe("Force re-open even if analyses already exist (default: false)"),
   },
   async execute(args, context) {
     try {
       const state = await loadState(context.directory)
       const phaseError = requirePhase(state, "PLANNING")
-      if (phaseError) return `Error: ${phaseError}`
+      if (phaseError) throw new PhaseError(phaseError)
+
+      const existingAnalyses = state.discussion.analyses.length
+      const existingVotes = state.discussion.votes.length
+      if ((existingAnalyses > 0 || existingVotes > 0) && !args.force) {
+        return errorResponse(
+          `Warning: This will clear ${existingAnalyses} existing analyses and ${existingVotes} votes. Set force=true to proceed.`
+        )
+      }
 
       const result = transitionPhase(state.currentPhase, "ANALYSIS")
-      if (!result.ok) return `Error: ${result.error}`
+      if (!result.ok) throw new PhaseError(result.error)
 
       state.currentPhase = result.phase
       state.discussion.topic = args.topic
@@ -54,6 +68,7 @@ export const openAnalysisRoundTool = tool({
       state.discussion.analyses = []
       state.discussion.votes = []
       state.discussion.consensusRound = 0
+      state.specification = { path: null, status: "pending" }
 
       if (args.briefing_content) {
         const briefingFile = join(
@@ -83,9 +98,11 @@ export const openAnalysisRoundTool = tool({
         )
         .join("\n\n")
 
-      return {
-        title: "Analysis Round Opened",
-        output: [
+      return successResponse(
+        "Analysis Round Opened",
+        [
+          `${formatPhaseHeader(state.currentPhase)}`,
+          ``,
           `Topic: ${args.topic}`,
           ``,
           `Participants (in order):`,
@@ -99,10 +116,11 @@ export const openAnalysisRoundTool = tool({
           `After each specialist returns their analysis, call \`register_analysis\` to record it.`,
           ``,
           taskInstructions,
-        ].join("\n"),
-      }
+        ].join("\n")
+      )
     } catch (err) {
-      return `Error opening analysis round: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error opening analysis round: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -120,7 +138,14 @@ export const registerAnalysisTool = tool({
     try {
       const state = await loadState(context.directory)
       const phaseError = requirePhase(state, "ANALYSIS")
-      if (phaseError) return `Error: ${phaseError}`
+      if (phaseError) throw new PhaseError(phaseError)
+
+      const existing = state.discussion.analyses.find(
+        (a) => a.agentId === args.agent_id && a.turn === args.turn
+      )
+      if (existing) {
+        return errorResponse(`Analysis already registered for ${args.agent_name} turn ${args.turn}.`)
+      }
 
       const entry: AnalysisEntry = {
         agentId: args.agent_id,
@@ -136,12 +161,13 @@ export const registerAnalysisTool = tool({
       const total = state.team.filter((s) => s.status === "summoned" || s.status === "active").length
       const current = state.discussion.analyses.filter((a) => a.turn === args.turn).length
 
-      return {
-        title: `Analysis Registered: ${args.agent_name}`,
-        output: `Specialist ${args.agent_name} completed turn ${args.turn}.\nProgress: ${current}/${total} analyses for turn ${args.turn}.`,
-      }
+      return successResponse(
+        `Analysis Registered: ${args.agent_name}`,
+        `${formatPhaseHeader(state.currentPhase)}\n\nSpecialist ${args.agent_name} completed turn ${args.turn}.\nProgress: ${current}/${total} analyses for turn ${args.turn}.`
+      )
     } catch (err) {
-      return `Error registering analysis: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error registering analysis: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -166,10 +192,24 @@ export const requestConsensusTool = tool({
     try {
       const state = await loadState(context.directory)
       const phaseError = requirePhase(state, "ANALYSIS")
-      if (phaseError) return `Error: ${phaseError}`
+      if (phaseError) throw new PhaseError(phaseError)
+
+      const VALID_VOTES = new Set([0, 1, 2])
+      for (const v of args.votes) {
+        if (!VALID_VOTES.has(v.vote)) {
+          return errorResponse(`Invalid vote value ${v.vote} for ${v.agent_name}. Must be 0 (DISAGREE), 1 (AGREE), or 2 (AGREE_WITH_RESERVATIONS).`)
+        }
+      }
+
+      const existingVotes = state.discussion.votes.filter((v) => v.round === args.round)
+      for (const v of args.votes) {
+        if (existingVotes.some((ev) => ev.agentId === v.agent_id)) {
+          return errorResponse(`Vote already registered for ${v.agent_name} in round ${args.round}.`)
+        }
+      }
 
       const result = transitionPhase(state.currentPhase, "CONSENSUS")
-      if (!result.ok) return `Error: ${result.error}`
+      if (!result.ok) throw new PhaseError(result.error)
 
       state.currentPhase = result.phase
       state.discussion.consensusRound = args.round
@@ -204,10 +244,10 @@ export const requestConsensusTool = tool({
         .join("\n")
 
       if (allAgree) {
-        return {
-          title: "Consensus Reached",
-          output: `All specialists agree.\n\nVotes:\n${voteSummary}\n\nConsensus achieved. Proceed to specification generation.`,
-        }
+        return successResponse(
+          "Consensus Reached",
+          `${formatPhaseHeader(state.currentPhase)}\n\nAll specialists agree.\n\nVotes:\n${voteSummary}\n\nConsensus achieved. Proceed to specification generation.`
+        )
       }
 
       if (hasDisagreement) {
@@ -216,18 +256,19 @@ export const requestConsensusTool = tool({
           .map((v) => v.agent_name)
           .join(", ")
 
-        return {
-          title: "Consensus Not Reached — Debate Required",
-          output: `Votes:\n${voteSummary}\n\nDisagreeing: ${disagreeing}\n\nA debate round is needed. Ask disagreeing specialists to present their concerns and re-vote.`,
-        }
+        return successResponse(
+          "Consensus Not Reached — Debate Required",
+          `${formatPhaseHeader(state.currentPhase)}\n\nVotes:\n${voteSummary}\n\nDisagreeing: ${disagreeing}\n\nA debate round is needed. Ask disagreeing specialists to present their concerns and re-vote.`
+        )
       }
 
-      return {
-        title: "Consensus Phase",
-        output: `Votes:\n${voteSummary}`,
-      }
+      return successResponse(
+        "Consensus Phase",
+        `${formatPhaseHeader(state.currentPhase)}\n\nVotes:\n${voteSummary}`
+      )
     } catch (err) {
-      return `Error requesting consensus: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error requesting consensus: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -250,12 +291,18 @@ export const generateSpecificationTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory)
-      const result = transitionPhase(state.currentPhase, "DOCUMENTATION")
-      if (!result.ok) return `Error: ${result.error}`
 
-      state.currentPhase = result.phase
+      const step1 = transitionPhase(state.currentPhase, "DOCUMENTATION")
+      if (!step1.ok) throw new PhaseError(step1.error)
 
-      const specsDir = join(context.directory, PLUGIN_STATE_DIR, "especificacoes")
+      const step2 = transitionPhase("DOCUMENTATION", "APPROVAL")
+      if (!step2.ok) {
+        throw new PhaseError(`Cannot transition DOCUMENTATION → APPROVAL: ${step2.error}`)
+      }
+
+      state.currentPhase = step1.phase
+
+      const specsDir = join(context.directory, PLUGIN_STATE_DIR, "specifications")
       await fs.mkdir(specsDir, { recursive: true })
 
       const id = randomUUID().slice(0, 8)
@@ -298,21 +345,19 @@ export const generateSpecificationTool = tool({
 
       state.specification.path = specPath
       state.specification.status = "draft"
+      state.currentPhase = step2.phase
 
-      const approvalResult = transitionPhase("DOCUMENTATION", "APPROVAL")
-      if (!approvalResult.ok) return `Error: ${approvalResult.error}`
-
-      state.currentPhase = approvalResult.phase
       await saveState(context.directory, state)
       await logAction(context.directory, "specification_generated", state.currentPhase, { path: specPath })
 
-      return {
-        title: "Specification Generated",
-        output: `Specification saved to: ${specPath}\n\nThe specification is now awaiting human approval.`,
-        metadata: { path: specPath },
-      }
+      return successResponse(
+        "Specification Generated",
+        `${formatPhaseHeader(state.currentPhase)}\n\nSpecification saved to: ${specPath}\n\nThe specification is now awaiting human approval.`,
+        { path: specPath }
+      )
     } catch (err) {
-      return `Error generating specification: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error generating specification: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -333,33 +378,34 @@ export const approveSpecificationTool = tool({
 
       if (args.approved) {
         const result = transitionPhase(state.currentPhase, "EXECUTION")
-        if (!result.ok) return `Error: ${result.error}`
+        if (!result.ok) throw new PhaseError(result.error)
 
         state.currentPhase = result.phase
         state.specification.status = "approved"
         await saveState(context.directory, state)
         await logAction(context.directory, "specification_approved", state.currentPhase)
 
-        return {
-          title: "Specification Approved",
-          output: `Specification approved. Phase changed to EXECUTION. The Gestor may now delegate implementation tasks.`,
-        }
+        return successResponse(
+          "Specification Approved",
+          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification approved. Phase changed to EXECUTION. The Manager may now delegate implementation tasks.`
+        )
       } else {
         const result = transitionPhase(state.currentPhase, "DOCUMENTATION")
-        if (!result.ok) return `Error: ${result.error}`
+        if (!result.ok) throw new PhaseError(result.error)
 
         state.currentPhase = result.phase
         state.specification.status = "rejected"
         await saveState(context.directory, state)
         await logAction(context.directory, "specification_rejected", state.currentPhase, { feedback: args.feedback })
 
-        return {
-          title: "Specification Rejected",
-          output: `Specification rejected.${args.feedback ? ` Feedback: ${args.feedback}` : ""}\n\nReturned to DOCUMENTATION phase for revision.`,
-        }
+        return successResponse(
+          "Specification Rejected",
+          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification rejected.${args.feedback ? ` Feedback: ${args.feedback}` : ""}\n\nReturned to DOCUMENTATION phase for revision.`
+        )
       }
     } catch (err) {
-      return `Error approving specification: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error approving specification: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -372,18 +418,19 @@ export const pauseDiscussionTool = tool({
       const state = await loadState(context.directory)
       state.previousPhase = state.currentPhase
       const result = transitionPhase(state.currentPhase, "PAUSED")
-      if (!result.ok) return `Error: ${result.error}`
+      if (!result.ok) throw new PhaseError(result.error)
 
       state.currentPhase = result.phase
       await saveState(context.directory, state)
       await logAction(context.directory, "discussion_paused", state.currentPhase, { previousPhase: state.previousPhase })
 
-      return {
-        title: "Discussion Paused",
-        output: `Discussion paused. Previous phase: ${state.previousPhase}. Use resume_discussion to resume.`,
-      }
+      return successResponse(
+        "Discussion Paused",
+        `${formatPhaseHeader(state.currentPhase)}\n\nDiscussion paused. Previous phase: ${state.previousPhase}. Use resume_discussion to resume.`
+      )
     } catch (err) {
-      return `Error pausing discussion: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error pausing discussion: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -397,12 +444,17 @@ export const resumeDiscussionTool = tool({
     try {
       const state = await loadState(context.directory)
       if (state.currentPhase !== "PAUSED") {
-        return `Error: Discussion is not paused. Current phase: ${state.currentPhase}`
+        return errorResponse(`Discussion is not paused. Current phase: ${state.currentPhase}`)
+      }
+
+      const allPhasesSet = new Set(ALL_PHASES)
+      if (!allPhasesSet.has(args.target_phase as DiscussionPhase)) {
+        return errorResponse(`Invalid phase "${args.target_phase}". Valid phases: ${ALL_PHASES.join(", ")}`)
       }
 
       const target = args.target_phase as DiscussionPhase
       const result = transitionPhase("PAUSED", target)
-      if (!result.ok) return `Error: ${result.error}`
+      if (!result.ok) throw new PhaseError(result.error)
 
       let warning = ""
       if (state.previousPhase && args.target_phase !== state.previousPhase) {
@@ -414,12 +466,13 @@ export const resumeDiscussionTool = tool({
       await saveState(context.directory, state)
       await logAction(context.directory, "discussion_resumed", state.currentPhase)
 
-      return {
-        title: "Discussion Resumed",
-        output: `Discussion resumed at phase: ${result.phase}.${warning}`,
-      }
+      return successResponse(
+        "Discussion Resumed",
+        `${formatPhaseHeader(state.currentPhase)}\n\nDiscussion resumed at phase: ${result.phase}.${warning}`
+      )
     } catch (err) {
-      return `Error resuming discussion: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error resuming discussion: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -431,7 +484,7 @@ export const cancelDiscussionTool = tool({
     try {
       const state = await loadState(context.directory)
       const result = transitionPhase(state.currentPhase, "CANCELLED")
-      if (!result.ok) return `Error: ${result.error}`
+      if (!result.ok) throw new PhaseError(result.error)
 
       state.currentPhase = result.phase
       state.discussion.analyses = []
@@ -440,12 +493,13 @@ export const cancelDiscussionTool = tool({
       await saveState(context.directory, state)
       await logAction(context.directory, "discussion_cancelled", state.currentPhase)
 
-      return {
-        title: "Discussion Cancelled",
-        output: "The discussion has been cancelled and analysis data cleared. You may start a new round.",
-      }
+      return successResponse(
+        "Discussion Cancelled",
+        `${formatPhaseHeader(state.currentPhase)}\n\nThe discussion has been cancelled and analysis data cleared. You may start a new round.`
+      )
     } catch (err) {
-      return `Error cancelling discussion: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error cancelling discussion: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })

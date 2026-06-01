@@ -73,4 +73,4 @@ info "  node $INSTALL_DIR/src/setup/generate-agents.js /path/to/project/.opencod
 info ""
 info "Switch agents with Tab or /agent:"
 info "  /agent briefing-writer  — start a discovery session"
-info "  /agent gestor           — orchestrate a specialist team"
+info "  /agent manager           — orchestrate a specialist team"

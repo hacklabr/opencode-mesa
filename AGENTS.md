@@ -5,7 +5,7 @@
 - Runtime: Bun
 - Linguagem: TypeScript (ESNext, ESM)
 - Plugin API: `@opencode-ai/plugin`
-- Testes: `bun:test`
+- Testes: `vitest`
 
 ## Commits (INEGOCIÁVEL)
 
@@ -33,7 +33,7 @@
 
 ## Convenções
 
-- Arquivos de tool: um por domínio (`briefing-tools.ts`, `gestor-tools.ts`, `discussion-tools.ts`).
+- Arquivos de tool: um por domínio (`briefing-tools.ts`, `manager-tools.ts`, `discussion-tools.ts`).
 - System prompts de agentes: arquivos `.md` em `src/agents/`.
 - Estado persistido em JSON simples dentro do workspace (`.mesa/`).
 - Nenhum `console.log` em produção. Usar mecanismo de logging do plugin quando disponível.

@@ -1,6 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
-import { PLUGIN_STATE_DIR } from "./config.js"
+import { PLUGIN_STATE_DIR } from "./config"
 
 export interface AuditEntry {
   timestamp: string
