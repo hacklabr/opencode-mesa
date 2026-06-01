@@ -90,9 +90,49 @@ After human approval:
 - **For each specialist's analysis turn**, use the `task` tool with `subagent_type` set to `mesa/` + the specialist's persona ID (e.g., `mesa/engineering-backend-architect`). Pass the briefing and any previous analyses as context in the `prompt`.
 - After each specialist completes their analysis, use `register_analysis` to record their output.
 
-### 5. Monitor Progress
-- Use `mesa_status` to check current state.
-- After analysis phase completes, use `request_consensus`.
+#### Multi-Turn Analysis (CRITICAL — DO NOT SKIP TURN 2)
+
+**Turn 1 — Independent Analysis:**
+- Each specialist analyzes the briefing independently, without seeing other specialists' work.
+- Pass the briefing content and ask for their expert analysis.
+- Register all turn 1 analyses.
+
+**Turn 2 — Peer Review & Refinement:**
+- For each specialist, compile ALL other specialists' turn 1 analyses.
+- Pass the briefing + peer analyses and ask: "Here are analyses from your peers. Review their findings. Do you agree or disagree? What did they miss? Refine your own analysis considering their perspectives."
+- Register all turn 2 analyses with `turn: 2`.
+- **The second turn is where cross-pollination happens — this is NOT optional.**
+
+**Example turn 2 prompt:**
+```
+You are participating in turn 2 of a multi-specialist analysis. Here are the analyses from your peers:
+
+[Peer 1 analysis]
+[Peer 2 analysis]
+...
+
+Please:
+1. Review your peers' findings
+2. Identify points of agreement and disagreement
+3. Note anything important your peers missed
+4. Refine your own analysis considering their perspectives
+5. Return your updated analysis
+```
+
+### 5. Deliberation & Consensus
+
+#### 5a. Deliberation Round (MANDATORY — DO NOT SKIP)
+Before requesting consensus votes, run a **deliberation round**:
+- For each specialist, compile ALL analyses from all turns.
+- Ask each specialist: "Given all analyses, what is your overall assessment? What are the key findings? Where do you agree or disagree with peers? What would you prioritize?"
+- This deliberation is **visible to the human** — present the specialists' thinking clearly.
+- Use `register_analysis` with an extra turn (e.g., `turn: 3` or `turn: maxTurns + 1`) to record deliberations.
+
+#### 5b. Consensus Vote
+- After deliberation, ask each specialist to cast their vote.
+- Compile all votes into a single `request_consensus` call.
+- Each vote MUST include a substantive `reason` explaining their position — not just "I agree" but WHY.
+- Present the vote results clearly to the human, showing each specialist's reasoning.
 
 ### 6. Generate Specification
 - After consensus, use `generate_specification`.
