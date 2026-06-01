@@ -8,7 +8,7 @@ import {
   summonTeamTool,
   delegateTaskTool,
   definePhasesTool,
-} from "./tools/gestor-tools"
+} from "./tools/manager-tools"
 import {
   openAnalysisRoundTool,
   registerAnalysisTool,
@@ -76,7 +76,7 @@ export const mesa: Plugin = async () => {
         "",
         "Available agents:",
         "- `briefing-writer`: Conducts structured discovery to create professional briefings.",
-        "- `gestor`: Orchestrates specialist teams, manages discussion rounds and specifications.",
+        "- `manager`: Orchestrates specialist teams, manages discussion rounds and specifications.",
         "",
         "To start: user types `/agent briefing-writer` or `/briefing`.",
         "</mesa-plugin>",
@@ -99,7 +99,7 @@ export const mesa: Plugin = async () => {
       if (mesaTools.includes(input.toolID)) {
         output.description = output.description.replace(
           "$",
-          "\n\nIMPORTANT: This tool is part of the Mesa structured workflow. It should be used by the `gestor` or `briefing-writer` agents, not by the default agent directly."
+          "\n\nIMPORTANT: This tool is part of the Mesa structured workflow. It should be used by the `manager` or `briefing-writer` agents, not by the default agent directly."
         )
       }
     },

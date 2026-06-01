@@ -67,12 +67,12 @@ async function writePrimaryAgents() {
       sourceFile: join(PRIMARY_outputDir, "briefing-writer.md"),
     },
     {
-      filename: "gestor.md",
-      name: "Gestor",
+      filename: "manager.md",
+      name: "Manager",
       description:
-        "Gestor - Orchestrates specialist teams for structured discussion and specification",
+        "Manager - Orchestrates specialist teams for structured discussion and specification",
       mode: "primary",
-      sourceFile: join(PRIMARY_outputDir, "gestor.md"),
+      sourceFile: join(PRIMARY_outputDir, "manager.md"),
     },
   ]
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
-import { canTransition } from "../tools/gestor-tools"
-import type { DiscussionPhase } from "../config"
+import { canTransition } from "../workflow/transitions"
+import type { DiscussionPhase } from "../types"
 
 describe("state machine transitions", () => {
   const validTransitions: Record<DiscussionPhase, DiscussionPhase[]> = {
@@ -11,7 +11,7 @@ describe("state machine transitions", () => {
     APPROVAL: ["EXECUTION", "DOCUMENTATION", "PAUSED", "CANCELLED"],
     EXECUTION: ["PLANNING", "PAUSED", "CANCELLED"],
     PAUSED: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION", "CANCELLED"],
-    CANCELLED: [],
+    CANCELLED: ["PLANNING"],
   }
 
   const allPhases: DiscussionPhase[] = [
@@ -39,9 +39,13 @@ describe("state machine transitions", () => {
     }
   })
 
-  test("CANCELLED allows no transitions", () => {
+  test("CANCELLED only allows transition to PLANNING", () => {
     for (const to of allPhases) {
-      expect(canTransition("CANCELLED", to)).toBe(false)
+      if (to === "PLANNING") {
+        expect(canTransition("CANCELLED", to)).toBe(true)
+      } else {
+        expect(canTransition("CANCELLED", to)).toBe(false)
+      }
     }
   })
 

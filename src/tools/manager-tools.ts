@@ -1,62 +1,41 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState } from "../state"
-import type { DiscussionPhase, DiscussionState, SpecialistEntry, SpecialistStatus } from "../config"
+import type { DiscussionPhase, SpecialistEntry, SpecialistStatus } from "../types"
 import { getPersonaById } from "./catalog-tools"
 import { logAction } from "../audit"
-
-export const VALID_TRANSITIONS: Record<DiscussionPhase, DiscussionPhase[]> = {
-  PLANNING: ["ANALYSIS", "PAUSED", "CANCELLED"],
-  ANALYSIS: ["CONSENSUS", "PAUSED", "CANCELLED"],
-  CONSENSUS: ["DOCUMENTATION", "ANALYSIS", "PAUSED", "CANCELLED"],
-  DOCUMENTATION: ["APPROVAL", "PAUSED", "CANCELLED"],
-  APPROVAL: ["EXECUTION", "DOCUMENTATION", "PAUSED", "CANCELLED"],
-  EXECUTION: ["PLANNING", "PAUSED", "CANCELLED"],
-  PAUSED: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION", "CANCELLED"],
-  CANCELLED: [],
-}
-
-export function canTransition(from: DiscussionPhase, to: DiscussionPhase): boolean {
-  return VALID_TRANSITIONS[from]?.includes(to) ?? false
-}
-
-export function requirePhase(
-  state: DiscussionState,
-  ...allowed: DiscussionPhase[]
-): string | null {
-  if (!allowed.includes(state.currentPhase)) {
-    return `Operation not allowed in ${state.currentPhase} phase. Required: ${allowed.join(" or ")}.`
-  }
-  return null
-}
+import { canTransition, requirePhase, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions"
+import { promises as fs } from "node:fs"
+import { successResponse, errorResponse } from "../utils/responses"
+import { PhaseError, MesaError } from "../errors"
 
 export const analyzeBriefingTool = tool({
   description:
-    "Reads the current approved briefing and returns its content for analysis by the Gestor.",
+    "Reads the current approved briefing and returns its content for analysis by the Manager.",
   args: {},
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory)
       const phaseError = requirePhase(state, "PLANNING")
-      if (phaseError) return `Error: ${phaseError}`
+      if (phaseError) throw new PhaseError(phaseError)
 
       if (!state.briefing.path) {
-        return "Error: No briefing found. A briefing must be created and delivered first."
+        return errorResponse("No briefing found. A briefing must be created and delivered first.")
       }
 
-      const { promises: fs } = await import("node:fs")
       const content = await fs.readFile(state.briefing.path, "utf-8")
 
-      return {
-        title: "Briefing Analysis",
-        output: content,
-        metadata: {
+      return successResponse(
+        "Briefing Analysis",
+        `${formatPhaseHeader(state.currentPhase)}\n\n${content}`,
+        {
           slug: state.briefing.slug,
           status: state.briefing.status,
           phase: state.currentPhase,
-        },
-      }
+        }
+      )
     } catch (err) {
-      return `Error reading briefing: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error reading briefing: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -80,7 +59,7 @@ export const proposeTeamTool = tool({
     try {
       const state = await loadState(context.directory)
       const phaseError = requirePhase(state, "PLANNING")
-      if (phaseError) return `Error: ${phaseError}`
+      if (phaseError) throw new PhaseError(phaseError)
 
       const invalidIds: string[] = []
       for (const s of args.specialists) {
@@ -88,7 +67,7 @@ export const proposeTeamTool = tool({
         if (!persona) invalidIds.push(s.personaId)
       }
       if (invalidIds.length > 0) {
-        return `Error: Invalid specialist IDs not found in catalog: ${invalidIds.join(", ")}`
+        return errorResponse(`Invalid specialist IDs not found in catalog: ${invalidIds.join(", ")}`)
       }
 
       const team: SpecialistEntry[] = args.specialists.map((s) => ({
@@ -108,13 +87,14 @@ export const proposeTeamTool = tool({
         )
         .join("\n\n")
 
-      return {
-        title: "Team Proposal — Awaiting Human Approval",
-        output: `The following team has been proposed:\n\n${proposalTable}\n\n**IMPORTANT**: This team requires explicit human approval before summoning. Present this proposal to the human and wait for confirmation.`,
-        metadata: { teamSize: team.length },
-      }
+      return successResponse(
+        "Team Proposal — Awaiting Human Approval",
+        `${formatPhaseHeader(state.currentPhase)}\n\nThe following team has been proposed:\n\n${proposalTable}\n\n**IMPORTANT**: This team requires explicit human approval before summoning. Present this proposal to the human and wait for confirmation.`,
+        { teamSize: team.length }
+      )
     } catch (err) {
-      return `Error proposing team: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error proposing team: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -127,15 +107,15 @@ export const summonTeamTool = tool({
     try {
       const state = await loadState(context.directory)
       const phaseError = requirePhase(state, "PLANNING")
-      if (phaseError) return `Error: ${phaseError}`
+      if (phaseError) throw new PhaseError(phaseError)
 
       if (state.briefing.status !== "approved" && state.briefing.status !== "delivered") {
-        return "Error: Briefing must be approved or delivered before summoning a team."
+        return errorResponse("Briefing must be approved or delivered before summoning a team.")
       }
 
       const proposed = state.team.filter((s) => s.status === "proposed")
       if (proposed.length === 0) {
-        return "Error: No proposed specialists found. Use propose_team first."
+        return errorResponse("No proposed specialists found. Use propose_team first.")
       }
 
       for (const member of state.team) {
@@ -152,12 +132,13 @@ export const summonTeamTool = tool({
         .map((s) => `  - ${s.name} (${s.personaId}) — ${s.division}`)
         .join("\n")
 
-      return {
-        title: "Team Summoned",
-        output: `${state.team.filter((s) => s.status === "summoned").length} specialists summoned:\n${summonedList}\n\nTeam is ready for discussion rounds.`,
-      }
+      return successResponse(
+        "Team Summoned",
+        `${formatPhaseHeader(state.currentPhase)}\n\n${state.team.filter((s) => s.status === "summoned").length} specialists summoned:\n${summonedList}\n\nTeam is ready for discussion rounds.`
+      )
     } catch (err) {
-      return `Error summoning team: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error summoning team: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -177,16 +158,36 @@ export const delegateTaskTool = tool({
     try {
       const state = await loadState(context.directory)
       const phaseError = requirePhase(state, "EXECUTION")
-      if (phaseError) return `Error: ${phaseError}`
+      if (phaseError) throw new PhaseError(phaseError)
 
-      const specialist = state.team.find((s) => s.personaId === args.personaId)
+      let specialist = state.team.find((s) => s.personaId === args.personaId)
 
       if (!specialist) {
-        return `Error: Specialist "${args.personaId}" not found in the current team. Summon them first.`
+        const persona = await getPersonaById(args.personaId)
+        if (persona) {
+          specialist = {
+            personaId: persona.id,
+            name: persona.name,
+            division: persona.division,
+            status: "delegated" as SpecialistStatus,
+          }
+          state.team.push(specialist)
+        }
+      }
+
+      if (!specialist) {
+        const teamMembers = state.team.map((s) => `  - ${s.personaId} (${s.name})`).join("\n")
+        const { listSpecialistsTool } = await import("./catalog-tools")
+        const term = args.personaId.toLowerCase()
+        return errorResponse(
+          `Specialist "${args.personaId}" not found in the current team or catalog.\n\n` +
+          `Current team members:\n${teamMembers || "  (none)"}\n\n` +
+          `Use list_specialists to browse available specialists, or check for close matches.`
+        )
       }
 
       const promptParts = [
-        `## Task from Gestor`,
+        `## Task from Manager`,
         ``,
         `### Task`,
         args.task,
@@ -196,9 +197,13 @@ export const delegateTaskTool = tool({
         promptParts.push(``, `### Context`, args.context_info)
       }
 
-      return {
-        title: `Task ready for ${specialist.name}`,
-        output: [
+      await saveState(context.directory, state)
+
+      return successResponse(
+        `Task ready for ${specialist.name}`,
+        [
+          `${formatPhaseHeader(state.currentPhase)}`,
+          ``,
           `Task defined for **${specialist.name}** (${args.personaId}).`,
           ``,
           `Now invoke the specialist using the **task** tool:`,
@@ -207,10 +212,11 @@ export const delegateTaskTool = tool({
           `### Prompt content for the specialist:`,
           promptParts.join("\n"),
         ].join("\n"),
-        metadata: { personaId: args.personaId },
-      }
+        { personaId: args.personaId }
+      )
     } catch (err) {
-      return `Error delegating task: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error delegating task: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -232,17 +238,19 @@ export const definePhasesTool = tool({
 
       const invalid = args.phases.filter((p) => !validPhases.includes(p as DiscussionPhase))
       if (invalid.length > 0) {
-        return `Error: Invalid phases: ${invalid.join(", ")}. Valid: ${validPhases.join(", ")}`
+        return errorResponse(`Invalid phases: ${invalid.join(", ")}. Valid: ${validPhases.join(", ")}`)
       }
 
+      state.phases = args.phases
       await saveState(context.directory, state)
 
-      return {
-        title: "Workflow Phases Defined",
-        output: `Phases: ${args.phases.join(" → ")}\n\nCurrent phase: ${state.currentPhase}`,
-      }
+      return successResponse(
+        "Workflow Phases Defined",
+        `${formatPhaseHeader(state.currentPhase)}\n\nPhases: ${args.phases.join(" → ")}\n\nCurrent phase: ${state.currentPhase}`
+      )
     } catch (err) {
-      return `Error defining phases: ${err instanceof Error ? err.message : String(err)}`
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error defining phases: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })

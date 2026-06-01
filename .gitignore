@@ -2,3 +2,4 @@ refs
 node_modules/
 dist/
 .opencode/agents/
+.mesa/

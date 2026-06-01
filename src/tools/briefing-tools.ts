@@ -4,6 +4,10 @@ import { join, resolve } from "node:path"
 import { promises as fs } from "node:fs"
 import { PLUGIN_STATE_DIR } from "../config"
 import { logAction } from "../audit"
+import { formatPhaseHeader } from "../workflow/transitions"
+import { isValidSlug } from "../utils/slug"
+import { successResponse, errorResponse } from "../utils/responses"
+import { ValidationError } from "../errors"
 
 export const createBriefingTool = tool({
   description:
@@ -19,9 +23,12 @@ export const createBriefingTool = tool({
   },
   async execute(args, context) {
     try {
-      const VALID_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-      if (!VALID_SLUG.test(args.slug)) {
-        return "Error: Invalid slug. Use lowercase letters, numbers, and hyphens only."
+      if (!isValidSlug(args.slug)) {
+        throw new ValidationError("Invalid slug. Use lowercase letters, numbers, and hyphens only.")
+      }
+
+      if (!args.content || !args.content.trim()) {
+        throw new ValidationError("Briefing content cannot be empty.")
       }
 
       const briefingsDir = join(context.directory, PLUGIN_STATE_DIR, "briefings")
@@ -29,7 +36,7 @@ export const createBriefingTool = tool({
 
       const filePath = join(briefingsDir, `briefing-${args.slug}.md`)
       if (!resolve(filePath).startsWith(resolve(briefingsDir))) {
-        return "Error: Invalid slug — path traversal detected."
+        throw new ValidationError("Invalid slug — path traversal detected.")
       }
       const now = new Date().toISOString()
 
@@ -51,13 +58,13 @@ export const createBriefingTool = tool({
       state.briefing.status = "draft"
       await saveState(context.directory, state)
 
-      return {
-        title: "Briefing Created",
-        output: `Briefing saved to ${filePath}`,
-        metadata: { slug: args.slug, path: filePath },
-      }
+      return successResponse(
+        "Briefing Created",
+        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing saved to ${filePath}`,
+        { slug: args.slug, path: filePath }
+      )
     } catch (err) {
-      return `Error creating briefing: ${err instanceof Error ? err.message : String(err)}`
+      return errorResponse(`Error creating briefing: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -70,7 +77,7 @@ export const approveBriefingTool = tool({
     try {
       const state = await loadState(context.directory)
       if (!state.briefing.path) {
-        return "Error: No briefing found. Create a briefing first."
+        return errorResponse("No briefing found. Create a briefing first.")
       }
 
       state.briefing.status = "approved"
@@ -79,7 +86,7 @@ export const approveBriefingTool = tool({
       let content = await fs.readFile(filePath, "utf-8")
       const updated = content.replace(/status:\s*['"]?draft['"]?/g, "status: approved")
       if (updated === content) {
-        return "Error: Briefing file does not contain 'status: draft'. It may have already been approved or the frontmatter is malformed."
+        return errorResponse("Briefing file does not contain 'status: draft'. It may have already been approved or the frontmatter is malformed.")
       }
       content = updated
       await fs.writeFile(filePath, content, "utf-8")
@@ -87,12 +94,12 @@ export const approveBriefingTool = tool({
       await saveState(context.directory, state)
       await logAction(context.directory, "briefing_approved", state.currentPhase, { slug: state.briefing.slug })
 
-      return {
-        title: "Briefing Approved",
-        output: `Briefing "${state.briefing.slug}" approved. Ready for delivery to Gestor.`,
-      }
+      return successResponse(
+        "Briefing Approved",
+        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing "${state.briefing.slug}" approved. Ready for delivery to Manager.`
+      )
     } catch (err) {
-      return `Error approving briefing: ${err instanceof Error ? err.message : String(err)}`
+      return errorResponse(`Error approving briefing: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
@@ -107,20 +114,19 @@ export const importBriefingTool = tool({
   },
   async execute(args, context) {
     try {
-      const VALID_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-      if (!VALID_SLUG.test(args.slug)) {
-        return "Error: Invalid slug. Use lowercase letters, numbers, and hyphens only."
+      if (!isValidSlug(args.slug)) {
+        throw new ValidationError("Invalid slug. Use lowercase letters, numbers, and hyphens only.")
       }
 
       try {
         await fs.access(args.file_path)
       } catch {
-        return `Error: File not found: ${args.file_path}`
+        return errorResponse(`File not found: ${args.file_path}`)
       }
 
       const content = await fs.readFile(args.file_path, "utf-8")
       if (!content.trim()) {
-        return "Error: Briefing file is empty."
+        return errorResponse("Briefing file is empty.")
       }
 
       const briefingsDir = join(context.directory, PLUGIN_STATE_DIR, "briefings")
@@ -129,12 +135,12 @@ export const importBriefingTool = tool({
       const destPath = join(briefingsDir, `briefing-${args.slug}.md`)
 
       if (!destPath.startsWith(briefingsDir)) {
-        return "Error: Invalid path detected."
+        return errorResponse("Invalid path detected.")
       }
 
       try {
         await fs.access(destPath)
-        return `Error: Briefing with slug "${args.slug}" already exists. Use a different slug or delete the existing one.`
+        return errorResponse(`Briefing with slug "${args.slug}" already exists. Use a different slug or delete the existing one.`)
       } catch {
         // File doesn't exist, proceed
       }
@@ -166,32 +172,32 @@ export const importBriefingTool = tool({
 
       await saveState(context.directory, state)
 
-      return {
-        title: "Briefing Imported",
-        output: `Existing briefing imported from ${args.file_path}.\n\nSlug: ${args.slug}\nStatus: approved (pre-approved)\nPhase: PLANNING\n\nThe workflow has been reset. The Gestor can now analyze the briefing and propose a team.`,
-      }
+      return successResponse(
+        "Briefing Imported",
+        `${formatPhaseHeader(state.currentPhase)}\n\nExisting briefing imported from ${args.file_path}.\n\nSlug: ${args.slug}\nStatus: approved (pre-approved)\nPhase: PLANNING\n\nThe workflow has been reset. The Manager can now analyze the briefing and propose a team.`
+      )
     } catch (err) {
-      return `Error importing briefing: ${err instanceof Error ? err.message : String(err)}`
+      return errorResponse(`Error importing briefing: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })
 
 export const deliverBriefingTool = tool({
   description:
-    "Delivers the approved briefing to the Gestor. Updates the state phase to PLANNING and copies the briefing content.",
+    "Delivers the approved briefing to the Manager. Updates the state phase to PLANNING and copies the briefing content.",
   args: {},
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory)
       if (state.briefing.status !== "approved") {
-        return "Error: Briefing must be approved before delivery. Use approve_briefing first."
+        return errorResponse("Briefing must be approved before delivery. Use approve_briefing first.")
       }
       if (!state.briefing.path) {
-        return "Error: No briefing path found."
+        return errorResponse("No briefing path found.")
       }
 
       const briefingsDir = join(context.directory, PLUGIN_STATE_DIR)
-      const deliveryPath = join(briefingsDir, "briefing-atual.md")
+      const deliveryPath = join(briefingsDir, "briefing-current.md")
       const content = await fs.readFile(state.briefing.path, "utf-8")
       await fs.writeFile(deliveryPath, content, "utf-8")
 
@@ -200,13 +206,13 @@ export const deliverBriefingTool = tool({
       await saveState(context.directory, state)
       await logAction(context.directory, "briefing_delivered", state.currentPhase, { slug: state.briefing.slug })
 
-      return {
-        title: "Briefing Delivered to Gestor",
-        output: `Briefing delivered to ${deliveryPath}. The Gestor should now analyze it and propose a team.`,
-        metadata: { deliveryPath },
-      }
+      return successResponse(
+        "Briefing Delivered to Manager",
+        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing delivered to ${deliveryPath}. To continue, switch to the Manager agent by typing \`/agent manager\` and ask it to analyze the briefing and propose a team.`,
+        { deliveryPath }
+      )
     } catch (err) {
-      return `Error delivering briefing: ${err instanceof Error ? err.message : String(err)}`
+      return errorResponse(`Error delivering briefing: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })

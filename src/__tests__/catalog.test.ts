@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest"
 import { parsePersonaFile, loadCatalogFromDirectory } from "../catalog/loader"
-import { promises as fs } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 

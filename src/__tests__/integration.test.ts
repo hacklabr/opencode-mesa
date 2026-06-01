@@ -1,7 +1,8 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { loadState, saveState } from "../state"
-import { createInitialState, type DiscussionState } from "../config"
-import { canTransition } from "../tools/gestor-tools"
+import { createInitialState } from "../config"
+import type { DiscussionState } from "../types"
+import { canTransition } from "../workflow/transitions"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { PLUGIN_STATE_DIR } from "../config"
@@ -108,7 +109,7 @@ describe("full workflow integration", () => {
     // Step 10: Generate specification
     expect(canTransition("CONSENSUS", "DOCUMENTATION")).toBe(true)
     state.currentPhase = "DOCUMENTATION"
-    const specsDir = join(TEST_DIR, PLUGIN_STATE_DIR, "especificacoes")
+    const specsDir = join(TEST_DIR, PLUGIN_STATE_DIR, "specifications")
     await fs.mkdir(specsDir, { recursive: true })
     const specPath = join(specsDir, "spec-test.md")
     await fs.writeFile(specPath, "# Specification: Test Project\n\nContent...", "utf-8")

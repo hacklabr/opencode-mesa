@@ -1,5 +1,6 @@
 import { describe, expect, test, afterAll } from "vitest"
-import { createInitialState, type DiscussionPhase, type ConsensusVote, PLUGIN_VERSION } from "../config"
+import { createInitialState, PLUGIN_VERSION } from "../config"
+import type { DiscussionPhase } from "../types"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { loadState, saveState, getStatePath } from "../state"
@@ -39,7 +40,7 @@ describe("config", () => {
       APPROVAL: ["EXECUTION", "DOCUMENTATION", "PAUSED", "CANCELLED"],
       EXECUTION: ["PLANNING", "PAUSED", "CANCELLED"],
       PAUSED: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION", "CANCELLED"],
-      CANCELLED: [],
+      CANCELLED: ["PLANNING"],
     }
 
     for (const phase of VALID_PHASES) {
