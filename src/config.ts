@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
+
 export type {
   DiscussionPhase,
   ConsensusVote,
@@ -10,7 +14,18 @@ export type {
   DiscussionState,
 } from "./types"
 
-export const PLUGIN_VERSION = "0.1.0"
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+function readVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf-8"))
+    return pkg.version
+  } catch {
+    return "0.0.0-unknown"
+  }
+}
+
+export const PLUGIN_VERSION = readVersion()
 
 export const PLUGIN_STATE_DIR = ".mesa"
 

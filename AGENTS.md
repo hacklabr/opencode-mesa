@@ -7,6 +7,30 @@
 - Plugin API: `@opencode-ai/plugin`
 - Testes: `vitest`
 
+## Versionamento (INEGOCIÁVEL)
+
+**ANTES de criar qualquer tag git, atualize a versão em TODOS os lugares:**
+
+1. `package.json` → campo `"version"` (fonte principal — o código lê daqui)
+2. `CHANGELOG.md` → adicionar seção `## [X.Y.Z] - YYYY-MM-DD` no topo
+3. `README.md` → atualizar badge de versão, se existir
+4. Qualquer outro arquivo que referencie a versão explicitamente
+
+**Checklist pré-tag:**
+```bash
+# 1. Atualizar package.json
+# 2. Atualizar CHANGELOG.md
+# 3. Verificar se README.md tem badge de versão
+# 4. Rodar lint + typecheck + testes
+~/.bun/bin/bun run lint && ~/.bun/bin/bun run typecheck && ~/.bun/bin/bun test src/__tests__/
+# 5. Commit (selecione APENAS os arquivos alterados — NUNCA use git add -A)
+git add package.json CHANGELOG.md AGENTS.md && git commit -m "release: vX.Y.Z"
+# 6. Tag
+git tag vX.Y.Z -m "Mesa vX.Y.Z"
+```
+
+**A versão é SEMPRE lida do `package.json`** — `src/config.ts` faz `readFileSync("../package.json")`. Nunca hardcode a versão no código.
+
 ## Commits (INEGOCIÁVEL)
 
 - NUNCA commite código que não foi você que criou/alterou. Use `git add -p` (patch mode) para selecionar apenas suas alterações quando o arquivo existir previamente.
