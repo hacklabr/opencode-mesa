@@ -42,10 +42,11 @@ async function loadCatalogPersonas() {
     for (const file of files.filter((f) => f.endsWith(".md"))) {
       const raw = await readFile(join(divisionDir, file), "utf-8")
       const { data, body } = parseFrontmatter(raw)
+      if (!data.description) continue
       personas.push({
         id: sanitizeId(file),
         name: data.name || sanitizeId(file),
-        description: data.description || "",
+        description: data.description,
         division: entry.name,
         emoji: data.emoji || "",
         systemPrompt: body,
