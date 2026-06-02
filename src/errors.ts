@@ -35,3 +35,10 @@ export class CatalogError extends MesaError {
     this.name = "CatalogError"
   }
 }
+
+export class UpdaterError extends MesaError {
+  constructor(message: string, code: string = "UPDATER_ERROR") {
+    super(message, code)
+    this.name = "UpdaterError"
+  }
+}

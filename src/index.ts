@@ -19,8 +19,13 @@ import {
   resumeDiscussionTool,
   cancelDiscussionTool,
 } from "./tools/discussion-tools"
+import { checkForUpdate } from "./updater/checker"
+import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools"
 
 export const mesa: Plugin = async () => {
+  // Fire-and-forget update check — populates cache for tools
+  checkForUpdate().catch(() => {})
+
   return {
     tool: {
       mesa_status: mesaStatusTool,
@@ -43,6 +48,8 @@ export const mesa: Plugin = async () => {
       pause_discussion: pauseDiscussionTool,
       resume_discussion: resumeDiscussionTool,
       cancel_discussion: cancelDiscussionTool,
+      mesa_check_update: mesaCheckUpdateTool,
+      mesa_update: mesaUpdateTool,
     },
 
     "experimental.chat.system.transform": async (_input, output) => {
@@ -99,6 +106,7 @@ export const mesa: Plugin = async () => {
         "open_analysis_round", "register_analysis", "request_consensus",
         "generate_specification", "approve_specification",
         "pause_discussion", "resume_discussion", "cancel_discussion",
+        "mesa_check_update", "mesa_update",
       ]
 
       if (mesaTools.includes(input.toolID)) {

@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+TAG_FLAG=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --tag) TAG_FLAG="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
 REPO_URL="${1:-https://github.com/hacklabr/opencode-mesa}"
 INSTALL_DIR="${2:-$HOME/.local/share/opencode-mesa}"
 
@@ -20,8 +28,12 @@ command -v npm >/dev/null 2>&1  || error "npm is required"
 if [ -d "$INSTALL_DIR" ]; then
   info "Updating existing installation at $INSTALL_DIR"
   git -C "$INSTALL_DIR" fetch --unshallow 2>/dev/null || true
-  git -C "$INSTALL_DIR" fetch origin
-  git -C "$INSTALL_DIR" reset --hard origin/main
+  git -C "$INSTALL_DIR" fetch origin --tags
+  if [ -n "$TAG_FLAG" ]; then
+    git -C "$INSTALL_DIR" checkout "tags/$TAG_FLAG"
+  else
+    git -C "$INSTALL_DIR" reset --hard origin/main
+  fi
 else
   info "Cloning Mesa into $INSTALL_DIR"
   git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
@@ -29,7 +41,7 @@ fi
 
 info "Installing dependencies"
 rm -rf "$INSTALL_DIR/node_modules"
-npm install --prefix "$INSTALL_DIR"
+npm ci --prefix "$INSTALL_DIR" 2>/dev/null || npm install --prefix "$INSTALL_DIR"
 
 info "Building plugin"
 npm run build --prefix "$INSTALL_DIR"
