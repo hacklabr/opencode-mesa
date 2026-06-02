@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-02
+
+### Added
+- **Auto-update mechanism**: Plugin checks for new versions on startup and exposes two new tools for user-controlled updates
+- **`mesa_check_update` tool**: Checks GitHub for latest tag, compares with installed version, returns update availability (with 24h cache + ETag)
+- **`mesa_update` tool**: Downloads and installs the latest version via `install.sh --tag`, with automatic rollback on failure
+- **`src/updater/` module**: Full updater architecture with types, semver parser, GitHub API client, and update runner
+- **Semver comparison**: Custom parser (~30 LOC, zero dependencies) with strict `MAJOR.MINOR.PATCH` validation
+- **GitHub Tags API client**: Fetches latest release tag with ETag caching, 5s timeout, graceful error handling
+- **Update runner**: Executes `install.sh` with flock concurrency guard, pre-update SHA recording, and automatic rollback
+- **Security hardening**: Cache files with 0o600 permissions, SHA verification, strict input validation, fail-silently-on-check / fail-loudly-on-update principle
+- **`install.sh --tag` flag**: Install script now accepts `--tag vX.Y.Z` for deterministic version checkout (backward compatible)
+- **`npm ci` in install.sh**: Switched from `npm install` to `npm ci` with fallback for reproducible builds
+- **75 new tests** covering semver parsing, GitHub API interaction, update execution, and tool behavior (198 total, 0 failures)
+
+### Changed
+- `install.sh` now supports `--tag` parameter for version-pinned updates
+- `install.sh` uses `npm ci` (with `npm install` fallback) for deterministic dependency installation
+- `src/index.ts` registers new tools and runs fire-and-forget update check on startup
+- `src/errors.ts` adds `UpdaterError` class
+
+### Security
+- Update checks run in background without blocking plugin load
+- User must explicitly invoke `mesa_update` — never auto-executes
+- Commit SHA verification before destructive git operations
+- Append-only audit log at `.cache/update-log.jsonl`
+- Filesystem lock prevents concurrent updates from multiple opencode sessions
+
 ## [1.2.0] - 2026-06-01
 
 ### Added
