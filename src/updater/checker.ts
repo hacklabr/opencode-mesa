@@ -17,7 +17,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const GITHUB_TAGS_URL = "https://api.github.com/repos/hacklabr/opencode-mesa/tags"
 const FETCH_TIMEOUT_MS = 5_000
-const CACHE_TTL_MS = 86_400_000
+const CACHE_TTL_MS = 900_000
 
 export function getCachePath(): string {
   // Compiled to dist/updater/checker.js → go up two levels to project root
@@ -135,7 +135,7 @@ export async function fetchLatestTag(
   }
 }
 
-export async function checkForUpdate(): Promise<UpdateCheckResult> {
+export async function checkForUpdate(force = false): Promise<UpdateCheckResult> {
   const now = new Date().toISOString()
 
   try {
@@ -150,24 +150,26 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     }
   }
 
-  // Try reading from cache
-  const cached = await readCache()
+  // Try reading from cache (skip if force=true)
+  let cached: UpdateCache | null = null
+  if (!force) {
+    cached = await readCache()
+    if (cached) {
+      const age = Date.now() - new Date(cached.checkedAt).getTime()
+      if (age < CACHE_TTL_MS) {
+        try {
+          assertSemver(cached.latestVersion)
+        } catch {
+          // Corrupted cache — fall through to fresh check
+        }
 
-  if (cached) {
-    const age = Date.now() - new Date(cached.checkedAt).getTime()
-    if (age < CACHE_TTL_MS) {
-      try {
-        assertSemver(cached.latestVersion)
-      } catch {
-        // Corrupted cache — fall through to fresh check
-      }
-
-      return {
-        currentVersion: PLUGIN_VERSION,
-        latestVersion: cached.latestVersion,
-        hasUpdate: isNewerVersion(PLUGIN_VERSION, cached.latestVersion),
-        checkedAt: cached.checkedAt,
-        cacheHit: true,
+        return {
+          currentVersion: PLUGIN_VERSION,
+          latestVersion: cached.latestVersion,
+          hasUpdate: isNewerVersion(PLUGIN_VERSION, cached.latestVersion),
+          checkedAt: cached.checkedAt,
+          cacheHit: true,
+        }
       }
     }
   }

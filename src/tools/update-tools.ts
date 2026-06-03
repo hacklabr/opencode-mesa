@@ -59,7 +59,7 @@ export const mesaUpdateTool = tool({
           previousVersion: result.previousVersion,
           newVersion: result.newVersion,
           success: true,
-        })
+})
       }
 
       return errorResponse(result.message)
