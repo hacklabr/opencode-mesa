@@ -10,8 +10,7 @@ import { logAction } from "../audit"
 import { successResponse, errorResponse } from "../utils/responses"
 import { PhaseError, MesaError } from "../errors"
 
-const MAX_SECTION_CHARS = 8000
-const MAX_TOTAL_CHARS = 128000
+const MAX_TOTAL_CHARS = 400000
 
 function transitionPhase(
   current: DiscussionPhase,
@@ -451,22 +450,12 @@ export const requestConsensusTool = tool({
 
 export const generateSpecificationTool = tool({
   description:
-    "Generates the specification document from specialist-written sections. Enforces per-section budget (8k chars), total budget (128k chars), and optional template compliance. Sections must be written by specialists, not by the Manager.",
+    "Generates the specification document. The Manager writes a single coherent document (up to 100k tokens) covering: executive summary, context, technical decisions, execution plan with tasks and priorities. Analyses are stored separately — they do NOT appear in the spec.",
   args: {
-    sections: tool.schema
-      .array(
-        tool.schema.object({
-          specialist_name: tool.schema.string(),
-          specialist_id: tool.schema.string(),
-          content: tool.schema.string(),
-        })
-      )
-      .describe("Array of specification sections from each specialist"),
+    content: tool.schema
+      .string()
+      .describe("The complete specification document content written by the Manager. This should be a coherent, unified document — not disconnected sections."),
     topic: tool.schema.string().describe("The specification topic/title"),
-    template: tool.schema
-      .array(tool.schema.string())
-      .optional()
-      .describe("Required sub-headers that each section must contain (e.g., ['Context', 'Decision', 'Implementation Boundaries', 'Risks']). Sections missing these headers will be rejected."),
   },
   async execute(args, context) {
     try {
@@ -477,91 +466,52 @@ export const generateSpecificationTool = tool({
       if (!toDoc.ok) throw new PhaseError(toDoc.error)
       state.currentPhase = toDoc.phase
 
-      // Budget Gate 1: Per-section size validation
-      const oversized = args.sections.filter((s) => s.content.length > MAX_SECTION_CHARS)
-      if (oversized.length > 0) {
-        // Revert phase change
-        state.currentPhase = "CONSENSUS"
-        return errorResponse(
-          `Sections exceed size budget (${MAX_SECTION_CHARS} chars each):\n` +
-          oversized.map((s) => `  - ${s.specialist_name}: ${s.content.length} chars (trim ${s.content.length - MAX_SECTION_CHARS})`).join("\n") +
-          `\n\nTrim these sections before regenerating. Tip: Cut detail, don't summarize.`
-        )
-      }
-
-      // Template compliance gate
-      if (args.template && args.template.length > 0) {
-        const nonCompliant = args.sections.filter((s) => {
-          const contentLower = s.content.toLowerCase()
-          return args.template!.some((header) => !contentLower.includes(header.toLowerCase()))
-        })
-        if (nonCompliant.length > 0) {
-          // Revert phase change
-          state.currentPhase = "CONSENSUS"
-          const missingInfo = nonCompliant.map((s) => {
-            const contentLower = s.content.toLowerCase()
-            const missing = args.template!.filter((h) => !contentLower.includes(h.toLowerCase()))
-            return `  - ${s.specialist_name}: missing headers: ${missing.join(", ")}`
-          }).join("\n")
-          return errorResponse(
-            `Sections do not comply with required template:\n${missingInfo}\n\n` +
-            `Required headers: ${args.template.join(", ")}\n` +
-            `Each section must contain all required headers.`
-          )
-        }
-      }
-
       const specsDir = join(context.directory, PLUGIN_STATE_DIR, "specifications")
       await fs.mkdir(specsDir, { recursive: true })
 
       const id = randomUUID().slice(0, 8)
       const specPath = join(specsDir, `spec-${id}.md`)
 
-      const voteLines = state.discussion.votes
-        .filter((v) => v.round === state.discussion.consensusRound)
-        .map((v) => {
-          const icon = v.vote === 0 ? "DISAGREE" : v.vote === 1 ? "AGREE" : "AGREE_WITH_RESERVATIONS"
-          return `- **${v.agentName}**: ${icon} — ${v.reason}`
-        })
-        .join("\n")
-
-      const sectionsMd = args.sections
-        .map((s) => `## Section by ${s.specialist_name}\n\n${s.content}`)
-        .join("\n\n---\n\n")
-
       const document = [
         `# Specification: ${args.topic}`,
         ``,
         `**Generated at:** ${new Date().toISOString()}`,
         ``,
-        `## Participants`,
-        ...state.team
-          .filter((t) => t.status === "summoned" || t.status === "active")
-          .map((t) => `- ${t.name} (${t.personaId}) — ${t.division}`),
-        ``,
-        `---`,
-        ``,
-        sectionsMd,
-        ``,
-        `---`,
-        ``,
-        `## Consensus Decisions`,
-        voteLines,
-        ``,
+        args.content,
       ].join("\n")
 
-      // Budget Gate 2: Total document size validation
+      // Budget Gate: Total document size validation
       if (document.length > MAX_TOTAL_CHARS) {
         // Revert phase change
         state.currentPhase = "CONSENSUS"
         return errorResponse(
           `Specification exceeds total budget: ${document.length} chars (max ${MAX_TOTAL_CHARS}).\n` +
-          `Current sections: ${args.sections.length} × avg ${Math.round(document.length / args.sections.length)} chars.\n` +
-          `Reduce section content or remove sections.`
+          `Reduce content length to fit within the budget.`
         )
       }
 
       await fs.writeFile(specPath, document, "utf-8")
+
+      // Save analyses separately
+      if (state.discussion.analyses.length > 0) {
+        const analysesDir = join(context.directory, PLUGIN_STATE_DIR, "specifications", `analyses-${id}`)
+        await fs.mkdir(analysesDir, { recursive: true })
+        for (const a of state.discussion.analyses) {
+          const analysisFile = join(analysesDir, `analysis-${a.agentId}-turn${a.turn}.md`)
+          await fs.writeFile(
+            analysisFile,
+            [
+              `# Analysis: ${a.agentName} — Turn ${a.turn}`,
+              ``,
+              `**Agent ID:** ${a.agentId}`,
+              `**Timestamp:** ${a.timestamp}`,
+              ``,
+              a.content,
+            ].join("\n"),
+            "utf-8"
+          )
+        }
+      }
 
       state.specification.path = specPath
       state.specification.status = "draft"

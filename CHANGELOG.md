@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-06-03
+
+### Changed (BREAKING)
+- **Specification generation refactor**: `generateSpecificationTool` now accepts a single `content` string instead of `sections` array. The Manager writes ONE coherent document covering executive summary, context, technical decisions, and execution plan.
+- **Budget increased**: Total document budget raised from 128k to 400k chars (~100k tokens).
+- **Removed per-section budget gate**: No longer enforces 8k chars per section (no longer applicable).
+- **Removed template validation**: The `template` parameter is removed; the Manager controls document structure directly.
+- **Analyses stored separately**: Each specialist's analyses are saved to individual files in `specifications/analyses-{id}/` — they do NOT appear in the spec document.
+- **Simplified document format**: Removed "Participants" and "Consensus Decisions" sections from the spec document. The spec is a clean, unified document.
+
+### Migration
+- Update Manager prompts to write a single `content` string instead of assembling `sections`.
+- Remove any `template` parameter usage.
+- Analyses are automatically archived; no action needed.
+
 ## [1.5.0] - 2026-06-02
 
 ### Added
