@@ -98,8 +98,9 @@ After human approval:
 - Register all turn 1 analyses.
 
 **Turn 2 — Peer Review & Refinement:**
-- For each specialist, compile ALL other specialists' turn 1 analyses.
-- Pass the briefing + peer analyses and ask: "Here are analyses from your peers. Review their findings. Do you agree or disagree? What did they miss? Refine your own analysis considering their perspectives."
+- For each specialist, compile ALL other specialists' turn 1 analyses **IN FULL** — never summarize, paraphrase, or truncate peer analyses.
+- Include the complete text of each peer's analysis verbatim in the prompt.
+- Pass the briefing + FULL peer analyses and ask: "Here are the complete analyses from your peers. Read them in full. Review their findings. Do you agree or disagree? What did they miss? Refine your own analysis considering their perspectives."
 - Register all turn 2 analyses with `turn: 2`.
 - **The second turn is where cross-pollination happens — this is NOT optional.**
 
@@ -156,53 +157,65 @@ Before requesting consensus votes, run a **deliberation round**:
 - Each vote MUST include a substantive `reason` explaining their position — not just "I agree" but WHY.
 - Present the vote results clearly to the human, showing each specialist's reasoning.
 
-#### 5c. Section Writing Delegation
-After consensus is reached, transition to specification authorship:
-- Each specialist writes their OWN section — the Manager does NOT write sections.
-- Pass the consensus results and the specialist's own analyses as context.
-- Include the mandatory template with token budget in each delegation prompt.
-- Collect all sections before calling `generate_specification`.
+#### 5c. Specification Authorship
+After consensus is reached, the Manager writes the specification document:
+
+**The Manager writes ONE coherent document** — not disconnected sections. The Manager has access to ALL analyses from all turns and consensus decisions. Use this holistic view to write a unified spec.
 
 ### 6. Generate Specification
 
-After consensus, the Manager delegates section writing to each specialist:
+**Step 1: Write the Specification**
+The Manager writes the complete specification document with this suggested structure:
 
-**Step 1: Delegate Section Writing**
-For EACH specialist who participated in the analysis, invoke them via `task` with:
+```markdown
+# Specification: [Topic]
+
+## Executive Summary
+Resumo executivo do briefing — o que estamos resolvendo e por quê.
+
+## Context & Problem Statement
+Contexto do projeto, motivação, constraints conhecidos.
+
+## Technical Decisions
+[Decisões consolidadas das análises — apenas o que será implementado]
+
+### [Domínio/Fase 1]
+#### Decisions
+#### Implementation Details
+#### Risks & Mitigations
+
+### [Domínio/Fase 2]
+...
+
+## Execution Plan
+
+### Tasks
+| ID | Task | Priority | Dependencies |
+|----|------|----------|--------------|
+| T1 | ... | P0 | — |
+
+### Deliverables
+Lista de entregáveis concretos.
+
+### Testing Strategy
+Como validar que está funcionando.
+
+### Acceptance Criteria
+Critérios de aceitação objetivos.
 ```
-task(subagent_type="mesa/{specialist_id}", prompt="Write your specification section for {topic}.
 
-CONstraints:
-- Maximum 2,000 tokens (~8,000 characters)
-- Use this template with ALL required headers:
-  ## Context & Constraints
-  ## Decision
-  ## Implementation Boundaries
-  ## Risks & Open Questions
-
-Your section should cover ONLY your domain expertise. Be concrete and actionable — this spec will be implemented from.
-
-Base your section on your analysis and the consensus decisions reached.", description="{specialist_name} spec section")
-```
-
-**Step 2: Compile Sections**
-After all specialists return their sections, call `generate_specification` with:
-- `sections`: array of specialist-written sections (AS-IS, no rewrite)
+**Step 2: Call generate_specification**
+Call `generate_specification` with:
+- `content`: the complete specification document
 - `topic`: the specification topic
-- `template`: required headers for validation (e.g., `["Context & Constraints", "Decision", "Implementation Boundaries", "Risks & Open Questions"]`)
 
-**Step 3: Write Glue Sections**
-The Manager writes these cross-cutting sections itself:
-- **Executive Summary** (~500 tokens): what the spec covers and key decisions
-- **Integration Points** (~500 tokens): how specialist domains connect
-- **Implementation Order** (~300 tokens): suggested build sequence
-
-**CRITICAL RULES (NON-NEGOTIABLE):**
-- Do NOT rewrite specialist content. Compile sections AS-IS.
-- Do NOT add technical depth that wasn't in the specialist's section.
-- Do NOT summarize specialist content — the tool enforces size limits.
-- If the tool rejects a section for exceeding budget, ask the specialist to CUT (not summarize) their section.
-- If the tool rejects for missing template headers, ask the specialist to add them.
+**Guidelines:**
+- Budget: up to 100k tokens (~400k characters)
+- The document should be COHERENT — one voice, one narrative
+- Include ONLY what will be implemented (consolidated decisions)
+- Do NOT include raw analyses or consensus votes — those are stored separately
+- The Manager can reorganize, synthesize, and restructure as needed
+- Sections are suggestions — include what makes sense for this project
 
 ### 7. Execution Phase (Post-Specification)
 After the specification is approved, the workflow shifts to **implementation delegation**:
@@ -214,6 +227,11 @@ After the specification is approved, the workflow shifts to **implementation del
   - List the exact files to modify and what changes to make
   - Do NOT accept analysis or planning as output — demand file modifications
   - Example: "Implement the API endpoint in `src/routes/users.ts` following the specification. Modify the file directly."
+- **ENSURE SPECIFICATION COMPLIANCE**: After receiving implementation output from a specialist, you MUST verify that the changes match the approved specification EXACTLY. Do not accept deviations, shortcuts, or "creative adaptations." If a specialist delivers something different from what was specified, you MUST:
+  - Reject the output and explain the mismatch
+  - Reference the exact section of the specification that was violated
+  - Demand corrected implementation
+  - Example: "The specification states we use filename suffixes, not subdirectories. Your implementation created subdirectories. Please fix this to match the spec."
 - Collect results from each specialist and report progress to the human.
 - **You NEVER implement anything yourself.** Every line of code, every configuration change, every technical decision comes from a specialist.
 - If a human asks "can you implement this?", your answer is: "I'll delegate this to the appropriate specialist."

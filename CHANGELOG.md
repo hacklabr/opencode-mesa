@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-06-03
+
+### Added
+- **Multi-session state model**: True parallel session support with isolated state per session:
+  - New `mesa_session_state` table with `(workspace_id, session_id)` composite primary key
+  - New scoped child tables: `mesa_session_team`, `mesa_session_analyses`, `mesa_session_votes`, `mesa_session_participants`
+  - Each session has fully independent workflow state (phase, team, analyses, votes)
+
+### Changed
+- **`loadState()`**: Now tries session-scoped tables first, falls back to unscoped tables for backward compatibility
+- **`saveState()`**: Dual-write strategy — saves to BOTH scoped and unscoped tables
+- **`insertSessionChildRows()`**: New function for inserting child data into scoped tables
+- **`loadSessionState()`**: New function for loading state from scoped tables
+
+### Technical
+- Full backward compatibility: existing `mesa_state`, `mesa_team`, etc. tables remain unchanged
+- Old workspaces continue to work without migration
+- New sessions automatically use scoped tables while maintaining legacy support
+
 ## [2.1.0] - 2026-06-03
 
 ### Added
