@@ -3,7 +3,8 @@ import { createInitialState, PLUGIN_VERSION } from "../config"
 import type { DiscussionPhase } from "../types"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, getStatePath, closeStorage } from "../state"
+import { Database } from "bun:sqlite"
+import { loadState, saveState, getStatePath, closeStorage, getSessionId } from "../state"
 
 describe("config", () => {
   test("PLUGIN_VERSION is semver format", () => {
@@ -96,5 +97,54 @@ describe("state persistence", () => {
   afterAll(async () => {
     closeStorage(testDir)
     await fs.rm(join(testDir, ".mesa"), { recursive: true, force: true })
+  })
+
+  test("two sessions in same workspace have independent state", async () => {
+    // Session A: create and save with ANALYSIS phase
+    const stateA = await loadState(testDir)
+    stateA.currentPhase = "ANALYSIS"
+    await saveState(testDir, stateA)
+    const sessionAId = getSessionId(testDir)
+    expect(sessionAId).toBeDefined()
+
+    closeStorage(testDir)
+
+    // Session B: create and save with CONSENSUS phase
+    const stateB = await loadState(testDir)
+    stateB.currentPhase = "CONSENSUS"
+    await saveState(testDir, stateB)
+    const sessionBId = getSessionId(testDir)
+    expect(sessionBId).toBeDefined()
+    expect(sessionBId).not.toBe(sessionAId)
+
+    closeStorage(testDir)
+
+    // Verify both sessions persisted independently in scoped tables
+    const dbPath = await getStatePath(testDir)
+    const db = new Database(dbPath, { readonly: true })
+    try {
+      const rowA = db
+        .query("SELECT current_phase FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
+        .get(testDir, sessionAId) as { current_phase: string } | null
+      expect(rowA?.current_phase).toBe("ANALYSIS")
+
+      const rowB = db
+        .query("SELECT current_phase FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
+        .get(testDir, sessionBId) as { current_phase: string } | null
+      expect(rowB?.current_phase).toBe("CONSENSUS")
+
+      // Verify unscoped table has the latest state (dual-write)
+      const rowUnscoped = db
+        .query("SELECT current_phase FROM mesa_state WHERE workspace_id = ?")
+        .get(testDir) as { current_phase: string } | null
+      expect(rowUnscoped?.current_phase).toBe("CONSENSUS")
+    } finally {
+      db.close()
+    }
+
+    // Verify loadState falls back to unscoped when no scoped state for current session
+    const stateC = await loadState(testDir)
+    expect(stateC.currentPhase).toBe("CONSENSUS") // from unscoped fallback
+    closeStorage(testDir)
   })
 })

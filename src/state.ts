@@ -159,6 +159,76 @@ CREATE TABLE IF NOT EXISTS mesa_session (
   last_heartbeat TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active'
 );
+
+-- Scoped session tables (multi-session support)
+CREATE TABLE IF NOT EXISTS mesa_session_state (
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  current_phase TEXT NOT NULL DEFAULT 'PLANNING',
+  previous_phase TEXT DEFAULT NULL,
+  briefing_path TEXT,
+  briefing_status TEXT NOT NULL DEFAULT 'draft',
+  briefing_slug TEXT,
+  discussion_topic TEXT DEFAULT '',
+  discussion_current_turn INTEGER DEFAULT 0,
+  discussion_max_turns INTEGER DEFAULT 2,
+  discussion_consensus_round INTEGER DEFAULT 0,
+  discussion_debate_needed INTEGER DEFAULT 0,
+  specification_path TEXT,
+  specification_status TEXT DEFAULT 'pending',
+  phases TEXT DEFAULT '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]',
+  state_version INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS mesa_session_team (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  persona_id TEXT NOT NULL,
+  name TEXT,
+  division TEXT,
+  status TEXT DEFAULT 'proposed',
+  sort_order INTEGER DEFAULT 0,
+  UNIQUE(workspace_id, session_id, persona_id)
+);
+
+CREATE TABLE IF NOT EXISTS mesa_session_analyses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  agent_name TEXT,
+  content TEXT,
+  turn INTEGER,
+  timestamp TEXT,
+  UNIQUE(workspace_id, session_id, agent_id, turn)
+);
+CREATE INDEX IF NOT EXISTS idx_session_analyses_turn ON mesa_session_analyses(workspace_id, session_id, turn);
+
+CREATE TABLE IF NOT EXISTS mesa_session_votes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  agent_name TEXT,
+  vote INTEGER CHECK(vote IN (0,1,2)),
+  reason TEXT,
+  round INTEGER,
+  UNIQUE(workspace_id, session_id, agent_id, round)
+);
+CREATE INDEX IF NOT EXISTS idx_session_votes_round ON mesa_session_votes(workspace_id, session_id, round);
+
+CREATE TABLE IF NOT EXISTS mesa_session_participants (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  persona_id TEXT NOT NULL,
+  sort_order INTEGER DEFAULT 0,
+  UNIQUE(workspace_id, session_id, persona_id)
+);
 `
 
 // ---------------------------------------------------------------------------
@@ -386,6 +456,63 @@ function insertChildRows(db: Database, wsId: string, state: DiscussionState): vo
   }
 }
 
+function insertSessionChildRows(db: Database, wsId: string, sessionId: string, state: DiscussionState): void {
+  for (let i = 0; i < state.team.length; i++) {
+    const m = state.team[i]
+    db.run(
+      "INSERT INTO mesa_session_team (workspace_id, session_id, persona_id, name, division, status, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [wsId, sessionId, m.personaId, m.name, m.division, m.status, i]
+    )
+  }
+
+  for (const a of state.discussion.analyses) {
+    db.run(
+      "INSERT INTO mesa_session_analyses (workspace_id, session_id, agent_id, agent_name, content, turn, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [wsId, sessionId, a.agentId, a.agentName, a.content, a.turn, a.timestamp]
+    )
+  }
+
+  for (const v of state.discussion.votes) {
+    db.run(
+      "INSERT INTO mesa_session_votes (workspace_id, session_id, agent_id, agent_name, vote, reason, round) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [wsId, sessionId, v.agentId, v.agentName, v.vote, v.reason, v.round]
+    )
+  }
+
+  for (let i = 0; i < state.discussion.participants.length; i++) {
+    db.run(
+      "INSERT INTO mesa_session_participants (workspace_id, session_id, persona_id, sort_order) VALUES (?, ?, ?, ?)",
+      [wsId, sessionId, state.discussion.participants[i], i]
+    )
+  }
+}
+
+function loadSessionState(db: Database, wsId: string, sessionId: string): DiscussionState | null {
+  const row = db
+    .query("SELECT * FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
+    .get(wsId, sessionId) as Record<string, unknown> | null
+
+  if (!row) return null
+
+  const team = db
+    .query("SELECT persona_id, name, division, status FROM mesa_session_team WHERE workspace_id = ? AND session_id = ? ORDER BY sort_order")
+    .all(wsId, sessionId) as Array<{ persona_id: string; name: string; division: string; status: string }>
+
+  const analyses = db
+    .query("SELECT agent_id, agent_name, content, turn, timestamp FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ? ORDER BY turn")
+    .all(wsId, sessionId) as Array<{ agent_id: string; agent_name: string; content: string; turn: number; timestamp: string }>
+
+  const votes = db
+    .query("SELECT agent_id, agent_name, vote, reason, round FROM mesa_session_votes WHERE workspace_id = ? AND session_id = ? ORDER BY round")
+    .all(wsId, sessionId) as Array<{ agent_id: string; agent_name: string; vote: number; reason: string; round: number }>
+
+  const participants = db
+    .query("SELECT persona_id FROM mesa_session_participants WHERE workspace_id = ? AND session_id = ? ORDER BY sort_order")
+    .all(wsId, sessionId) as Array<{ persona_id: string }>
+
+  return rowToState(row, team, analyses, votes, participants)
+}
+
 function rowToState(
   row: Record<string, unknown>,
   team: Array<{ persona_id: string; name: string; division: string; status: string }>,
@@ -458,9 +585,17 @@ export async function getStatePath(directory: string): Promise<string> {
 
 export async function loadState(directory: string): Promise<DiscussionState> {
   await initSession(directory)
+  const sessionId = getSessionId(directory)
 
   const db = getDb(directory)
   try {
+    // Try to load session-scoped state first
+    if (sessionId) {
+      const sessionState = loadSessionState(db, directory, sessionId)
+      if (sessionState) return sessionState
+    }
+
+    // Fall back to unscoped state (backward compatibility)
     const row = db
       .query("SELECT * FROM mesa_state WHERE workspace_id = ?")
       .get(directory) as Record<string, unknown> | null
@@ -500,12 +635,14 @@ export async function loadState(directory: string): Promise<DiscussionState> {
 
 export async function saveState(directory: string, state: DiscussionState): Promise<void> {
   await initSession(directory)
+  const sessionId = getSessionId(directory)
 
   state.updatedAt = new Date().toISOString()
 
   const db = getDb(directory)
   try {
     const save = db.transaction(() => {
+      // ALWAYS save to unscoped tables (backward compatibility)
       db.run(
         `INSERT OR REPLACE INTO mesa_state (
           workspace_id, current_phase, previous_phase,
@@ -531,6 +668,35 @@ export async function saveState(directory: string, state: DiscussionState): Prom
       db.run("DELETE FROM mesa_participants WHERE workspace_id = ?", [state.workspaceId])
 
       insertChildRows(db, state.workspaceId, state)
+
+      // ALSO save to scoped tables if we have a sessionId
+      if (sessionId) {
+        db.run(
+          `INSERT OR REPLACE INTO mesa_session_state (
+            workspace_id, session_id, current_phase, previous_phase,
+            briefing_path, briefing_status, briefing_slug,
+            discussion_topic, discussion_current_turn, discussion_max_turns,
+            discussion_consensus_round, discussion_debate_needed,
+            specification_path, specification_status,
+            phases, state_version, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            state.workspaceId, sessionId, state.currentPhase, state.previousPhase,
+            state.briefing.path, state.briefing.status, state.briefing.slug,
+            state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
+            state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
+            state.specification.path, state.specification.status,
+            JSON.stringify(state.phases), state.stateVersion, state.createdAt, state.updatedAt,
+          ]
+        )
+
+        db.run("DELETE FROM mesa_session_team WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
+        db.run("DELETE FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
+        db.run("DELETE FROM mesa_session_votes WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
+        db.run("DELETE FROM mesa_session_participants WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
+
+        insertSessionChildRows(db, state.workspaceId, sessionId, state)
+      }
 
       // Piggyback heartbeat
       const canonicalDir = join(directory, PLUGIN_STATE_DIR)
