@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState } from "../state"
+import { loadState, saveState, getSessionId } from "../state"
 import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry } from "../types"
 import { canTransition, VALID_TRANSITIONS, requirePhase, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions"
 import { promises as fs } from "node:fs"
@@ -60,11 +60,16 @@ export const openAnalysisRoundTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory)
+      const sessionId = getSessionId(context.directory)
+      if (!sessionId) {
+        throw new Error("No active session. Ensure loadState() was called.")
+      }
+
       const phaseError = requirePhase(state, "PLANNING")
       if (phaseError) throw new PhaseError(phaseError)
 
       // BUG-12: Clean up orphan briefing file from previous round
-      const oldBriefingPath = join(context.directory, PLUGIN_STATE_DIR, "briefing-for-discussion.md")
+      const oldBriefingPath = join(context.directory, PLUGIN_STATE_DIR, `briefing-for-discussion-${sessionId}.md`)
       try {
         await fs.unlink(oldBriefingPath)
       } catch {
@@ -117,7 +122,7 @@ export const openAnalysisRoundTool = tool({
         const briefingFile = join(
           context.directory,
           PLUGIN_STATE_DIR,
-          "briefing-for-discussion.md"
+          `briefing-for-discussion-${sessionId}.md`
         )
         await fs.writeFile(briefingFile, args.briefing_content, "utf-8")
         await logAction(context.directory, "briefing_for_discussion_written", state.currentPhase, { path: briefingFile })

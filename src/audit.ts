@@ -1,6 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { PLUGIN_STATE_DIR } from "./config"
+import { getSessionId } from "./state"
 
 export interface AuditEntry {
   timestamp: string
@@ -26,6 +27,9 @@ export async function logAction(
     ...(details ? { details } : {}),
   }
 
-  const logPath = join(logDir, "audit.log")
+  const sessionId = getSessionId(directory)
+  const logPath = sessionId
+    ? join(logDir, `audit-${sessionId}.log`)
+    : join(logDir, "audit.log")
   await appendFile(logPath, JSON.stringify(entry) + "\n", "utf-8")
 }

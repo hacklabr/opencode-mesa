@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState } from "../state"
+import { loadState, saveState, getSessionId } from "../state"
 import { join, resolve } from "node:path"
 import { promises as fs } from "node:fs"
 import { PLUGIN_STATE_DIR } from "../config"
@@ -196,8 +196,12 @@ export const deliverBriefingTool = tool({
         return errorResponse("No briefing path found.")
       }
 
+      const sessionId = getSessionId(context.directory)
+      if (!sessionId) {
+        throw new Error("No active session. Ensure loadState() was called.")
+      }
       const briefingsDir = join(context.directory, PLUGIN_STATE_DIR)
-      const deliveryPath = join(briefingsDir, "briefing-current.md")
+      const deliveryPath = join(briefingsDir, `briefing-current-${sessionId}.md`)
       const content = await fs.readFile(state.briefing.path, "utf-8")
       await fs.writeFile(deliveryPath, content, "utf-8")
 

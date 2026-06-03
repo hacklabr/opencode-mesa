@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage } from "../state"
+import { loadState, saveState, closeStorage, getSessionId } from "../state"
 import { createInitialState } from "../config"
 import {
   openAnalysisRoundTool,
@@ -146,8 +146,9 @@ describe("open_analysis_round tool", () => {
       makeContext()
     )
 
+    const sessionId = getSessionId(TEST_DIR)
     const file = await fs.readFile(
-      join(TEST_DIR, ".mesa", "briefing-for-discussion.md"),
+      join(TEST_DIR, ".mesa", `briefing-for-discussion-${sessionId}.md`),
       "utf-8"
     )
     expect(file).toBe("## Briefing for analysis")

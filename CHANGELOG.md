@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-06-03
+
+### Added
+- **Session-scoped ephemeral files**: All ephemeral files now include the active `sessionId` suffix to prevent collisions between parallel sessions:
+  - `briefing-current.md` → `briefing-current-{sessionId}.md`
+  - `briefing-for-discussion.md` → `briefing-for-discussion-{sessionId}.md`
+  - `audit.log` → `audit-{sessionId}.log`
+- **`getSessionId()` export**: New helper in `src/state.ts` returns the active session ID for a directory.
+
+### Fixed
+- **`initSession()` race condition**: Converted from sync to async with promise-based lock, preventing duplicate session initialization under concurrent calls.
+
+### Technical
+- `loadState()` and `saveState()` now `await initSession()` instead of calling it synchronously.
+- `mesa_state` workspace singleton identified as architectural debt and deferred to future sprint.
+
 ## [2.0.0] - 2026-06-03
 
 ### Changed (BREAKING)

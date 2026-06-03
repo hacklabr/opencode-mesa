@@ -172,6 +172,12 @@ interface SessionState {
 }
 
 const activeSessions = new Map<string, SessionState>()
+const sessionLocks = new Map<string, Promise<string>>()
+
+export function getSessionId(directory: string): string | undefined {
+  const canonicalDir = join(directory, PLUGIN_STATE_DIR)
+  return activeSessions.get(canonicalDir)?.sessionId
+}
 
 const HEARTBEAT_INTERVAL_MS = 15_000
 const HEARTBEAT_STALE_THRESHOLD_MS = 90_000
@@ -220,59 +226,72 @@ function endSession(session: SessionState): void {
   }
 }
 
-function initSession(directory: string): string {
+async function initSession(directory: string): Promise<string> {
   const canonicalDir = join(directory, PLUGIN_STATE_DIR)
   const existing = activeSessions.get(canonicalDir)
   if (existing) return existing.sessionId
 
-  const db = getDb(directory)
-  try {
-    const tx = db.transaction(() => {
-      const activeSessionsRows = db
-        .query("SELECT session_id, pid, hostname, last_heartbeat FROM mesa_session WHERE status = 'active'")
-        .all() as Array<{ session_id: string; pid: number; hostname: string; last_heartbeat: string }>
+  const pending = sessionLocks.get(canonicalDir)
+  if (pending) return pending
 
-      for (const session of activeSessionsRows) {
-        if (isSessionAlive(session)) {
-          throw new Error(
-            `Another Mesa session is active (session=${session.session_id}, pid=${session.pid}). ` +
-            `Only one session per workspace is allowed.`
-          )
+  const promise = (async () => {
+    const db = getDb(directory)
+    try {
+      const tx = db.transaction(() => {
+        const activeSessionsRows = db
+          .query("SELECT session_id, pid, hostname, last_heartbeat FROM mesa_session WHERE status = 'active'")
+          .all() as Array<{ session_id: string; pid: number; hostname: string; last_heartbeat: string }>
+
+        for (const session of activeSessionsRows) {
+          if (isSessionAlive(session)) {
+            throw new Error(
+              `Another Mesa session is active (session=${session.session_id}, pid=${session.pid}). ` +
+              `Only one session per workspace is allowed.`
+            )
+          }
+          db.run("UPDATE mesa_session SET status = 'superseded' WHERE session_id = ?", [session.session_id])
         }
-        db.run("UPDATE mesa_session SET status = 'superseded' WHERE session_id = ?", [session.session_id])
+
+        const sessionId = crypto.randomUUID()
+        const now = new Date().toISOString()
+        db.run(
+          "INSERT INTO mesa_session (session_id, pid, hostname, started_at, last_heartbeat, status) VALUES (?, ?, ?, ?, ?, 'active')",
+          [sessionId, process.pid, hostname(), now, now]
+        )
+        return sessionId
+      })
+
+      const sid = tx() as string
+
+      const sessionState: SessionState = {
+        sessionId: sid,
+        directory,
+        timer: setInterval(() => {
+          try {
+            updateHeartbeat(directory, sid)
+          } catch {
+            // heartbeat failures are non-fatal
+          }
+        }, HEARTBEAT_INTERVAL_MS),
       }
 
-      const sessionId = crypto.randomUUID()
-      const now = new Date().toISOString()
-      db.run(
-        "INSERT INTO mesa_session (session_id, pid, hostname, started_at, last_heartbeat, status) VALUES (?, ?, ?, ?, ?, 'active')",
-        [sessionId, process.pid, hostname(), now, now]
-      )
-      return sessionId
-    })
+      if (sessionState.timer && typeof sessionState.timer === "object" && "unref" in sessionState.timer) {
+        sessionState.timer.unref()
+      }
 
-    const sid = tx() as string
-
-    const sessionState: SessionState = {
-      sessionId: sid,
-      directory,
-      timer: setInterval(() => {
-        try {
-          updateHeartbeat(directory, sid)
-        } catch {
-          // heartbeat failures are non-fatal
-        }
-      }, HEARTBEAT_INTERVAL_MS),
+      activeSessions.set(canonicalDir, sessionState)
+      return sid
+    } finally {
+      db.close()
     }
+  })()
 
-    if (sessionState.timer && typeof sessionState.timer === "object" && "unref" in sessionState.timer) {
-      sessionState.timer.unref()
-    }
+  sessionLocks.set(canonicalDir, promise)
 
-    activeSessions.set(canonicalDir, sessionState)
-    return sid
+  try {
+    return await promise
   } finally {
-    db.close()
+    sessionLocks.delete(canonicalDir)
   }
 }
 
@@ -438,7 +457,7 @@ export async function getStatePath(directory: string): Promise<string> {
 }
 
 export async function loadState(directory: string): Promise<DiscussionState> {
-  initSession(directory)
+  await initSession(directory)
 
   const db = getDb(directory)
   try {
@@ -480,7 +499,7 @@ export async function loadState(directory: string): Promise<DiscussionState> {
 }
 
 export async function saveState(directory: string, state: DiscussionState): Promise<void> {
-  initSession(directory)
+  await initSession(directory)
 
   state.updatedAt = new Date().toISOString()
 

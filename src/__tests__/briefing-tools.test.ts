@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage } from "../state"
+import { loadState, saveState, closeStorage, getSessionId } from "../state"
 import { createInitialState } from "../config"
 import {
   createBriefingTool,
@@ -194,14 +194,15 @@ describe("deliver_briefing tool", () => {
 
     expect(result).toHaveProperty("title", "Briefing Delivered to Manager")
     const output = (result as { output: string }).output
-    expect(output).toContain("briefing-current.md")
+    expect(output).toContain("briefing-current-")
 
     const state = await loadState(TEST_DIR)
+    const sessionId = getSessionId(TEST_DIR)
     expect(state.briefing.status).toBe("delivered")
     expect(state.currentPhase).toBe("PLANNING")
 
     const delivered = await fs.readFile(
-      join(TEST_DIR, ".mesa", "briefing-current.md"),
+      join(TEST_DIR, ".mesa", `briefing-current-${sessionId}.md`),
       "utf-8"
     )
     expect(delivered).toContain("# Content")
