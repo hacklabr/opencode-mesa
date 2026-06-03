@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-06-02
+
+### Added
+- **SQLite state persistence**: Migrated from JSON files to `bun:sqlite` with 6-table relational schema — eliminates race conditions (RC-1 through RC-6) that caused silent data loss with multiple OpenCode instances
+- **Relational schema**: `mesa_state` (scalars), `mesa_team`, `mesa_analyses`, `mesa_votes`, `mesa_participants`, `mesa_session` — UNIQUE constraints prevent duplicates at DB level
+- **Session tracking**: `mesa_session` table with PID, hostname, heartbeat (15s), and stale detection (90s) — distinguishes multiple OpenCode instances in the same workspace
+- **Session lifecycle**: `initSession()` with `BEGIN IMMEDIATE` serializes concurrent startups, heartbeat piggybacked on every `saveState`, graceful shutdown via `process.on('exit/SIGTERM/SIGINT')`
+- **Auto-migration from state.json**: Detects existing JSON state → imports to SQLite → renames to `.v1.bak`
+- **`closeStorage()` export**: Releases session timers for test cleanup
+- **`src/bun-sqlite.d.ts`**: Type declarations for `bun:sqlite` module
+- **Connection management**: Per-call open/close with WAL mode, foreign keys, busy_timeout=5000, synchronous=NORMAL
+
+### Changed
+- `src/state.ts`: Full rewrite (180 → 558 lines). Replaced `fs/promises` JSON I/O with `bun:sqlite` relational storage
+- `getStatePath()` now returns `.mesa/state.db` instead of `.mesa/state.json`
+- Test files updated: `JSON.parse(readFile)` → `loadState()`, added `closeStorage()` cleanup
+
+### Removed
+- `cleanupOrphanedTmpFiles()` — ~25 lines of defensive `.tmp` file management
+- `.tmp` staging + rename pattern — ~15 lines
+- `.bak` rotation logic — ~10 lines
+- JSON recovery chain — ~10 lines
+- **Total eliminated: ~60 lines of defensive I/O code**
+
+### Security
+- `process.versions.bun` guard prevents loading outside Bun runtime
+- SQLite WAL mode + busy_timeout for cross-process safety
+- Foreign keys enforced (ON DELETE CASCADE)
+- CHECK constraints mirror TypeScript enums for defense-in-depth
+
 ## [1.3.0] - 2026-06-02
 
 ### Added

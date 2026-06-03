@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { saveState } from "../state"
+import { loadState, saveState, closeStorage } from "../state"
 import { createInitialState } from "../config"
 import {
   analyzeBriefingTool,
@@ -32,6 +32,7 @@ describe("analyze_briefing tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -83,6 +84,7 @@ describe("propose_team tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -110,9 +112,7 @@ describe("propose_team tool", () => {
     expect(output).toContain("Backend Architect")
     expect(output).toContain("Need architecture review")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.team.length).toBe(1)
     expect(loaded.team[0].status).toBe("proposed")
     expect(loaded.team[0].personaId).toBe("engineering-backend-architect")
@@ -171,6 +171,7 @@ describe("summon_team tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -192,10 +193,8 @@ describe("summon_team tool", () => {
     expect(output).toContain("Eng One")
     expect(output).toContain("Prod One")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
-    expect(loaded.team.every((t: { status: string }) => t.status === "summoned")).toBe(true)
+    const loaded = await loadState(TEST_DIR)
+    expect(loaded.team.every((t) => t.status === "summoned")).toBe(true)
   })
 
   test("returns error when no proposed team exists", async () => {
@@ -233,6 +232,7 @@ describe("delegate_task tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -278,9 +278,7 @@ describe("delegate_task tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("Do something")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.team.length).toBe(1)
     expect(loaded.team[0].personaId).toBe("engineering-backend-architect")
     expect(loaded.team[0].status).toBe("delegated")
@@ -325,6 +323,7 @@ describe("define_phases tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -341,9 +340,7 @@ describe("define_phases tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("PLANNING → ANALYSIS → CONSENSUS")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.phases).toEqual(["PLANNING", "ANALYSIS", "CONSENSUS"])
   })
 

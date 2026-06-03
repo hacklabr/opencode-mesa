@@ -1,9 +1,9 @@
-import { describe, expect, test, afterAll } from "vitest"
+import { describe, expect, test, afterAll, afterEach } from "vitest"
 import { createInitialState, PLUGIN_VERSION } from "../config"
 import type { DiscussionPhase } from "../types"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, getStatePath } from "../state"
+import { loadState, saveState, getStatePath, closeStorage } from "../state"
 
 describe("config", () => {
   test("PLUGIN_VERSION is semver format", () => {
@@ -55,6 +55,10 @@ describe("config", () => {
 describe("state persistence", () => {
   const testDir = join(import.meta.dirname, "__test_fixtures__")
 
+  afterEach(() => {
+    closeStorage(testDir)
+  })
+
   test("loadState returns initial state when no file exists", async () => {
     const state = await loadState(testDir)
     expect(state.currentPhase).toBe("PLANNING")
@@ -89,7 +93,8 @@ describe("state persistence", () => {
     )
   })
 
-afterAll(async () => {
+  afterAll(async () => {
+    closeStorage(testDir)
     await fs.rm(join(testDir, ".mesa"), { recursive: true, force: true })
   })
 })

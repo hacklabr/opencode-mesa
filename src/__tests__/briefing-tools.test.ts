@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { saveState } from "../state"
+import { loadState, saveState, closeStorage } from "../state"
 import { createInitialState } from "../config"
 import {
   createBriefingTool,
@@ -31,6 +31,7 @@ describe("create_briefing tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -44,9 +45,7 @@ describe("create_briefing tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("briefing-my-project.md")
 
-    const state = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const state = await loadState(TEST_DIR)
     expect(state.briefing.slug).toBe("my-project")
     expect(state.briefing.status).toBe("draft")
 
@@ -121,6 +120,7 @@ describe("approve_briefing tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -140,9 +140,7 @@ describe("approve_briefing tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("test-approve")
 
-    const state = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const state = await loadState(TEST_DIR)
     expect(state.briefing.status).toBe("approved")
 
     const file = await fs.readFile(
@@ -177,6 +175,7 @@ describe("deliver_briefing tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -197,9 +196,7 @@ describe("deliver_briefing tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("briefing-current.md")
 
-    const state = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const state = await loadState(TEST_DIR)
     expect(state.briefing.status).toBe("delivered")
     expect(state.currentPhase).toBe("PLANNING")
 
@@ -229,6 +226,7 @@ describe("import_briefing tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
     await fs.rm(join(TEST_DIR, "imports"), { recursive: true, force: true }).catch(() => {})
   })
@@ -250,9 +248,7 @@ describe("import_briefing tool", () => {
     expect(output).toContain("approved (pre-approved)")
     expect(output).toContain("PLANNING")
 
-    const state = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const state = await loadState(TEST_DIR)
     expect(state.briefing.status).toBe("approved")
     expect(state.briefing.slug).toBe("imported")
     expect(state.currentPhase).toBe("PLANNING")
@@ -341,9 +337,7 @@ describe("import_briefing tool", () => {
       makeContext()
     )
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("PLANNING")
     expect(loaded.discussion.analyses).toEqual([])
     expect(loaded.discussion.votes).toEqual([])

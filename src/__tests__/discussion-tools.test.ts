@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { saveState } from "../state"
+import { loadState, saveState, closeStorage } from "../state"
 import { createInitialState } from "../config"
 import {
   openAnalysisRoundTool,
@@ -35,6 +35,7 @@ describe("open_analysis_round tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -61,9 +62,7 @@ describe("open_analysis_round tool", () => {
     expect(output).toContain("Engineer")
     expect(output).toContain("ANALYSIS")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("ANALYSIS")
     expect(loaded.discussion.topic).toBe("System Architecture")
     expect(loaded.discussion.maxTurns).toBe(3)
@@ -92,9 +91,7 @@ describe("open_analysis_round tool", () => {
       makeContext()
     )
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.specification.path).toBeNull()
     expect(loaded.specification.status).toBe("pending")
     expect(loaded.discussion.votes).toEqual([])
@@ -193,9 +190,7 @@ describe("open_analysis_round tool", () => {
       makeContext()
     )
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.discussion.participants).toEqual(["eng-1", "design-1"])
   })
 })
@@ -206,6 +201,7 @@ describe("register_analysis tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -231,9 +227,7 @@ describe("register_analysis tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("turn 1")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.discussion.analyses.length).toBe(1)
     expect(loaded.discussion.analyses[0].agentId).toBe("eng-1")
     expect(loaded.discussion.analyses[0].content).toBe("I recommend microservices.")
@@ -277,6 +271,7 @@ describe("request_consensus tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -300,9 +295,7 @@ describe("request_consensus tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("All specialists agree")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("CONSENSUS")
     expect(loaded.discussion.consensusRound).toBe(1)
     expect(loaded.discussion.votes.length).toBe(2)
@@ -374,6 +367,7 @@ describe("generate_specification tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -412,9 +406,7 @@ describe("generate_specification tool", () => {
     expect(specFile).toContain("microservices")
     expect(specFile).toContain("AGREE")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("APPROVAL")
     expect(loaded.specification.status).toBe("draft")
   })
@@ -443,6 +435,7 @@ describe("approve_specification tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -461,9 +454,7 @@ describe("approve_specification tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("EXECUTION")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("EXECUTION")
     expect(loaded.specification.status).toBe("approved")
   })
@@ -484,9 +475,7 @@ describe("approve_specification tool", () => {
     expect(output).toContain("DOCUMENTATION")
     expect(output).toContain("Needs more detail")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("DOCUMENTATION")
     expect(loaded.specification.status).toBe("rejected")
   })
@@ -512,6 +501,7 @@ describe("pause_discussion tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -526,9 +516,7 @@ describe("pause_discussion tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("ANALYSIS")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("PAUSED")
     expect(loaded.previousPhase).toBe("ANALYSIS")
   })
@@ -551,6 +539,7 @@ describe("resume_discussion tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -569,9 +558,7 @@ describe("resume_discussion tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("ANALYSIS")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("ANALYSIS")
     expect(loaded.previousPhase).toBeNull()
   })
@@ -628,6 +615,7 @@ describe("cancel_discussion tool", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -650,9 +638,7 @@ describe("cancel_discussion tool", () => {
     expect(output).toContain("CANCELLED")
     expect(output).toContain("analysis data cleared")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("CANCELLED")
     expect(loaded.discussion.analyses).toEqual([])
     expect(loaded.discussion.votes).toEqual([])
@@ -698,6 +684,7 @@ describe("register_analysis validation gates", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -758,9 +745,7 @@ describe("register_analysis validation gates", () => {
     expect(output).toContain("Analysis Registered")
 
     // Verify stored with full ID
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.discussion.analyses[0].agentId).toBe("eng-1")
   })
 
@@ -829,6 +814,7 @@ describe("request_consensus validation gates", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -934,6 +920,7 @@ describe("generate_specification budget enforcement", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
@@ -967,9 +954,7 @@ describe("generate_specification budget enforcement", () => {
     expect(result).toContain("Engineer")
 
     // Verify phase reverted to CONSENSUS
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("CONSENSUS")
   })
 
@@ -1001,9 +986,7 @@ describe("generate_specification budget enforcement", () => {
     // Per-section 8k budget fires first, so we get per-section error
     expect(result).toContain("exceed size budget")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("CONSENSUS")
   })
 
@@ -1029,9 +1012,7 @@ describe("generate_specification budget enforcement", () => {
     const output = (result as { title: string }).title
     expect(output).toContain("Specification Generated")
 
-    const loaded = JSON.parse(
-      await fs.readFile(join(TEST_DIR, ".mesa", "state.json"), "utf-8")
-    )
+    const loaded = await loadState(TEST_DIR)
     expect(loaded.currentPhase).toBe("APPROVAL")
   })
 })
@@ -1042,6 +1023,7 @@ describe("generate_specification template enforcement", () => {
   })
 
   afterEach(async () => {
+    closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
