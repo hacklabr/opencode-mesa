@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-06-02
+
+### Added
+- **Auto-update mechanism**: Plugin checks for new versions on startup and exposes two new tools
+- **`mesa_check_update` tool**: Checks GitHub for latest tag, compares with installed version
+- **`mesa_update` tool**: Downloads and installs latest version via `install.sh --tag`
+- **`force` parameter**: `checkForUpdate(force=true)` bypasses cache for immediate checks
+- **`src/updater/` module**: Full updater architecture with types, semver, checker, runner
+- **Cache with 15min TTL**: ETag-aware GitHub Tags API client
+- **Update runner**: flock concurrency guard, pre-update SHA recording, automatic rollback
+- **Security hardening**: 0o600 permissions, SHA verification, strict input validation
+
+### Changed
+- **Cache TTL reduced** from 24h to 15min for faster update discovery
+- `install.sh` supports `--tag` flag for version-pinned updates
+- `install.sh` uses `npm ci` (with fallback) for reproducible builds
+
 ## [1.4.0] - 2026-06-02
 
 ### Added
