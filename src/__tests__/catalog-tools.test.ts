@@ -31,14 +31,14 @@ describe("list_specialists tool", () => {
 
   test("filters by division", async () => {
     const result = await listSpecialistsTool.execute(
-      { division: "engineering" },
+      { division: "software-development" },
       makeContext()
     )
 
     const output = (result as { output: string }).output
-    expect(output).toContain("engineering")
+    expect(output).toContain("software-development")
     const metadata = (result as { metadata: Record<string, unknown> }).metadata
-    expect(metadata.divisionFilter).toBe("engineering")
+    expect(metadata.divisionFilter).toBe("software-development")
   })
 
   test("filters by search term", async () => {
@@ -79,7 +79,7 @@ describe("list_specialists tool", () => {
 describe("get_specialist tool", () => {
   test("returns full specialist details for valid ID", async () => {
     const result = await getSpecialistTool.execute(
-      { id: "engineering-backend-architect" },
+      { id: "backend-architect" },
       makeContext()
     )
 
@@ -87,9 +87,9 @@ describe("get_specialist tool", () => {
     expect((result as { title: string }).title).toContain("Backend Architect")
     const output = (result as { output: string }).output
     const parsed = JSON.parse(output.split("\n\n").slice(1).join("\n"))
-    expect(parsed.id).toBe("engineering-backend-architect")
+    expect(parsed.id).toBe("backend-architect")
     expect(parsed.name).toBeTruthy()
-    expect(parsed.division).toBe("engineering")
+    expect(parsed.division).toBe("software-development")
     expect(parsed.systemPrompt).toBeTruthy()
     expect(parsed.systemPrompt.length).toBeGreaterThan(10)
   })

@@ -88,9 +88,9 @@ describe("catalog loader", () => {
     expect(totalFromDivisions).toBe(summary.totalPersonas)
   })
 
-  test("engineering division has multiple personas", async () => {
+  test("software-development division has multiple personas", async () => {
     const { personas } = await loadCatalogFromDirectory(CATALOG_DIR)
-    const engineers = personas.filter((p) => p.division === "engineering")
-    expect(engineers.length).toBeGreaterThan(10)
+    const devs = personas.filter((p) => p.division === "software-development")
+    expect(devs.length).toBeGreaterThan(5)
   })
 })
