@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState } from "../state"
+import { loadState, saveState, getSessionId } from "../state"
 import type { DiscussionPhase, SpecialistEntry, SpecialistStatus } from "../types"
 import { getPersonaById } from "./catalog-tools"
 import { logAction } from "../audit"
@@ -7,6 +7,11 @@ import { canTransition, requirePhase, formatPhaseHeader, ALL_PHASES } from "../w
 import { promises as fs } from "node:fs"
 import { successResponse, errorResponse } from "../utils/responses"
 import { PhaseError, MesaError } from "../errors"
+import { build_mini_briefing_questions } from "../utils/mini-briefing"
+import { detect_execution_phases, parse_phase_selection } from "../utils/phase-detection"
+import { SqliteStateRepository } from "../repositories/sqlite-state-repository"
+import { join } from "node:path"
+import { PLUGIN_STATE_DIR } from "../config"
 
 export const analyzeBriefingTool = tool({
   description:
@@ -143,9 +148,49 @@ export const summonTeamTool = tool({
   },
 })
 
+/**
+ * Looks for an approved appendix that matches the given phase name.
+ * Checks state.appendices first, then scans the appendices directory.
+ */
+async function findPhaseAppendix(
+  directory: string,
+  stateAppendices: string[],
+  phaseName: string
+): Promise<string | null> {
+  const phaseSlug = phaseName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+
+  if (!phaseSlug) return null
+
+  // Check state appendices first
+  for (const appendixPath of stateAppendices) {
+    const basename = appendixPath.split("/").pop() || ""
+    if (basename.toLowerCase().includes(phaseSlug)) {
+      return appendixPath
+    }
+  }
+
+  // Fall back to scanning the appendices directory
+  const appendicesDir = join(directory, PLUGIN_STATE_DIR, "specifications", "appendices")
+  try {
+    const entries = await fs.readdir(appendicesDir)
+    for (const entry of entries) {
+      if (entry.endsWith(".md") && entry.toLowerCase().includes(phaseSlug)) {
+        return join(appendicesDir, entry)
+      }
+    }
+  } catch {
+    // Directory may not exist yet
+  }
+
+  return null
+}
+
 export const delegateTaskTool = tool({
   description:
-    "Defines a task for a specialist. Records the delegation in Mesa state and returns instructions to invoke the specialist via the task tool.",
+    "Defines a task for a specialist. Records the delegation in Mesa state and returns instructions to invoke the specialist via the task tool. When a phase appendix exists, it is used as the authoritative specification for that phase.",
   args: {
     personaId: tool.schema.string().describe("The specialist persona ID (also the subagent_type for the task tool)"),
     task: tool.schema.string().describe("Clear description of the task to delegate"),
@@ -153,6 +198,10 @@ export const delegateTaskTool = tool({
       .string()
       .optional()
       .describe("Additional context (briefing excerpt, code reference, etc.)"),
+    phase_name: tool.schema
+      .string()
+      .optional()
+      .describe("Optional phase name for appendix lookup. If a matching approved appendix exists, it becomes the authoritative context for this task."),
   },
   async execute(args, context) {
     try {
@@ -186,6 +235,23 @@ export const delegateTaskTool = tool({
         )
       }
 
+      // Appendix preference: if phase_name is provided and a matching appendix exists,
+      // prepend it to the context so the specialist uses the appendix as authority.
+      let effectiveContext = args.context_info
+      if (args.phase_name) {
+        const appendixPath = await findPhaseAppendix(
+          context.directory,
+          state.appendices,
+          args.phase_name
+        )
+        if (appendixPath) {
+          const appendixNote = `**Phase Appendix (authoritative for "${args.phase_name}"):** ${appendixPath}`
+          effectiveContext = effectiveContext
+            ? `${appendixNote}\n\n**Additional Context:**\n${effectiveContext}`
+            : appendixNote
+        }
+      }
+
       const promptParts = [
         `## Task from Manager`,
         ``,
@@ -193,8 +259,8 @@ export const delegateTaskTool = tool({
         args.task,
       ]
 
-      if (args.context_info) {
-        promptParts.push(``, `### Context`, args.context_info)
+      if (effectiveContext) {
+        promptParts.push(``, `### Context`, effectiveContext)
       }
 
       await saveState(context.directory, state)
@@ -251,6 +317,268 @@ export const definePhasesTool = tool({
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
       return errorResponse(`Error defining phases: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  },
+})
+
+// ---------------------------------------------------------------------------
+// Phase Analysis Orchestration Tools (Phase 3)
+// ---------------------------------------------------------------------------
+
+export const checkExecutionPhasesTool = tool({
+  description:
+    "Checks the approved master specification for an execution plan with phases. Returns a choice prompt for the human: proceed directly to implementation, or deep-dive selected phases. Returns a bypass message if no execution plan is detected.",
+  args: {},
+  async execute(_args, context) {
+    try {
+      const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "EXECUTION")
+      if (phaseError) throw new PhaseError(phaseError)
+
+      if (state.specification.status !== "approved" || !state.specification.path) {
+        return errorResponse(
+          "No approved specification found. Approve a specification first using approve_specification."
+        )
+      }
+
+      const content = await fs.readFile(state.specification.path, "utf-8")
+      const phases = detect_execution_phases(content)
+
+      if (!phases || phases.length === 0) {
+        return successResponse(
+          "No Execution Plan Detected",
+          [
+            `${formatPhaseHeader(state.currentPhase)}`,
+            ``,
+            `No execution plan with phases detected in the approved specification.`,
+            `The specification appears to be analysis-only or lacks a structured execution plan.`,
+            ``,
+            `Proceed directly to implementation delegation.`,
+          ].join("\n")
+        )
+      }
+
+      const phaseList = phases
+        .map((p) => `  ${p.index}. ${p.name}`)
+        .join("\n")
+
+      const output = [
+        `${formatPhaseHeader(state.currentPhase)}`,
+        ``,
+        `The master specification has been approved. It contains an execution plan with ${phases.length} phase(s).`,
+        ``,
+        phaseList,
+        ``,
+        `[1] Proceed to implementation — delegate all phases based on the master spec.`,
+        `[2] Deep-dive selected phases — open structured analysis rounds for phases that need further exploration.`,
+        ``,
+        `Tip: Choose [2] if any phase involves uncertain technical decisions, complex integration, or significant architectural changes.`,
+      ].join("\n")
+
+      return successResponse(
+        "Execution Plan Detected",
+        output,
+        { phaseCount: phases.length, phases }
+      )
+    } catch (err) {
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(
+        `Error checking execution phases: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  },
+})
+
+export const selectPhasesForAnalysisTool = tool({
+  description:
+    "Selects phases for deep-dive analysis after the human chooses option [2]. Parses selection strings like '1, 3, 5', 'all', or 'none'. Stores the selection in the phase context sidecar.",
+  args: {
+    selection: tool.schema
+      .string()
+      .describe("Phase selection: 'all', 'none', or comma-separated indices like '1, 3, 5' or ranges like '1-3'"),
+    phase_count: tool.schema
+      .number()
+      .describe("Total number of phases available (from check_execution_phases)"),
+  },
+  async execute(args, context) {
+    try {
+      const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "EXECUTION")
+      if (phaseError) throw new PhaseError(phaseError)
+
+      const selected = parse_phase_selection(args.selection, args.phase_count)
+      if (selected instanceof Error) {
+        return errorResponse(selected.message)
+      }
+
+      if (selected.length === 0) {
+        return successResponse(
+          "Phase Analysis Skipped",
+          [
+            `${formatPhaseHeader(state.currentPhase)}`,
+            ``,
+            `No phases selected for deep-dive analysis.`,
+            `Proceed directly to implementation delegation.`,
+          ].join("\n")
+        )
+      }
+
+      // Persist selection to phase context sidecar
+      const sessionId = getSessionId(context.directory)
+      if (sessionId) {
+        const repo = new SqliteStateRepository(context.directory)
+        await repo.savePhaseContext({
+          workspaceId: state.workspaceId,
+          sessionId,
+          phase: "phase-selection",
+          context: { selectedIndices: selected, totalPhases: args.phase_count },
+          schemaVersion: 1,
+          updatedAt: new Date().toISOString(),
+        })
+        repo.close()
+      }
+
+      const selectionText = selected
+        .map((i: number) => `  ${i}. Phase ${i}`)
+        .join("\n")
+
+      const output = [
+        `${formatPhaseHeader(state.currentPhase)}`,
+        ``,
+        `Selected ${selected.length} phase(s) for deep-dive analysis:`,
+        selectionText,
+        ``,
+        `Choose the observation mode:`,
+        `[1] Guided — 2-4 questions per phase before analysis begins`,
+        `[2] Automatic — run phase analysis immediately with no additional human input`,
+      ].join("\n")
+
+      return successResponse(
+        "Phases Selected",
+        output,
+        { selectedIndices: selected, totalPhases: args.phase_count }
+      )
+    } catch (err) {
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(
+        `Error selecting phases: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  },
+})
+
+export const configurePhaseObservationTool = tool({
+  description:
+    "Configures the observation mode for a phase analysis round and persists mini-briefing context. In guided mode, returns 4 targeted questions for the human. In automatic mode, records that the phase should proceed without additional input.",
+  args: {
+    mode: tool.schema
+      .enum(["guided", "automatic"])
+      .describe("Observation mode: 'guided' asks questions first; 'automatic' runs immediately"),
+    phase_name: tool.schema
+      .string()
+      .describe("Name of the phase being configured"),
+    observations: tool.schema
+      .string()
+      .optional()
+      .describe("Free-form observations from the human (guided mode only)"),
+    master_spec_context: tool.schema
+      .string()
+      .optional()
+      .describe("Relevant excerpt from the master specification for question tailoring"),
+  },
+  async execute(args, context) {
+    try {
+      const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "EXECUTION")
+      if (phaseError) throw new PhaseError(phaseError)
+
+      const sessionId = getSessionId(context.directory)
+      const now = new Date().toISOString()
+
+      if (args.mode === "guided") {
+        const questions = build_mini_briefing_questions(
+          args.phase_name,
+          args.master_spec_context || ""
+        )
+
+        const output = [
+          `${formatPhaseHeader(state.currentPhase)}`,
+          ``,
+          `**Phase:** ${args.phase_name}`,
+          `**Mode:** Guided`,
+          ``,
+          `Observations recorded:`,
+          args.observations || "(none)",
+          ``,
+          `## Suggested Questions`,
+          ``,
+          ...questions.map((q, i) => `${i + 1}. ${q}`),
+          ``,
+          `Ask the human these questions and record their answers before proceeding to open the phase analysis round.`,
+        ].join("\n")
+
+        // Persist to phase context sidecar
+        if (sessionId) {
+          const repo = new SqliteStateRepository(context.directory)
+          await repo.savePhaseContext({
+            workspaceId: state.workspaceId,
+            sessionId,
+            phase: args.phase_name,
+            context: {
+              mode: args.mode,
+              observations: args.observations || "",
+              questions,
+              masterSpecContext: args.master_spec_context || "",
+            },
+            schemaVersion: 1,
+            updatedAt: now,
+          })
+          repo.close()
+        }
+
+        return successResponse(
+          "Guided Observation Configured",
+          output,
+          { phase: args.phase_name, mode: args.mode, questions }
+        )
+      }
+
+      // Automatic mode
+      if (sessionId) {
+        const repo = new SqliteStateRepository(context.directory)
+        await repo.savePhaseContext({
+          workspaceId: state.workspaceId,
+          sessionId,
+          phase: args.phase_name,
+          context: {
+            mode: args.mode,
+            observations: "",
+            questions: [],
+            masterSpecContext: args.master_spec_context || "",
+          },
+          schemaVersion: 1,
+          updatedAt: now,
+        })
+        repo.close()
+      }
+
+      return successResponse(
+        "Automatic Mode Configured",
+        [
+          `${formatPhaseHeader(state.currentPhase)}`,
+          ``,
+          `**Phase:** ${args.phase_name}`,
+          `**Mode:** Automatic`,
+          ``,
+          `Phase analysis will proceed without additional human input.`,
+          `Call \`open_phase_analysis_round\` to begin the analysis for this phase.`,
+        ].join("\n")
+      )
+    } catch (err) {
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(
+        `Error configuring observation mode: ${err instanceof Error ? err.message : String(err)}`
+      )
     }
   },
 })

@@ -183,3 +183,175 @@ When the human rejects the specification:
 16. approve_specification(approved=true)   → This time approved
 17. delegate_task(...) × N
 ```
+
+---
+
+## Iterative Phase Analysis Workflow
+
+After a master specification is approved, Mesa can optionally open structured analysis rounds for individual execution phases. This produces **phase appendices** that become the authoritative specification for those phases.
+
+### When to Use
+
+Choose iterative phase analysis when:
+
+- The master specification contains an execution plan with multiple phases.
+- One or more phases involve uncertain technical decisions.
+- Complex integration points or significant architectural changes exist.
+- The project is large enough that analyzing all details upfront produces an unwieldy specification.
+
+The workflow is **skipped** when:
+
+- The specification is analysis-only (no execution plan).
+- The human chooses to proceed directly to implementation.
+- No phases are detected in the master specification.
+
+### Full Flow Diagram
+
+```mermaid
+flowchart TD
+    A[Master Spec Approved] --> B{detect_phases}
+    B -->|No phases / analysis-only| C[Proceed to implementation]
+    B -->|Phases detected| D{Human choice}
+
+    D -->|[1] Implement directly| C
+    D -->|[2] Deep-dive phases| E[select_phases_for_analysis]
+
+    E --> F{Which phases?}
+    F -->|none| C
+    F -->|1, 3, 5 / all| G{Observation mode}
+
+    G -->|[1] Guided| H[configure_phase_observation<br/>mode=guided]
+    G -->|[2] Automatic| I[configure_phase_observation<br/>mode=automatic]
+
+    H --> J[Human answers 2-4 questions]
+    J --> K[open_phase_analysis_round]
+    I --> K
+
+    K --> L[Specialists analyze<br/>register_analysis]
+    L --> M[request_phase_consensus]
+
+    M -->|Consensus reached| N[generate_phase_appendix]
+    M -->|Disagreement| O[Debate round]
+    O --> L
+
+    N --> P{More phases?}
+    P -->|Yes| K
+    P -->|No| Q[All appendices approved]
+
+    Q --> R[delegate_task<br/>uses appendix as authority]
+```
+
+### Human Decision Points
+
+The workflow presents three human decision points:
+
+1. **Implement vs. Deep-dive** (after `check_execution_phases`)
+   ```
+   [1] Proceed to implementation — delegate all phases based on the master spec.
+   [2] Deep-dive selected phases — open structured analysis rounds for phases
+       that need further exploration.
+   ```
+
+2. **Phase Selection** (after choosing [2])
+   ```
+   Select phases: "1, 3, 5"  (comma-separated, ranges like "1-3", or "all")
+   ```
+
+3. **Observation Mode** (per phase)
+   ```
+   [1] Guided — 2-4 targeted questions per phase before analysis begins
+   [2] Automatic — run phase analysis immediately with no additional human input
+   ```
+
+### Mini-Briefing Mode vs. Automatic Mode
+
+| Aspect | Guided (Mini-Briefing) | Automatic |
+|--------|------------------------|-----------|
+| Human input | Required — answers 2-4 questions | None |
+| Questions | Tailored to phase type (infra, API, UI, etc.) | N/A |
+| Context | Observations persisted to phase sidecar | Phase context contains empty observations |
+| Use case | Complex phases with domain-specific constraints | Straightforward phases with clear scope |
+| Time | Longer (human-in-the-loop) | Faster (fully automated) |
+
+The `configure_phase_observation` tool generates questions using keyword heuristics:
+
+- **Infra phases**: cloud constraints, monitoring, secrets, IAM
+- **Data phases**: integrity risks, schema versioning, concurrent writes
+- **API phases**: backward compatibility, rate limiting, observability
+- **UI phases**: accessibility, browser support, state management
+- **Test phases**: coverage thresholds, critical journeys, mocking
+- **Security phases**: compliance standards, secrets management, input validation
+- **Integration phases**: touched systems, rollback strategy, contract tests
+- **Default**: scope boundaries, external dependencies, hard constraints, acceptance criteria
+
+### State Transitions
+
+Phase analysis is a **sub-workflow within EXECUTION**, not a new top-level phase. The master state machine remains unchanged.
+
+```
+APPROVAL ──approve_specification(true)──► EXECUTION
+                                              │
+                                              ▼
+                                    ┌───────────────────┐
+                                    │  Phase Analysis   │
+                                    │    Sub-Workflow   │
+                                    │  (within EXECUTION)│
+                                    └───────────────────┘
+                                              │
+                                              ▼
+                                    delegate_task (uses appendix)
+```
+
+Within the sub-workflow, each phase progresses through its own micro-state machine, tracked in the `mesa_phase_context` sidecar:
+
+| Sidecar Status | Meaning |
+|----------------|---------|
+| `analysis_opened` | Round opened, awaiting specialist analyses |
+| `consensus_reached` | Votes recorded, consensus achieved |
+| `debate_needed` | Votes recorded, disagreement persists |
+| `approved` | Appendix generated and canonicalized |
+
+### Common Phase Analysis Workflow
+
+**Automatic mode, all phases:**
+
+```
+1. approve_specification(approved=true)     → Enter EXECUTION
+2. check_execution_phases()                 → Detect phases, human chooses [2]
+3. select_phases_for_analysis(selection="all", phase_count=5)
+4. configure_phase_observation(mode="automatic", phase_name="Foundation")
+5. open_phase_analysis_round(phase_index=1, phase_name="Foundation", mode="auto")
+6. register_analysis(...) × N               → Specialists analyze
+7. request_phase_consensus(votes=[...], consensus_reached=true)
+8. generate_phase_appendix(phase_index=1, phase_name="Foundation", ...)
+9. (repeat 4-8 for remaining phases)
+10. delegate_task(personaId="...", task="...", phase_name="Foundation")
+    → Automatically resolves appendix as authority
+```
+
+**Guided mode, selected phases:**
+
+```
+1-3. (same as automatic)
+4. configure_phase_observation(mode="guided", phase_name="Core Tools",
+       master_spec_context="Build 4 public tools for phase analysis...")
+   → Returns 4 targeted questions
+5. Human answers questions (outside tool flow)
+6. open_phase_analysis_round(phase_index=2, phase_name="Core Tools",
+       mode="observed", observations="<human answers>")
+7-10. (same as automatic)
+```
+
+### Phase Analysis Tools Reference
+
+| Tool | Purpose | Called By |
+|------|---------|-----------|
+| `detect_phases` | Extract phases from master spec | Manager (implicit via `check_execution_phases`) |
+| `open_phase_analysis_round` | Open analysis for one phase | Manager |
+| `request_phase_consensus` | Record consensus votes | Manager |
+| `generate_phase_appendix` | Produce canonical appendix | Manager |
+| `check_execution_phases` | Present human with implement/deep-dive choice | Manager |
+| `select_phases_for_analysis` | Parse and store phase selection | Manager |
+| `configure_phase_observation` | Configure guided/auto mode, generate questions | Manager |
+
+See [Appendices Reference](appendices.md) for appendix document structure and [Architecture Reference](architecture.md) for sidecar and file layout details.

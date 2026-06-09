@@ -62,6 +62,7 @@ export interface DiscussionState {
     path: string | null
     status: SpecificationStatus
   }
+  appendices: string[]
   phases: string[]
   createdAt: string
   updatedAt: string

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-06-09
+
+### Added
+- **Iterative phase analysis workflow**: After master spec approval, Mesa can detect execution phases and open structured analysis rounds for selected phases:
+  - `detect_phases` tool extracts phases from master spec via frontmatter, heuristics, or LLM fallback
+  - `open_phase_analysis_round` opens analysis for one phase with optional mini-briefing
+  - `request_phase_consensus` records votes in phase sidecar
+  - `generate_phase_appendix` produces canonical appendix files with atomic promotion
+  - `check_execution_phases`, `select_phases_for_analysis`, `configure_phase_observation` for Manager orchestration
+  - `build_mini_briefing_questions` generates 2-4 targeted questions per phase
+- **Repository abstraction layer**: `StateRepository` and `ArtifactRepository` interfaces with SQLite and filesystem implementations
+- **Phase context sidecar**: `mesa_phase_context` table for ephemeral phase-local metadata
+- **Two-phase immutability**: Drafts in `.mesa/phase-analysis/`, canonical appendices in `.mesa/specifications/appendices/`
+- **75 new tests**: phase detection, selection parsing, orchestrator integration, state migration, appendix coherence
+- **Documentation**: `docs/appendices.md`, updates to `docs/workflow.md`, `docs/architecture.md`, `docs/troubleshooting.md`
+
+### Changed
+- **`CURRENT_STATE_VERSION`**: Bumped from 1 to 2
+- **`DiscussionState`**: Added `appendices: string[]` field with default `[]`
+- **`createInitialState()`**: Now includes `appendices: []`
+- **`loadState()` / `saveState()`**: Persist appendices to `mesa_state` and `mesa_session_state`
+
+### Technical
+- Added `migrate_v1_to_v2()` function for idempotent schema migration
+- Backward compatible: v1 states load with `appendices` defaulting to `[]`
+- Appendix template with mandatory sections including `Delta from Master Spec`
+
 ## [2.2.0] - 2026-06-03
 
 ### Added

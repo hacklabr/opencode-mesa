@@ -76,6 +76,7 @@ export const DiscussionStateSchema = z.object({
     path: z.string().nullable(),
     status: SpecificationStatusEnum,
   }),
+  appendices: z.array(z.string()).default([]),
   phases: z.array(z.string()).default(["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION"]),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -103,7 +104,8 @@ CREATE TABLE IF NOT EXISTS mesa_state (
   specification_path TEXT,
   specification_status TEXT DEFAULT 'pending',
   phases TEXT DEFAULT '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]',
-  state_version INTEGER DEFAULT 1,
+  appendices TEXT DEFAULT '[]',
+  state_version INTEGER DEFAULT 2,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -177,7 +179,8 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   specification_path TEXT,
   specification_status TEXT DEFAULT 'pending',
   phases TEXT DEFAULT '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]',
-  state_version INTEGER DEFAULT 1,
+  appendices TEXT DEFAULT '[]',
+  state_version INTEGER DEFAULT 2,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, session_id)
@@ -228,6 +231,16 @@ CREATE TABLE IF NOT EXISTS mesa_session_participants (
   persona_id TEXT NOT NULL,
   sort_order INTEGER DEFAULT 0,
   UNIQUE(workspace_id, session_id, persona_id)
+);
+
+CREATE TABLE IF NOT EXISTS mesa_phase_context (
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  context_json TEXT NOT NULL,
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, session_id, phase)
 );
 `
 
@@ -385,21 +398,59 @@ function migrateFromJson(directory: string, db: Database): void {
       discussion_topic, discussion_current_turn, discussion_max_turns,
       discussion_consensus_round, discussion_debate_needed,
       specification_path, specification_status,
-      phases, state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      phases, appendices, state_version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       wsId, state.currentPhase, state.previousPhase,
       state.briefing.path, state.briefing.status, state.briefing.slug,
       state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
       state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
       state.specification.path, state.specification.status,
-      JSON.stringify(state.phases), state.stateVersion, state.createdAt, state.updatedAt,
+      JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
     ]
   )
 
   insertChildRows(db, wsId, state)
 
   renameSync(jsonPath, jsonPath + ".v1.bak")
+}
+
+function migrate_v1_to_v2(db: Database): void {
+  const tx = db.transaction(() => {
+    // Create phase context sidecar table (idempotent)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS mesa_phase_context (
+        workspace_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        context_json TEXT NOT NULL,
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, session_id, phase)
+      )
+    `)
+
+    // Add appendices column to mesa_state if not exists
+    try {
+      db.run("ALTER TABLE mesa_state ADD COLUMN appendices TEXT DEFAULT '[]'")
+    } catch (e: unknown) {
+      const err = e as Error
+      if (!err.message.includes("duplicate column name")) throw e
+    }
+
+    // Add appendices column to mesa_session_state if not exists
+    try {
+      db.run("ALTER TABLE mesa_session_state ADD COLUMN appendices TEXT DEFAULT '[]'")
+    } catch (e: unknown) {
+      const err = e as Error
+      if (!err.message.includes("duplicate column name")) throw e
+    }
+
+    // Bump state version for existing rows
+    db.run("UPDATE mesa_state SET state_version = 2 WHERE state_version = 1")
+    db.run("UPDATE mesa_session_state SET state_version = 2 WHERE state_version = 1")
+  })
+  tx()
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +471,8 @@ function getDb(directory: string): Database {
 
   db.exec(SCHEMA_SQL)
 
+  // Migrate schema before data so JSON migration can use new columns
+  migrate_v1_to_v2(db)
   migrateFromJson(directory, db)
 
   return db
@@ -561,6 +614,7 @@ function rowToState(
       path: row.specification_path as string | null,
       status: row.specification_status as DiscussionState["specification"]["status"],
     },
+    appendices: JSON.parse((row.appendices as string) || '[]'),
     phases: JSON.parse((row.phases as string) || '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]'),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -650,15 +704,15 @@ export async function saveState(directory: string, state: DiscussionState): Prom
           discussion_topic, discussion_current_turn, discussion_max_turns,
           discussion_consensus_round, discussion_debate_needed,
           specification_path, specification_status,
-          phases, state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          phases, appendices, state_version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, state.currentPhase, state.previousPhase,
           state.briefing.path, state.briefing.status, state.briefing.slug,
           state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
           state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
           state.specification.path, state.specification.status,
-          JSON.stringify(state.phases), state.stateVersion, state.createdAt, state.updatedAt,
+          JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
         ]
       )
 
@@ -678,15 +732,15 @@ export async function saveState(directory: string, state: DiscussionState): Prom
             discussion_topic, discussion_current_turn, discussion_max_turns,
             discussion_consensus_round, discussion_debate_needed,
             specification_path, specification_status,
-            phases, state_version, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            phases, appendices, state_version, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             state.workspaceId, sessionId, state.currentPhase, state.previousPhase,
             state.briefing.path, state.briefing.status, state.briefing.slug,
             state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
             state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
             state.specification.path, state.specification.status,
-            JSON.stringify(state.phases), state.stateVersion, state.createdAt, state.updatedAt,
+            JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
           ]
         )
 

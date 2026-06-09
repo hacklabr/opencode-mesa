@@ -165,3 +165,211 @@ Every tool follows the same pattern:
 5. `get_specialist` retrieves a single specialist by ID.
 
 Specialist subagents are registered separately via `bun run setup:agents`, which generates `.opencode/agents/mesa-*.md` files — one per specialist. OpenCode loads these as hidden subagents in the `mesa/` namespace.
+
+---
+
+## Phase Analysis Architecture
+
+### Sidecar Pattern (`mesa_phase_context`)
+
+The phase analysis feature introduces a **JSON sidecar table** alongside the existing normalized schema. This hybrid approach separates queryable relational data from ephemeral phase-local context.
+
+```mermaid
+erDiagram
+    MESA_STATE ||--o{ MESA_TEAM : has
+    MESA_STATE ||--o{ MESA_ANALYSES : has
+    MESA_STATE ||--o{ MESA_VOTES : has
+    MESA_STATE ||--o{ MESA_PHASE_CONTEXT : sidecar
+
+    MESA_STATE {
+        string workspace_id PK
+        string current_phase
+        string specification_path
+        string appendices
+        int state_version
+    }
+
+    MESA_PHASE_CONTEXT {
+        string workspace_id PK
+        string session_id PK
+        string phase PK
+        text context_json
+        int schema_version
+        string updated_at
+    }
+```
+
+**Rule**: Queryable data goes in normalized tables; ephemeral phase-local context goes in the sidecar.
+
+| Data Type | Location | Example |
+|-----------|----------|---------|
+| Analyses, votes, team | Normalized tables | `mesa_analyses`, `mesa_votes` |
+| Phase observations, mini-briefing answers | Sidecar | `context_json.observations` |
+| Consensus metadata | Sidecar | `context_json.consensusReached` |
+| Draft directory paths | Sidecar | `context_json.draftDir` |
+| Appendix references | State JSON | `DiscussionState.appendices` |
+
+The sidecar is **versioned**: `schema_version` on each row enables future migrations. Context is validated with Zod on read/write via `PhaseContextSchema`.
+
+```typescript
+// Writing to the sidecar
+const repo = new SqliteStateRepository(workspaceDir);
+await repo.savePhaseContext({
+  workspaceId: workspaceDir,
+  sessionId,
+  phase: "phase-1-foundation",
+  context: { mode: "observed", observations: "...", status: "analysis_opened" },
+  schemaVersion: 1,
+  updatedAt: new Date().toISOString(),
+});
+```
+
+### File Layout: Draft vs. Canonical
+
+Phase analysis maintains a strict separation between mutable drafts and immutable canonical artifacts.
+
+```
+workspace/
+├── .mesa/
+│   ├── state.db                          # SQLite state + sidecar
+│   ├── audit.log                         # Audit trail
+│   ├── phase-analysis/                   # Draft workspace (mutable)
+│   │   └── phase-1-foundation/
+│   │       ├── mini-briefing.md
+│   │       ├── analysis-engineering-1.md
+│   │       └── consensus-votes.json
+│   └── specifications/
+│       ├── spec-910a7363.md              # Master spec (immutable after approval)
+│       └── appendices/                   # Canonical appendices (immutable)
+│           ├── appendix-910a7363-foundation-a3f7e2b1.md
+│           └── analyses-910a7363-foundation-a3f7e2b1/
+│               ├── analysis-engineering-1.md
+│               └── analysis-security-1.md
+```
+
+**Atomic promotion**: `generate_phase_appendix` writes to a temporary file, then renames it to the canonical path:
+
+```typescript
+const tempPath = `${canonicalAbs}.tmp`;
+await artifacts.writeFile(tempPath, appendixContent);
+await fs.rename(tempPath, canonicalAbs);  // Atomic on POSIX
+```
+
+This ensures that readers never see a partially written appendix.
+
+### Appendix Linking Model
+
+Appendices are linked bidirectionally:
+
+1. **Master → Appendices**: The `DiscussionState.appendices` array stores relative filenames of all approved appendices.
+2. **Appendix → Master**: Each appendix frontmatter includes `master_spec: "spec-{id}.md"`.
+
+```mermaid
+graph LR
+    Master["spec-910a7363.md\n<appendices index table>"] -->|references| A1["appendix-910a7363-foundation-xxx.md"]
+    Master -->|references| A2["appendix-910a7363-core-tools-yyy.md"]
+    A1 -->|master_spec| Master
+    A2 -->|master_spec| Master
+```
+
+**Resolution at delegation time**: When `delegate_task` receives a `phase_name`, it:
+
+1. Slugifies the phase name.
+2. Scans `state.appendices` for a basename containing that slug.
+3. Falls back to scanning the appendices directory if not found in state.
+4. If found, prepends the appendix path to the specialist's context.
+
+```typescript
+// In delegate_task
+if (args.phase_name) {
+  const appendixPath = await findPhaseAppendix(directory, state.appendices, args.phase_name);
+  if (appendixPath) {
+    effectiveContext = `**Phase Appendix (authoritative for "${args.phase_name}"):** ${appendixPath}`;
+  }
+}
+```
+
+### State Version Migration
+
+The phase analysis feature bumped `CURRENT_STATE_VERSION` from 1 to 2.
+
+**Migration path (`migrate_v1_to_v2`)**:
+
+1. Creates `mesa_phase_context` table (idempotent).
+2. Adds `appendices` column to `mesa_state` and `mesa_session_state` (idempotent via `ALTER TABLE ... ADD COLUMN`).
+3. Bumps `state_version` from 1 to 2 for all existing rows.
+
+**Backward compatibility**:
+
+- JSON state files (legacy v1) are automatically migrated to SQLite on first load.
+- Old SQLite databases without the `appendices` column receive the column with default `'[]'`.
+- The `loadState` function tolerates version mismatches with a warning:
+  ```
+  [Mesa] State version mismatch: db=1, current=2. Migration may be needed.
+  ```
+
+**Zod defaults** ensure in-memory safety: `appendices: z.array(z.string()).default([])`.
+
+**Regression test requirement**: Loading a v1 state must succeed with `appendices` defaulting to `[]`.
+
+### Repository Interfaces
+
+The phase analysis feature introduces two repository abstractions:
+
+#### `StateRepository`
+
+Handles phase context CRUD in the sidecar table:
+
+```typescript
+interface StateRepository {
+  getPhaseContext(workspaceId, sessionId, phase): Promise<PhaseContextRecord | null>
+  savePhaseContext(record): Promise<void>
+  deletePhaseContext(workspaceId, sessionId, phase): Promise<void>
+  listPhaseContexts(workspaceId, sessionId): Promise<PhaseContextRecord[]>
+  close(): void
+}
+```
+
+Implementation: `SqliteStateRepository` (Bun SQLite).
+
+#### `ArtifactRepository`
+
+Handles file system operations for drafts and canonical appendices:
+
+```typescript
+interface ArtifactRepository {
+  readFile(filePath): Promise<string>
+  writeFile(filePath, content): Promise<void>
+  fileExists(filePath): Promise<boolean>
+  ensureDirectory(dirPath): Promise<void>
+  listFiles(directory): Promise<string[]>
+}
+```
+
+Implementation: `FsArtifactRepository` (Node.js `fs/promises`).
+
+This abstraction allows tests to substitute an in-memory artifact repository for hermetic testing.
+
+### Phase Detection Strategy
+
+Phase detection uses a three-tier strategy defined in `src/utils/phase-detection.ts`:
+
+```mermaid
+graph TD
+    A[Spec text] --> B{T1: YAML frontmatter}
+    B -->|execution_plan present| C[Return phases]
+    B -->|not present| D{T2: Markdown headings}
+    D -->|## Phase N: Name| C
+    D -->|## Execution Plan + list| C
+    D -->|not detected| E{T3: Heuristic fallback}
+    E -->|Phase/Step N patterns| C
+    E -->|no match| F[Return null]
+```
+
+**Tier 1 — Frontmatter**: Parses `---` delimited YAML for an `execution_plan` key (array or string).
+
+**Tier 2 — Headings**: Matches `## Phase N: Name` or `## Execution Plan` followed by a numbered list.
+
+**Tier 3 — Heuristics**: Searches for "Phase N" or "Step N" patterns anywhere in the document.
+
+If all tiers return null, phase analysis is bypassed and the workflow proceeds directly to implementation.

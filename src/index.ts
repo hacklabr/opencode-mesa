@@ -8,6 +8,9 @@ import {
   summonTeamTool,
   delegateTaskTool,
   definePhasesTool,
+  checkExecutionPhasesTool,
+  selectPhasesForAnalysisTool,
+  configurePhaseObservationTool,
 } from "./tools/manager-tools"
 import {
   openAnalysisRoundTool,
@@ -19,6 +22,12 @@ import {
   resumeDiscussionTool,
   cancelDiscussionTool,
 } from "./tools/discussion-tools"
+import {
+  detectPhasesTool,
+  openPhaseAnalysisRoundTool,
+  requestPhaseConsensusTool,
+  generatePhaseAppendixTool,
+} from "./tools/phase-analysis-tools"
 import { checkForUpdate } from "./updater/checker"
 import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools"
 
@@ -40,6 +49,9 @@ export const mesa: Plugin = async () => {
       summon_team: summonTeamTool,
       delegate_task: delegateTaskTool,
       define_phases: definePhasesTool,
+      check_execution_phases: checkExecutionPhasesTool,
+      select_phases_for_analysis: selectPhasesForAnalysisTool,
+      configure_phase_observation: configurePhaseObservationTool,
       open_analysis_round: openAnalysisRoundTool,
       register_analysis: registerAnalysisTool,
       request_consensus: requestConsensusTool,
@@ -48,6 +60,10 @@ export const mesa: Plugin = async () => {
       pause_discussion: pauseDiscussionTool,
       resume_discussion: resumeDiscussionTool,
       cancel_discussion: cancelDiscussionTool,
+      detect_phases: detectPhasesTool,
+      open_phase_analysis_round: openPhaseAnalysisRoundTool,
+      request_phase_consensus: requestPhaseConsensusTool,
+      generate_phase_appendix: generatePhaseAppendixTool,
       mesa_check_update: mesaCheckUpdateTool,
       mesa_update: mesaUpdateTool,
     },
@@ -99,14 +115,15 @@ export const mesa: Plugin = async () => {
 
     "tool.definition": async (input, output) => {
       const mesaTools = [
-        "mesa_status", "list_specialists", "get_specialist",
-        "create_briefing", "approve_briefing", "deliver_briefing", "import_briefing",
-        "analyze_briefing", "propose_team", "summon_team",
-        "delegate_task", "define_phases",
-        "open_analysis_round", "register_analysis", "request_consensus",
-        "generate_specification", "approve_specification",
-        "pause_discussion", "resume_discussion", "cancel_discussion",
-        "mesa_check_update", "mesa_update",
+      "mesa_status", "list_specialists", "get_specialist",
+      "create_briefing", "approve_briefing", "deliver_briefing", "import_briefing",
+      "analyze_briefing", "propose_team", "summon_team",
+      "delegate_task", "define_phases",
+      "check_execution_phases", "select_phases_for_analysis", "configure_phase_observation",
+      "open_analysis_round", "register_analysis", "request_consensus",
+      "generate_specification", "approve_specification",
+      "pause_discussion", "resume_discussion", "cancel_discussion",
+      "mesa_check_update", "mesa_update",
       ]
 
       if (mesaTools.includes(input.toolID)) {
