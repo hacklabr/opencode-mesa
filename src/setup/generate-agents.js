@@ -98,6 +98,7 @@ async function writePrimaryAgents() {
 
 async function writeSubagents(personas) {
   const subagentsDir = join(outputDir, "mesa")
+  await rm(subagentsDir, { recursive: true, force: true })
   await mkdir(subagentsDir, { recursive: true })
 
   const generated = []
