@@ -3,7 +3,7 @@ import { parsePersonaFile, loadCatalogFromDirectory } from "../catalog/loader"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const CATALOG_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "catalog", "agency-agents")
+const CATALOG_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist", "catalog", "agency-agents")
 
 describe("catalog parser", () => {
   test("parses a persona file with full frontmatter", () => {

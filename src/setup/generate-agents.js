@@ -3,7 +3,8 @@ import { join, dirname, basename } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..")
-const CATALOG_DIR = join(ROOT, "src", "catalog", "agency-agents")
+const MERGED_CATALOG = join(ROOT, "dist", "catalog", "agency-agents")
+const CATALOG_DIR = MERGED_CATALOG
 const DEFAULT_outputDir = join(ROOT, ".opencode", "agents")
 const PRIMARY_outputDir = join(ROOT, "src", "agents")
 const outputDir = process.argv[2] || DEFAULT_outputDir
