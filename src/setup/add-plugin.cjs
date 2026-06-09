@@ -1,5 +1,4 @@
 const fs = require('fs')
-const path = require('path')
 
 const configFile = process.argv[2]
 const pluginPath = process.argv[3]
@@ -20,6 +19,9 @@ do {
 
 const cfg = JSON.parse(json)
 if (!cfg.plugin) cfg.plugin = []
-if (!cfg.plugin.includes(pluginPath)) cfg.plugin.push(pluginPath)
+
+cfg.plugin = cfg.plugin.filter(p => !p.includes('opencode-mesa'))
+
+cfg.plugin.push(pluginPath)
 
 fs.writeFileSync(configFile, JSON.stringify(cfg, null, 2) + '\n')
