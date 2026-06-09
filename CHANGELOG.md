@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-06-09
+
+### Fixed
+- **Phase detection now supports Portuguese headings**: `Fase N`, `Etapa N`, and `Plano de Execução` sections are recognized alongside English `Phase N` and `Execution Plan`
+- **Heading format flexibility**: h3/h4 levels, multiple separators (`:`, `—`, `–`, `-`, `.`, `)`) all detected correctly
+- **Manager prompt enforces Phase Gate**: after spec approval, the Manager MUST call `check_execution_phases` before delegating implementation — no more skipping the phase analysis step
+- **`is_phase_analysis_applicable` recognizes Portuguese keywords** for analysis-only specs
+
 ## [2.3.0] - 2026-06-09
 
 ### Added

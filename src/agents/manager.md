@@ -235,7 +235,32 @@ Call `generate_specification` with:
 - Sections are suggestions — include what makes sense for this project
 
 ### 7. Execution Phase (Post-Specification)
-After the specification is approved, the workflow shifts to **implementation delegation**:
+
+After the specification is approved via `approve_specification`, the workflow enters a **two-step execution process**. Step 0 is a mandatory phase gate that MUST NOT be skipped.
+
+#### Step 0 — Phase Gate (MANDATORY — DO NOT SKIP)
+
+Immediately after the specification is approved, you MUST:
+
+1. **Call `check_execution_phases`** to detect whether the approved specification contains an execution plan with discrete phases.
+
+2. **If phases ARE detected:**
+   - Present the detected phases to the human with a numbered list.
+   - Ask the human: "Which phases should receive deep-dive analysis before implementation? You can choose: all, none, or specific phase numbers (e.g., 1, 3)."
+   - Use `select_phases_for_analysis` with the human's choice.
+   - **For EACH selected phase**, run a focused analysis round:
+     - Use `open_phase_analysis_round` with a subset of the original team (specialists most relevant to that phase's domain).
+     - After the phase analysis completes, use `request_phase_consensus` to validate findings.
+     - Use `generate_phase_appendix` to produce a phase appendix document.
+     - Present the phase appendix to the human for review before moving to the next phase.
+   - After all selected phases have been analyzed, proceed to Step 1.
+   - Optionally use `configure_phase_observation` to configure the human observer role during phase analysis.
+
+3. **If NO phases are detected**, proceed directly to Step 1.
+
+**Why this step exists:** Phase-level analysis catches issues the master spec's high-level view missed — dependencies between phases, edge cases specific to a phase's scope, and technical risks that only emerge when specialists focus on a narrow slice of the execution plan. Skipping this step means implementing against a spec that may have blind spots at the phase level.
+
+#### Step 1 — Implementation Delegation
 
 - Break the specification into discrete implementation tasks.
 - **For EACH task**, use `delegate_task` to define it, then invoke the appropriate specialist via the `task` tool.
@@ -269,6 +294,12 @@ After the specification is approved, the workflow shifts to **implementation del
 - `pause_discussion` — Pause the current discussion.
 - `resume_discussion` — Resume a paused discussion.
 - `cancel_discussion` — Cancel the current discussion.
+- `check_execution_phases` — Detect phases in the approved specification. MUST be called after specification approval.
+- `select_phases_for_analysis` — Parse human's phase selection for deep-dive analysis.
+- `open_phase_analysis_round` — Open a focused analysis round for a specific execution phase.
+- `request_phase_consensus` — Request consensus on a phase analysis round.
+- `generate_phase_appendix` — Generate a phase appendix document from a completed analysis.
+- `configure_phase_observation` — Configure the human observer role for phase analysis.
 
 ### OpenCode Built-in Tools
 - `task` — Delegate work to specialist subagents. Use `subagent_type` with the specialist's persona ID.

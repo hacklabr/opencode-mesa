@@ -116,8 +116,8 @@ function detect_from_frontmatter(specText: string): ExecutionPhase[] | null {
 function detect_from_headings(specText: string): ExecutionPhase[] | null {
   const phases: ExecutionPhase[] = []
 
-  // Pattern 1: ## Phase N: Name
-  const phaseHeadingRegex = /^##\s*Phase\s+(\d+)[:\s]+(.+)$/gim
+  // Pattern 1: #{2,4} Phase/Fase N <sep> Name
+  const phaseHeadingRegex = /^#{2,4}\s*(?:Phase|Fase)\s+(\d+)[\s:—–.)\-]+(.+)$/gim
   let match: RegExpExecArray | null
   while ((match = phaseHeadingRegex.exec(specText)) !== null) {
     const index = parseInt(match[1], 10)
@@ -128,8 +128,8 @@ function detect_from_headings(specText: string): ExecutionPhase[] | null {
     return phases.sort((a, b) => a.index - b.index)
   }
 
-  // Pattern 2: ## Execution Plan followed by numbered list
-  const execPlanRegex = /##\s*Execution\s*Plan\s*\n([\s\S]*?)(?:\n##|\n---|$)/i
+  // Pattern 2: ## Execution Plan / Plano de Execução section
+  const execPlanRegex = /##\s*(?:Execution\s*Plan|Plano\s+de\s+Execu[cç][aã]o|Plano\s+de\s+Implementa[cç][aã]o)\s*\n([\s\S]*?)(?:\n##(?!\#)|\n---|$)/i
   const execPlanMatch = execPlanRegex.exec(specText)
   if (execPlanMatch) {
     const content = execPlanMatch[1]
@@ -142,6 +142,18 @@ function detect_from_headings(specText: string): ExecutionPhase[] | null {
     }
     if (listPhases.length > 0) {
       return listPhases.sort((a, b) => a.index - b.index)
+    }
+
+    // Numbered headings without keyword (e.g., ### 0. Preparação)
+    const numHeadingRegex = /^#{2,4}\s*(\d+)[\s:—–.)\-]+(.+)$/gim
+    const numPhases: ExecutionPhase[] = []
+    while ((match = numHeadingRegex.exec(content)) !== null) {
+      const index = parseInt(match[1], 10)
+      const name = match[2].trim()
+      numPhases.push({ index, name, slug: slugify(name), description: null })
+    }
+    if (numPhases.length > 0) {
+      return numPhases.sort((a, b) => a.index - b.index)
     }
   }
 
@@ -160,11 +172,11 @@ function detect_from_heuristics(specText: string): ExecutionPhase[] | null {
   // Look for "Phase N" in headings or bold lines
   for (const line of lines) {
     const match = line.match(
-      /^(?:#{1,3}\s+|\*\*)?.*?\b[Pp]hase\s+(\d+)\b[:\s]*(.+?)(?:\*\*)?$/
+      /^(?:#{1,3}\s+|\*\*)?.*?\b(?:[Pp]hase|[Ff]ase)\s+(\d+)\b[:\s—–\-]*(.+?)(?:\*\*)?$/
     )
     if (match) {
       const index = parseInt(match[1], 10)
-      const name = match[2].trim().replace(/[:\s*]+$/, "")
+      const name = match[2].trim().replace(/[:\s—–\-*]+$/, "")
       const key = `${index}:${name}`
       if (!seen.has(key)) {
         seen.add(key)
@@ -176,14 +188,14 @@ function detect_from_heuristics(specText: string): ExecutionPhase[] | null {
     return phases.sort((a, b) => a.index - b.index)
   }
 
-  // Look for "Step N" patterns
+  // Look for "Step/Etapa N" patterns
   for (const line of lines) {
     const match = line.match(
-      /^(?:#{1,3}\s+|\*\*)?.*?\b[Ss]tep\s+(\d+)\b[:\s]*(.+?)(?:\*\*)?$/
+      /^(?:#{1,3}\s+|\*\*)?.*?\b(?:[Ss]tep|[Ee]tapa)\s+(\d+)\b[:\s—–\-]*(.+?)(?:\*\*)?$/
     )
     if (match) {
       const index = parseInt(match[1], 10)
-      const name = match[2].trim().replace(/[:\s*]+$/, "")
+      const name = match[2].trim().replace(/[:\s—–\-*]+$/, "")
       const key = `${index}:${name}`
       if (!seen.has(key)) {
         seen.add(key)
@@ -236,16 +248,19 @@ export function is_phase_analysis_applicable(specText: string): boolean {
 
   const analysisOnlyKeywords = [
     "audit report",
+    "relatório de auditoria",
     "recommendations",
     "assessment only",
+    "análise apenas",
     "analysis only",
     "no implementation",
+    "sem implementação",
   ]
   for (const kw of analysisOnlyKeywords) {
     if (lower.includes(kw)) return false
   }
 
-  const hasExecutionPlan = /execution\s*plan|implementation\s*plan|project\s*plan/i.test(specText)
+  const hasExecutionPlan = /execution\s*plan|implementation\s*plan|project\s*plan|plano\s+de\s+execu[cç][aã]o|plano\s+de\s+implementa[cç][aã]o/i.test(specText)
   const hasPhases = detect_execution_phases(specText) !== null
 
   return hasExecutionPlan || hasPhases

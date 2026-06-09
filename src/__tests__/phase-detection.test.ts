@@ -169,6 +169,166 @@ Details...
       expect(phases![0].name).toBe("First step")
       expect(phases![1].name).toBe("Second step")
     })
+
+    test("detects Portuguese Fase N headings with colon", () => {
+      const text = `# Especificação
+
+## Fase 1: Planejamento
+
+Detalhes...
+
+## Fase 2: Análise
+
+Detalhes...
+
+## Fase 3: Implementação
+
+Detalhes...
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(3)
+      expect(phases![0]).toEqual({
+        index: 1,
+        name: "Planejamento",
+        slug: "planejamento",
+        description: null,
+      })
+      expect(phases![2]).toEqual({
+        index: 3,
+        name: "Implementação",
+        slug: "implementa-o",
+        description: null,
+      })
+    })
+
+    test("detects Portuguese Fase N headings with em dash", () => {
+      const text = `# Especificação
+
+## Fase 0 — Preparação
+
+## Fase 1 — Bug Fixes — Tokens Faltantes
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(2)
+      expect(phases![0].name).toBe("Preparação")
+      expect(phases![1].name).toBe("Bug Fixes — Tokens Faltantes")
+    })
+
+    test("detects h3 and h4 heading levels", () => {
+      const text = `# Spec
+
+### Phase 0: Preparation
+
+Details...
+
+#### Phase 1: Build
+
+Details...
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(2)
+      expect(phases![0]).toEqual({
+        index: 0,
+        name: "Preparation",
+        slug: "preparation",
+        description: null,
+      })
+      expect(phases![1]).toEqual({
+        index: 1,
+        name: "Build",
+        slug: "build",
+        description: null,
+      })
+    })
+
+    test("detects headings with dot separator", () => {
+      const text = `# Spec
+
+## Phase 1. Setup
+
+## Phase 2. Build
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(2)
+      expect(phases![0].name).toBe("Setup")
+      expect(phases![1].name).toBe("Build")
+    })
+
+    test("detects headings with hyphen separator", () => {
+      const text = `# Spec
+
+## Phase 1 - Setup
+
+## Phase 2 - Build
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(2)
+      expect(phases![0].name).toBe("Setup")
+      expect(phases![1].name).toBe("Build")
+    })
+
+    test("detects numbered headings without keyword under Execution Plan", () => {
+      const text = `# Spec
+
+## Execution Plan
+
+### 0. Preparação
+
+### 1. Implementação
+
+### 2. Deploy
+
+## Other Section
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(3)
+      expect(phases![0].name).toBe("Preparação")
+      expect(phases![1].name).toBe("Implementação")
+      expect(phases![2].name).toBe("Deploy")
+    })
+
+    test("detects numbered headings with em dash under Plano de Execução", () => {
+      const text = `# Especificação
+
+## Plano de Execução
+
+### 0 — Preparação
+
+### 1 — Desenvolvimento
+
+## Outra Seção
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(2)
+      expect(phases![0].name).toBe("Preparação")
+      expect(phases![1].name).toBe("Desenvolvimento")
+    })
+
+    test("detects numbered list under Plano de Implementação", () => {
+      const text = `# Especificação
+
+## Plano de Implementação
+
+1. Configurar ambiente
+2. Desenvolver funcionalidades
+3. Implantar em produção
+
+## Outra Seção
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(3)
+      expect(phases![0].name).toBe("Configurar ambiente")
+      expect(phases![1].name).toBe("Desenvolver funcionalidades")
+      expect(phases![2].name).toBe("Implantar em produção")
+    })
   })
 
   describe("Aggressive heuristic fallback", () => {
@@ -222,6 +382,55 @@ More text...
       expect(phases![0].name).toBe("Setup")
       expect(phases![1].name).toBe("Build")
     })
+
+    test("detects Fase N in bold lines", () => {
+      const text = `# Especificação
+
+**Fase 1: Descoberta**
+
+Algum texto...
+
+**Fase 2: Design**
+
+Mais texto...
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(2)
+      expect(phases![0].name).toBe("Descoberta")
+      expect(phases![1].name).toBe("Design")
+    })
+
+    test("detects Etapa N patterns", () => {
+      const text = `# Especificação
+
+**Etapa 1: Inicializar**
+
+**Etapa 2: Processar**
+
+**Etapa 3: Finalizar**
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(3)
+      expect(phases![0].name).toBe("Inicializar")
+      expect(phases![1].name).toBe("Processar")
+      expect(phases![2].name).toBe("Finalizar")
+    })
+
+    test("detects Fase N in headings with em dash", () => {
+      const text = `# Especificação
+
+### Fase 1 — Planejamento
+
+### Fase 2 — Execução
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(2)
+      expect(phases![0].name).toBe("Planejamento")
+      expect(phases![1].name).toBe("Execução")
+    })
   })
 
   describe("priority order", () => {
@@ -252,6 +461,23 @@ execution_plan:
       expect(phases).not.toBeNull()
       expect(phases).toHaveLength(1)
       expect(phases![0].name).toBe("Structured Phase")
+    })
+
+    test("handles mixed English/Portuguese spec", () => {
+      const text = `# Specification
+
+## Fase 1: Bug Fixes — Tokens Faltantes
+
+### Phase 2: Performance Improvements
+
+## Fase 3: Final Polish
+`
+      const phases = detect_execution_phases(text)
+      expect(phases).not.toBeNull()
+      expect(phases).toHaveLength(3)
+      expect(phases![0].name).toBe("Bug Fixes — Tokens Faltantes")
+      expect(phases![1].name).toBe("Performance Improvements")
+      expect(phases![2].name).toBe("Final Polish")
     })
   })
 })
@@ -293,6 +519,30 @@ describe("is_phase_analysis_applicable", () => {
     expect(
       is_phase_analysis_applicable("# Architecture Review\n\nThis document reviews the current architecture.")
     ).toBe(false)
+  })
+
+  test("returns false for Portuguese analysis-only keywords", () => {
+    expect(is_phase_analysis_applicable("Este é um relatório de auditoria")).toBe(false)
+    expect(is_phase_analysis_applicable("Análise apenas deste sistema")).toBe(false)
+    expect(is_phase_analysis_applicable("Sem implementação necessária")).toBe(false)
+  })
+
+  test("returns true for Plano de Execução section", () => {
+    expect(
+      is_phase_analysis_applicable("# Spec\n\n## Plano de Execução\n\n1. Construir\n2. Implantar")
+    ).toBe(true)
+  })
+
+  test("returns true for Plano de Implementação section", () => {
+    expect(
+      is_phase_analysis_applicable("# Spec\n\n## Plano de Implementação\n\nPassos...")
+    ).toBe(true)
+  })
+
+  test("returns true for Portuguese Fase headings", () => {
+    expect(
+      is_phase_analysis_applicable("# Spec\n\n## Fase 1: Setup\n\n## Fase 2: Build")
+    ).toBe(true)
   })
 })
 
