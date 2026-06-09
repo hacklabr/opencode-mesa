@@ -136,14 +136,22 @@ export const openAnalysisRoundTool = tool({
         return { id, name }
       })
 
+      const briefingFilePath = args.briefing_content
+        ? `.mesa/briefing-for-discussion-${sessionId}.md`
+        : null
+
       const participantList = participantsWithNames
         .map((p) => `  ${p.name} (subagent_type="mesa/${p.id}")`)
         .join("\n")
 
+      const briefingInstruction = briefingFilePath
+        ? `Briefing file: **${briefingFilePath}** — tell each specialist to READ this file. NEVER summarize or excerpt the briefing. Pass the file path so the specialist reads it in full.`
+        : `No briefing file provided. Pass relevant context directly to each specialist.`
+
       const taskInstructions = participantsWithNames
         .map(
           (p, i) =>
-            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", prompt="Analyze the following briefing for ${args.topic}...", description="${p.name} analysis")\``
+            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
         )
         .join("\n\n")
 
@@ -160,6 +168,8 @@ export const openAnalysisRoundTool = tool({
           `Turns: ${state.discussion.maxTurns} | Phase: ANALYSIS`,
           ``,
           `## How to run this round`,
+          ``,
+          briefingInstruction,
           ``,
           `For each specialist, invoke them via the **task** tool with their persona ID as subagent_type.`,
           `After each specialist returns their analysis, call \`register_analysis\` to record it.`,
