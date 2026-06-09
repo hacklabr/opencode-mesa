@@ -66,9 +66,11 @@ Detailed reference for the Mesa workflow, covering all phases, transitions, and 
 
 ### EXECUTION
 
-**Purpose**: The Manager delegates implementation tasks to individual specialists.
+**Purpose**: The Manager delegates implementation tasks to individual specialists. EXECUTION starts with a mandatory **Phase Gate** check — the Manager calls `check_execution_phases` to detect whether the approved specification contains an execution plan with structured phases.
 
-**Available tools**: `delegate_task`, `pause_discussion`, `cancel_discussion`
+**Available tools**: `delegate_task`, `check_execution_phases`, `select_phases_for_analysis`, `configure_phase_observation`, `open_phase_analysis_round`, `request_phase_consensus`, `generate_phase_appendix`, `detect_phases`, `pause_discussion`, `cancel_discussion`
+
+> **Phase Gate**: If phases are detected, the human chooses between proceeding directly to implementation or running per-phase deep-dive analysis. See [Iterative Phase Analysis Workflow](#iterative-phase-analysis-workflow) for the full sub-workflow.
 
 **Entry conditions**: Entered from `APPROVAL` via `approve_specification(approved=true)`, or from `PAUSED` (resume).
 

@@ -2,7 +2,7 @@
 
 > Structured AI specialist discussions for OpenCode — produce high-quality specifications through multi-agent analysis, debate, and consensus.
 
-![Version](https://img.shields.io/badge/version-2.2.0-blue)
+![Version](https://img.shields.io/badge/version-2.3.1-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e0)
 
@@ -66,9 +66,18 @@ flowchart TD
     ApproveSpec --> Execution
 
     subgraph "Phase 6: Execution"
-        Execution[delegate_task\nfor each task] --> Impl[Manager invokes specialist\nvia task tool]
+        Execution[check_execution_phases] --> PhaseGate{Phases detected?}
+        PhaseGate -->|No| Impl[delegate_task for each task]
+        PhaseGate -->|Yes| HumanChoice{Human choice}
+        HumanChoice -->|Implement directly| Impl
+        HumanChoice -->|Deep-dive phases| PhaseAnalysis[open_phase_analysis_round]
+        PhaseAnalysis --> PhaseConsensus[request_phase_consensus]
+        PhaseConsensus --> PhaseAppendix[generate_phase_appendix]
+        PhaseAppendix --> MorePhases{More phases?}
+        MorePhases -->|Yes| PhaseAnalysis
+        MorePhases -->|No| Impl
         Impl --> More{More tasks?}
-        More -->|Yes| Execution
+        More -->|Yes| Impl
         More -->|No| Done([Done ✅])
     end
 
@@ -89,7 +98,7 @@ The workflow has six phases:
 3. **Analysis** — Each specialist analyzes the briefing from their unique perspective, across multiple turns. Analyses are registered and accumulated.
 4. **Consensus** — Specialists vote on the combined analysis (AGREE / AGREE_WITH_RESERVATIONS / DISAGREE). If disagreements exist, a debate round follows until consensus is reached.
 5. **Specification** — All specialist sections are compiled into a single Markdown document. You review and approve or reject it.
-6. **Execution** — The Manager delegates implementation tasks to individual specialists.
+6. **Execution** — The Manager checks for execution phases, optionally runs per-phase analysis, then delegates implementation tasks to specialists.
 
 Every phase transition requires **explicit human approval** — Mesa never proceeds without your say-so.
 
@@ -120,7 +129,7 @@ This single command:
 
 - Clones the repository to `~/.local/share/opencode-mesa`
 - Installs dependencies and builds the plugin
-- Generates 173 specialist subagents from the catalog
+- Generates 367 specialist subagents from the catalog
 - Prints the plugin path for your `opencode.json`
 
 ### Manual Install
@@ -313,9 +322,9 @@ graph TB
     end
 
     subgraph "Mesa Plugin"
-        Tools["21 Tools\nbriefing · manager · discussion\ncatalog · status"]
+        Tools["28 Tools\nbriefing · manager · discussion\ncatalog · phase-analysis · status"]
         State["State Layer\nstate.ts · audit.ts"]
-        Catalog["Catalog\nloader.ts · 173 specialists"]
+        Catalog["Catalog\nloader.ts · 367 specialists"]
         Hook["System Prompt Hook\ninjects Mesa context"]
     end
 
@@ -323,6 +332,8 @@ graph TB
         StateFile[state.json]
         Briefings[briefings/]
         Specs[specifications/]
+        Appendices[appendices/]
+        PhaseDrafts[phase-analysis/]
         AuditFile[audit.log]
     end
 
@@ -338,7 +349,7 @@ graph TB
     style Hook fill:#9C27B0,color:#fff
 ```
 
-Mesa is an OpenCode plugin that registers 21 tools, 173 specialist subagents, and a system prompt hook. The plugin itself manages state transitions and persistence — the actual specialist invocation happens through OpenCode's native `task` tool, which creates a real subagent session with the specialist's own system prompt.
+Mesa is an OpenCode plugin that registers 28 tools, 367 specialist subagents, and a system prompt hook. The plugin itself manages state transitions and persistence — the actual specialist invocation happens through OpenCode's native `task` tool, which creates a real subagent session with the specialist's own system prompt.
 
 Key design decisions:
 
@@ -346,10 +357,11 @@ Key design decisions:
 - **State is file-based** — everything lives in `.mesa/` within your workspace. No databases, no external services.
 - **The Manager never generates content** — it orchestrates. Specialists generate the actual analysis and specification content.
 - **Human approval gates** — team proposal, specification, and every phase transition can require explicit human confirmation.
+- **Phase-level analysis produces authoritative appendices** — iterative phase analysis creates immutable appendix documents that override the master spec for their scoped phase, ensuring delegated specialists receive the most detailed and debated context.
 
 ## Tool Reference
 
-Mesa provides 21 tools organized into five categories.
+Mesa provides 28 tools organized into six categories.
 
 ### General Tools
 
@@ -382,6 +394,9 @@ Mesa provides 21 tools organized into five categories.
 | `summon_team` | Summons the approved team, marking each specialist as ready | _(none)_ |
 | `delegate_task` | Defines a task for a specialist, returns invocation instructions (EXECUTION phase only) | `personaId` `string` — specialist persona ID · `task` `string` — task description · `context_info?` `string` — additional context |
 | `define_phases` | Defines the ordered workflow phases for the current project | `phases` `array<string>` — ordered phase names (e.g. `['PLANNING', 'ANALYSIS', 'CONSENSUS']`) |
+| `check_execution_phases` | Detects phases in approved spec, presents implement vs deep-dive choice | _(none)_ |
+| `select_phases_for_analysis` | Parses human phase selection (e.g. `'all'`, `'1, 3, 5'`) | `selection` `string` · `phase_count` `number` |
+| `configure_phase_observation` | Configures guided/auto mode for phase analysis | `phase_name` `string` · `mode` `string` · `master_spec_context?` `string` · `observations?` `string` |
 
 ### Discussion Tools
 
@@ -396,6 +411,18 @@ Mesa provides 21 tools organized into five categories.
 | `resume_discussion` | Resumes a paused discussion to a specified phase | `target_phase` `string` — phase to resume to (e.g. `'ANALYSIS'`, `'CONSENSUS'`) |
 | `cancel_discussion` | Cancels the discussion and clears analysis data | _(none)_ |
 
+### Phase Analysis Tools
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `check_execution_phases` | Detects phases in approved spec, presents implement vs deep-dive choice | _(none)_ |
+| `select_phases_for_analysis` | Parses human phase selection (e.g. `'all'`, `'1, 3, 5'`) | `selection` `string` · `phase_count` `number` |
+| `open_phase_analysis_round` | Opens focused analysis round for one execution phase | `phase_index` `number` · `phase_name` `string` · `mode` `string` · `specialists?` `array` · `briefing_content?` `string` · `observations?` `string` |
+| `request_phase_consensus` | Records consensus votes for a phase analysis | `phase_index` `number` · `phase_name` `string` · `votes` `array` · `round` `number` · `consensus_reached` `boolean` |
+| `generate_phase_appendix` | Generates canonical appendix from phase analysis | `phase_index` `number` · `phase_name` `string` · `phase_scope` `string` · `specialist_analyses_summary` `string` · `consensus_outcome` `string` · `technical_decisions` `string` · `revised_execution_plan` `string` · `delta_from_master` `string` · `mode` `string` · `specialists` `array` · `mini_discovery_context?` `string` |
+| `configure_phase_observation` | Configures guided/auto mode for phase analysis | `phase_name` `string` · `mode` `string` · `master_spec_context?` `string` · `observations?` `string` |
+| `detect_phases` | Reads master spec and detects execution phases | `spec_path?` `string` |
+
 ## State Persistence
 
 All discussion state is stored in `.mesa/` within your workspace:
@@ -407,7 +434,11 @@ All discussion state is stored in `.mesa/` within your workspace:
 ├── briefings/                 # Saved briefing documents
 │   └── briefing-{slug}.md
 ├── specifications/            # Generated specification documents
-│   └── spec-{id}.md
+│   ├── spec-{id}.md
+│   └── appendices/            # Phase appendix documents
+│       └── appendix-{id}-{phase}-{uuid}.md
+├── phase-analysis/            # Draft phase analysis workspace
+│   └── phase-{index}-{slug}/
 ├── briefing-for-discussion.md # Briefing content passed to specialists
 └── audit.log                  # Action audit trail
 ```
@@ -425,11 +456,14 @@ State is managed through strict phase transitions — every tool validates the c
 
 ### Specialist Subagents
 
-173 specialists from the [agency-agents](https://github.com/msitarzewski/agency-agents) catalog, organized in 16+ divisions:
+367 specialists from the [agency-agents](https://github.com/msitarzewski/agency-agents) catalog, organized in 26+ divisions:
 
-- academic, design, engineering, finance, game-development
-- integrations, marketing, paid-media, product, project-management
-- sales, spatial-computing, specialized, strategy, support, testing
+- accounting, administrative, china-marketing, culture, customer-service
+- design, digital-marketing, education, electronics, environment
+- finance, fintech, game-development, geospatial, human-resources
+- integrations, legal, mechatronics, politics, product
+- professional-development, quality-assurance, sales, security, social-engagement
+- software-development, strategy, urban-planning, worldbuilding
 
 Each specialist is registered as a hidden subagent in the `mesa/` namespace with `mode: subagent` and their own system prompt. OpenCode automatically injects the specialist's system prompt when invoked — the Manager must NOT include it in the task prompt.
 

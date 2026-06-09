@@ -14,9 +14,9 @@ graph TB
     end
 
     subgraph "Mesa Plugin"
-        Tools["21 Tools\nbriefing · manager · discussion\ncatalog · status"]
+        Tools["28 Tools\nbriefing · manager · discussion\ncatalog · phase-analysis · status"]
         State["State Layer\nstate.ts · audit.ts"]
-        Catalog["Catalog\nloader.ts · 173 specialists"]
+        Catalog["Catalog\nloader.ts · 367 specialists"]
         Hook["System Prompt Hook\ninjects Mesa context"]
     end
 
@@ -24,6 +24,8 @@ graph TB
         StateFile[state.json]
         Briefings[briefings/]
         Specs[specifications/]
+        Appendices[appendices/]
+        PhaseDrafts[phase-analysis/]
         AuditFile[audit.log]
     end
 
@@ -38,15 +40,16 @@ graph TB
 
 ### Tools (`src/tools/`)
 
-Five tool modules, each registering tools via the `tool()` helper from `@opencode-ai/plugin`:
+Six tool modules, each registering tools via the `tool()` helper from `@opencode-ai/plugin`:
 
 | Module | Tools | Purpose |
 |--------|-------|---------|
 | `mesa-tools.ts` | `mesa_status` | Plugin health and state summary |
 | `catalog-tools.ts` | `list_specialists`, `get_specialist` | Browse and retrieve specialist profiles |
 | `briefing-tools.ts` | `create_briefing`, `approve_briefing`, `deliver_briefing`, `import_briefing` | Briefing lifecycle management |
-| `manager-tools.ts` | `analyze_briefing`, `propose_team`, `summon_team`, `delegate_task`, `define_phases` | Team assembly and task delegation |
+| `manager-tools.ts` | `analyze_briefing`, `propose_team`, `summon_team`, `delegate_task`, `define_phases`, `check_execution_phases`, `select_phases_for_analysis`, `configure_phase_observation` | Team assembly, task delegation, and phase gate orchestration |
 | `discussion-tools.ts` | `open_analysis_round`, `register_analysis`, `request_consensus`, `generate_specification`, `approve_specification`, `pause_discussion`, `resume_discussion`, `cancel_discussion` | Structured discussion workflow |
+| `phase-analysis-tools.ts` | `open_phase_analysis_round`, `request_phase_consensus`, `generate_phase_appendix`, `detect_phases` | Iterative per-phase analysis and appendix generation |
 
 ### State (`src/state.ts`, `src/audit.ts`)
 
@@ -368,8 +371,8 @@ graph TD
 
 **Tier 1 — Frontmatter**: Parses `---` delimited YAML for an `execution_plan` key (array or string).
 
-**Tier 2 — Headings**: Matches `## Phase N: Name` or `## Execution Plan` followed by a numbered list.
+**Tier 2 — Headings**: Matches `## Phase/Fase N: Name` (English and Portuguese) or `## Execution Plan / Plano de Execução` followed by a numbered list. Supports h2–h4 headings and multiple separators (`:`, `—`, `–`, `-`, `.`, `)`).
 
-**Tier 3 — Heuristics**: Searches for "Phase N" or "Step N" patterns anywhere in the document.
+**Tier 3 — Heuristics**: Searches for `Phase/Fase/Step/Etapa N` patterns anywhere in the document.
 
 If all tiers return null, phase analysis is bypassed and the workflow proceeds directly to implementation.
