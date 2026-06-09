@@ -137,13 +137,13 @@ export const openAnalysisRoundTool = tool({
       })
 
       const participantList = participantsWithNames
-        .map((p) => `  ${p.name} (subagent_type="${p.id}")`)
+        .map((p) => `  ${p.name} (subagent_type="mesa/${p.id}")`)
         .join("\n")
 
       const taskInstructions = participantsWithNames
         .map(
           (p, i) =>
-            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="${p.id}", prompt="Analyze the following briefing for ${args.topic}...", description="${p.name} analysis")\``
+            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", prompt="Analyze the following briefing for ${args.topic}...", description="${p.name} analysis")\``
         )
         .join("\n\n")
 

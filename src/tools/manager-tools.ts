@@ -207,7 +207,7 @@ export const delegateTaskTool = tool({
           `Task defined for **${specialist.name}** (${args.personaId}).`,
           ``,
           `Now invoke the specialist using the **task** tool:`,
-          `\`task(subagent_type="${args.personaId}", prompt="...", description="...")\``,
+          `\`task(subagent_type="mesa/${args.personaId}", prompt="...", description="...")\``,
           ``,
           `### Prompt content for the specialist:`,
           promptParts.join("\n"),
