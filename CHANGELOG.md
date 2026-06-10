@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-06-10
+
+### Added
+- **4 library science personas** in culture domain: Librarian, Archivist, Digital Curator, Information Specialist — all with Brazilian context (SNBP, Arquivo Nacional, Capes, LGPD)
+- **Catalog README** with per-domain roster tables linking to all 366 persona files
+
+### Changed
+- **Catalog reorganized from 15 to 26 domain directories** for better categorization:
+  - New domains: game-development, geospatial, security, quality-assurance, china-marketing, digital-marketing, sales, customer-service, human-resources, worldbuilding, professional-development, fintech
+  - Mega-domains split: software-development 112→47, social-engagement 51→8, administrative 48→25
+  - spatial-computing absorbed into software-development (6 personas)
+- **11 local+external persona pairs merged** — best of both catalogs combined (financial-analyst, data-engineer, frontend-developer, mobile-app-developer, etc.)
+- **Frontmatter standardized** across all 366 personas: `id` field added, colors converted to hex, emojis quoted consistently
+
+### Fixed
+- **Build script no longer merges deleted `catalog/` directory** onto the submodule catalog — was creating stale hybrid directories in `dist/`
+- Removed `catalog/` directory (154 files) — all content migrated to submodule `src/catalog/agency-agents/`
+
 ## [2.4.0] - 2026-06-10
 
 ### Added
