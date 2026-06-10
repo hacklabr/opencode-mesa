@@ -8,7 +8,7 @@ import { promises as fs } from "node:fs"
 import { successResponse, errorResponse } from "../utils/responses"
 import { PhaseError, MesaError } from "../errors"
 import { build_mini_briefing_questions } from "../utils/mini-briefing"
-import { detect_execution_phases, parse_phase_selection } from "../utils/phase-detection"
+import { detect_execution_phases, parse_phase_selection, slugify } from "../utils/phase-detection"
 import { SqliteStateRepository } from "../repositories/sqlite-state-repository"
 import { join } from "node:path"
 import { PLUGIN_STATE_DIR } from "../config"
@@ -578,6 +578,268 @@ export const configurePhaseObservationTool = tool({
       if (err instanceof MesaError) return errorResponse(err.message)
       return errorResponse(
         `Error configuring observation mode: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  },
+})
+
+export const verifyImplementationTool = tool({
+  description:
+    "Records the result of verifying implementation against acceptance criteria. When result is 'failed', presents gaps to the human for decision (accept as tech debt or correct). When result is 'passed', marks the phase/task as verified. Must be called during EXECUTION phase.",
+  args: {
+    phase_name: tool.schema
+      .string()
+      .describe("Name of the phase being verified"),
+    task_description: tool.schema
+      .string()
+      .describe("Description of what was implemented"),
+    acceptance_criteria: tool.schema
+      .array(tool.schema.string())
+      .describe("List of acceptance criteria checked during verification"),
+    result: tool.schema
+      .enum(["passed", "failed"])
+      .describe("Verification result: 'passed' if all criteria met, 'failed' if gaps found"),
+    gaps: tool.schema
+      .array(tool.schema.string())
+      .describe("List of unmet acceptance criteria (empty if passed)"),
+    qa_specialist_id: tool.schema
+      .string()
+      .describe("Persona ID of the QA specialist who performed the verification"),
+    human_decision: tool.schema
+      .enum(["accepted", "correct"])
+      .optional()
+      .describe("Human decision for failed verification: 'accepted' (register as tech debt) or 'correct' (open analysis and fix)"),
+    accepted_gaps: tool.schema
+      .array(tool.schema.string())
+      .optional()
+      .describe("Gaps the human accepted as tech debt (subset of gaps)"),
+  },
+  async execute(args, context) {
+    try {
+      const state = await loadState(context.directory)
+      const phaseError = requirePhase(state, "EXECUTION")
+      if (phaseError) throw new PhaseError(phaseError)
+
+      const sessionId = getSessionId(context.directory)
+      const verificationKey = `verification-${slugify(args.phase_name)}`
+      const now = new Date().toISOString()
+
+      if (args.result === "passed" && args.gaps.length > 0) {
+        return errorResponse(
+          "Invalid verification: result is 'passed' but gaps list is non-empty. " +
+          "A passing verification must have an empty gaps array."
+        )
+      }
+
+      if (args.result === "failed" && args.gaps.length === 0) {
+        return errorResponse(
+          "Invalid verification: result is 'failed' but no gaps specified. " +
+          "A failing verification must include at least one gap."
+        )
+      }
+
+      if (args.result === "passed") {
+        if (sessionId) {
+          const repo = new SqliteStateRepository(context.directory)
+          await repo.savePhaseContext({
+            workspaceId: state.workspaceId,
+            sessionId,
+            phase: verificationKey,
+            context: {
+              phaseName: args.phase_name,
+              taskDescription: args.task_description,
+              criteria: args.acceptance_criteria,
+              result: "passed",
+              gaps: [],
+              qaSpecialistId: args.qa_specialist_id,
+              verifiedAt: now,
+              status: "verified",
+            },
+            schemaVersion: 1,
+            updatedAt: now,
+          })
+          repo.close()
+        }
+
+        await logAction(context.directory, "verify_implementation", state.currentPhase, {
+          phase: args.phase_name,
+          result: "passed",
+          criteriaCount: args.acceptance_criteria.length,
+          qaSpecialistId: args.qa_specialist_id,
+        })
+
+        return successResponse(
+          `Verification Passed — ${args.phase_name}`,
+          [
+            `${formatPhaseHeader(state.currentPhase)}`,
+            ``,
+            `**Phase:** ${args.phase_name}`,
+            `All ${args.acceptance_criteria.length} acceptance criteria met.`,
+            `Phase/task marked as verified.`,
+          ].join("\n"),
+          { phase: args.phase_name, result: "passed" }
+        )
+      }
+
+      // result === "failed"
+      if (!args.human_decision) {
+        if (sessionId) {
+          const repo = new SqliteStateRepository(context.directory)
+          await repo.savePhaseContext({
+            workspaceId: state.workspaceId,
+            sessionId,
+            phase: verificationKey,
+            context: {
+              phaseName: args.phase_name,
+              taskDescription: args.task_description,
+              criteria: args.acceptance_criteria,
+              result: "failed",
+              gaps: args.gaps,
+              qaSpecialistId: args.qa_specialist_id,
+              verifiedAt: now,
+              status: "pending_human_decision",
+            },
+            schemaVersion: 1,
+            updatedAt: now,
+          })
+          repo.close()
+        }
+
+        const gapLines = args.gaps
+          .map((g, i) => `  ${i + 1}. ${g}`)
+          .join("\n")
+
+        await logAction(context.directory, "verify_implementation", state.currentPhase, {
+          phase: args.phase_name,
+          result: "failed",
+          gapCount: args.gaps.length,
+          status: "pending_human_decision",
+        })
+
+        return successResponse(
+          `Verification Failed — ${args.phase_name}`,
+          [
+            `${formatPhaseHeader(state.currentPhase)}`,
+            ``,
+            `${args.gaps.length} gap(s) found:`,
+            gapLines,
+            ``,
+            `**Human decision required.** Present the gaps and ask:`,
+            `[A] Accept — Register these gaps as tech debt for future work.`,
+            `[C] Correct — Open analysis for each gap and delegate corrections.`,
+            ``,
+            `Call verify_implementation again with human_decision='accepted' or 'correct'.`,
+          ].join("\n"),
+          { phase: args.phase_name, result: "failed", gapCount: args.gaps.length }
+        )
+      }
+
+      // human_decision is defined
+      if (args.human_decision === "accepted") {
+        if (sessionId) {
+          const repo = new SqliteStateRepository(context.directory)
+          await repo.savePhaseContext({
+            workspaceId: state.workspaceId,
+            sessionId,
+            phase: verificationKey,
+            context: {
+              phaseName: args.phase_name,
+              taskDescription: args.task_description,
+              criteria: args.acceptance_criteria,
+              result: "failed",
+              gaps: args.gaps,
+              qaSpecialistId: args.qa_specialist_id,
+              verifiedAt: now,
+              status: "accepted_as_debt",
+              humanDecision: "accepted",
+              acceptedGaps: args.accepted_gaps ?? args.gaps,
+              decidedAt: now,
+            },
+            schemaVersion: 1,
+            updatedAt: now,
+          })
+          repo.close()
+        }
+
+        const acceptedList = (args.accepted_gaps ?? args.gaps)
+          .map((g, i) => `  ${i + 1}. ${g}`)
+          .join("\n")
+
+        await logAction(context.directory, "verify_implementation", state.currentPhase, {
+          phase: args.phase_name,
+          result: "failed",
+          humanDecision: "accepted",
+          acceptedGapCount: (args.accepted_gaps ?? args.gaps).length,
+        })
+
+        return successResponse(
+          `Gaps Accepted as Tech Debt — ${args.phase_name}`,
+          [
+            `${formatPhaseHeader(state.currentPhase)}`,
+            ``,
+            `${(args.accepted_gaps ?? args.gaps).length} gap(s) registered for future work:`,
+            acceptedList,
+            `Proceeding to next task/phase.`,
+          ].join("\n"),
+          { phase: args.phase_name, humanDecision: "accepted" }
+        )
+      }
+
+      // human_decision === "correct"
+      if (sessionId) {
+        const repo = new SqliteStateRepository(context.directory)
+        await repo.savePhaseContext({
+          workspaceId: state.workspaceId,
+          sessionId,
+          phase: verificationKey,
+          context: {
+            phaseName: args.phase_name,
+            taskDescription: args.task_description,
+            criteria: args.acceptance_criteria,
+            result: "failed",
+            gaps: args.gaps,
+            qaSpecialistId: args.qa_specialist_id,
+            verifiedAt: now,
+            status: "correction_pending",
+            humanDecision: "correct",
+            decidedAt: now,
+          },
+          schemaVersion: 1,
+          updatedAt: now,
+        })
+        repo.close()
+      }
+
+      const correctionList = args.gaps
+        .map((g, i) => `  ${i + 1}. ${g}`)
+        .join("\n")
+
+      await logAction(context.directory, "verify_implementation", state.currentPhase, {
+        phase: args.phase_name,
+        result: "failed",
+        humanDecision: "correct",
+        gapCount: args.gaps.length,
+      })
+
+      return successResponse(
+        `Correction Required — ${args.phase_name}`,
+        [
+          `${formatPhaseHeader(state.currentPhase)}`,
+          ``,
+          `${args.gaps.length} gap(s) need correction:`,
+          correctionList,
+          ``,
+          `**Next steps:**`,
+          `1. For each gap, use open_phase_analysis_round (or open_analysis_round) to analyze the root cause.`,
+          `2. Delegate corrections via delegate_task.`,
+          `3. After corrections are applied, run verify_implementation again to re-verify.`,
+        ].join("\n"),
+        { phase: args.phase_name, humanDecision: "correct" }
+      )
+    } catch (err) {
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(
+        `Error recording verification: ${err instanceof Error ? err.message : String(err)}`
       )
     }
   },

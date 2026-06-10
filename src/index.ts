@@ -11,6 +11,7 @@ import {
   checkExecutionPhasesTool,
   selectPhasesForAnalysisTool,
   configurePhaseObservationTool,
+  verifyImplementationTool,
 } from "./tools/manager-tools"
 import {
   openAnalysisRoundTool,
@@ -52,6 +53,7 @@ export const mesa: Plugin = async () => {
       check_execution_phases: checkExecutionPhasesTool,
       select_phases_for_analysis: selectPhasesForAnalysisTool,
       configure_phase_observation: configurePhaseObservationTool,
+      verify_implementation: verifyImplementationTool,
       open_analysis_round: openAnalysisRoundTool,
       register_analysis: registerAnalysisTool,
       request_consensus: requestConsensusTool,
@@ -120,6 +122,7 @@ export const mesa: Plugin = async () => {
       "analyze_briefing", "propose_team", "summon_team",
       "delegate_task", "define_phases",
       "check_execution_phases", "select_phases_for_analysis", "configure_phase_observation",
+      "verify_implementation",
       "open_analysis_round", "register_analysis", "request_consensus",
       "generate_specification", "approve_specification",
       "pause_discussion", "resume_discussion", "cancel_discussion",

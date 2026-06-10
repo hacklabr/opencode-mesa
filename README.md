@@ -76,7 +76,11 @@ flowchart TD
         PhaseAppendix --> MorePhases{More phases?}
         MorePhases -->|Yes| PhaseAnalysis
         MorePhases -->|No| Impl
-        Impl --> More{More tasks?}
+        Impl --> Verify[QA Engineer verifies] --> VerifyResult{Result?}
+        VerifyResult -->|Passed| More{More tasks?}
+        VerifyResult -->|Failed| HumanGate{Human decides}
+        HumanGate -->|Accept| More
+        HumanGate -->|Correct| Impl
         More -->|Yes| Impl
         More -->|No| Done([Done ✅])
     end
@@ -322,7 +326,7 @@ graph TB
     end
 
     subgraph "Mesa Plugin"
-        Tools["28 Tools\nbriefing · manager · discussion\ncatalog · phase-analysis · status"]
+        Tools["29 Tools\nbriefing · manager · discussion\ncatalog · phase-analysis · status"]
         State["State Layer\nstate.ts · audit.ts"]
         Catalog["Catalog\nloader.ts · 367 specialists"]
         Hook["System Prompt Hook\ninjects Mesa context"]
@@ -349,7 +353,7 @@ graph TB
     style Hook fill:#9C27B0,color:#fff
 ```
 
-Mesa is an OpenCode plugin that registers 28 tools, 367 specialist subagents, and a system prompt hook. The plugin itself manages state transitions and persistence — the actual specialist invocation happens through OpenCode's native `task` tool, which creates a real subagent session with the specialist's own system prompt.
+Mesa is an OpenCode plugin that registers 29 tools, 367 specialist subagents, and a system prompt hook. The plugin itself manages state transitions and persistence — the actual specialist invocation happens through OpenCode's native `task` tool, which creates a real subagent session with the specialist's own system prompt.
 
 Key design decisions:
 
@@ -361,7 +365,7 @@ Key design decisions:
 
 ## Tool Reference
 
-Mesa provides 28 tools organized into six categories.
+Mesa provides 29 tools organized into six categories.
 
 ### General Tools
 
@@ -393,6 +397,7 @@ Mesa provides 28 tools organized into six categories.
 | `propose_team` | Proposes a team of specialists with justifications for human approval | `specialists` `array<{ personaId: string, name: string, division: string, justification: string }>` — proposed specialists |
 | `summon_team` | Summons the approved team, marking each specialist as ready | _(none)_ |
 | `delegate_task` | Defines a task for a specialist, returns invocation instructions (EXECUTION phase only) | `personaId` `string` — specialist persona ID · `task` `string` — task description · `context_info?` `string` — additional context |
+| `verify_implementation` | Records verification result after implementation, handles human decision gate for gaps | `phase_name` `string` · `task_description` `string` · `acceptance_criteria` `string[]` · `result` `"passed"\|"failed"` · `gaps` `string[]` · `qa_specialist_id` `string` · `human_decision?` `"accepted"\|"correct"` · `accepted_gaps?` `string[]` |
 | `define_phases` | Defines the ordered workflow phases for the current project | `phases` `array<string>` — ordered phase names (e.g. `['PLANNING', 'ANALYSIS', 'CONSENSUS']`) |
 | `check_execution_phases` | Detects phases in approved spec, presents implement vs deep-dive choice | _(none)_ |
 | `select_phases_for_analysis` | Parses human phase selection (e.g. `'all'`, `'1, 3, 5'`) | `selection` `string` · `phase_count` `number` |

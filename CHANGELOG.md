@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-06-10
+
+### Added
+- **Verification Gate workflow**: after each implementation task, the Manager must verify results against acceptance criteria before proceeding
+  - `verify_implementation` tool records verification results (passed/failed) in the phase context sidecar
+  - When verification fails, gaps are presented to the human for explicit decision
+  - Human can **Accept** gaps as tech debt or **Correct** them via analysis + re-implementation
+  - Per-task and per-phase verification levels
+  - 12 new tests covering all verification branches
+
+### Changed
+- Manager prompt now has mandatory Step 2 (Verification Gate) after Step 1 (Implementation Delegation)
+- README and workflow docs updated with verification gate flow diagrams and examples
+- Tool count: 29 tools (was 28)
+
 ## [2.3.1] - 2026-06-09
 
 ### Fixed

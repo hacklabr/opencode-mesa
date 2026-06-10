@@ -66,9 +66,9 @@ Detailed reference for the Mesa workflow, covering all phases, transitions, and 
 
 ### EXECUTION
 
-**Purpose**: The Manager delegates implementation tasks to individual specialists. EXECUTION starts with a mandatory **Phase Gate** check — the Manager calls `check_execution_phases` to detect whether the approved specification contains an execution plan with structured phases.
+**Purpose**: The Manager delegates implementation tasks to individual specialists and verifies results against acceptance criteria. EXECUTION starts with a mandatory **Phase Gate** check — the Manager calls `check_execution_phases` to detect whether the approved specification contains an execution plan with structured phases. After each implementation task, the Manager verifies results against acceptance criteria using the **Verification Gate** workflow.
 
-**Available tools**: `delegate_task`, `check_execution_phases`, `select_phases_for_analysis`, `configure_phase_observation`, `open_phase_analysis_round`, `request_phase_consensus`, `generate_phase_appendix`, `detect_phases`, `pause_discussion`, `cancel_discussion`
+**Available tools**: `delegate_task`, `verify_implementation`, `check_execution_phases`, `select_phases_for_analysis`, `configure_phase_observation`, `open_phase_analysis_round`, `request_phase_consensus`, `generate_phase_appendix`, `detect_phases`, `pause_discussion`, `cancel_discussion`
 
 > **Phase Gate**: If phases are detected, the human chooses between proceeding directly to implementation or running per-phase deep-dive analysis. See [Iterative Phase Analysis Workflow](#iterative-phase-analysis-workflow) for the full sub-workflow.
 
@@ -357,3 +357,75 @@ Within the sub-workflow, each phase progresses through its own micro-state machi
 | `configure_phase_observation` | Configure guided/auto mode, generate questions | Manager |
 
 See [Appendices Reference](appendices.md) for appendix document structure and [Architecture Reference](architecture.md) for sidecar and file layout details.
+
+---
+
+## Verification Gate Workflow
+
+After each implementation task is completed, the Manager MUST verify the results against acceptance criteria. This verification closes the loop: specification → analysis → implementation → **verification** → correction.
+
+### Flow Diagram
+
+```mermaid
+flowchart TD
+    A[Specialist implements task] --> B[Manager delegates verification to QA Engineer]
+    B --> C{QA verdict}
+    C -->|All criteria met| D["verify_implementation(result='passed')"]
+    D --> E[Mark as verified, next task]
+    C -->|Gaps found| F["verify_implementation(result='failed', gaps=[...])"]
+    F --> G[Present gaps to human]
+    G --> H{Human decision}
+    H -->|"[A] Accept"| I["verify_implementation(human_decision='accepted')"]
+    I --> J[Register as tech debt, next task]
+    H -->|"[C] Correct"| K["verify_implementation(human_decision='correct')"]
+    K --> L[Open analysis per gap]
+    L --> M[Delegate corrections]
+    M --> N[Re-verify]
+    N --> C
+```
+
+### Human Decision Gate
+
+When verification fails, the human decides the outcome:
+
+| Decision | Effect |
+|----------|--------|
+| **Accept** | Gaps registered as tech debt. Proceed to next task/phase. |
+| **Correct** | Open analysis for each gap, delegate corrections, re-verify. |
+
+The Manager MUST NOT auto-correct or skip gaps without explicit human approval.
+
+### Per-Task vs Per-Phase Verification
+
+| Level | When | Scope |
+|-------|------|-------|
+| **Per-task** | After each `delegate_task` completes | Criteria from task description + spec section |
+| **Per-phase** | After all tasks in a phase complete | Overall phase acceptance criteria from spec/appendix |
+
+Per-task verification catches individual issues. Per-phase verification catches integration problems that only surface when tasks are combined.
+
+### Verification Workflow Example
+
+```
+1. delegate_task(personaId="backend-architect", task="Implement API endpoints")
+   → Specialist implements, returns results
+2. delegate_task(personaId="qa-engineer", task="Verify API endpoints against acceptance criteria:
+   - All CRUD operations return correct status codes
+   - Error handling follows spec
+   - Rate limiting is configured")
+   → QA Engineer evaluates, returns verdict
+3. verify_implementation(
+     phase_name="API Layer",
+     task_description="REST API endpoints",
+     acceptance_criteria=["CRUD operations", "Error handling", "Rate limiting"],
+     result="failed",
+     gaps=["Rate limiting not configured"],
+     qa_specialist_id="qa-engineer"
+   )
+   → Tool presents gap to human
+4. Human chooses: [A] Accept or [C] Correct
+5a. verify_implementation(human_decision="accepted")
+    → Gap registered as tech debt
+5b. verify_implementation(human_decision="correct")
+    → Manager opens analysis, delegates fix, re-verifies
+```
