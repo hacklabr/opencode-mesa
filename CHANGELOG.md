@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-06-11
+
+### Changed
+- **Manager agent prompt restructured** based on agentic AI prompt engineering best practices (ReAct, Reflexion, Few-Shot, Context Engineering):
+  - Replaced rigid step-by-step procedures with outcome-based phases (Objective + Done-When + Heuristics)
+  - Added explicit **Reasoning Architecture** section: Thought → Action → Observe → Reflect loop
+  - Added **3 Few-Shot examples** demonstrating reasoning at key decision points (briefing, convergence detection, verification failure)
+  - Replaced 6 "ABSOLUTE RULES (VIOLATION IS FATAL)" with 4 behavioral heuristics + 4 hard boundaries
+  - Tool reference now includes "Use When / Do NOT Use When" boundaries for every tool
+  - All delegation templates preserved and integrated into the new structure
+
 ## [2.5.0] - 2026-06-10
 
 ### Added
