@@ -48,9 +48,11 @@ else
     else
       git -C "$INSTALL_DIR" reset --hard origin/main
     fi
+    git -C "$INSTALL_DIR" submodule update --init --recursive
   else
     info "Cloning Mesa into $INSTALL_DIR"
     git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+    git -C "$INSTALL_DIR" submodule update --init --recursive
   fi
 fi
 
