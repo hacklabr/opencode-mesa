@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Installer missing submodule init** — `install.sh` now runs `git submodule update --init --recursive` after both clone and update, so new installations include the agency-agents catalog with specialist personas.
 
+## [2.6.2] - 2026-06-11
+
+### Fixed
+- **Strengthen "never summarize" directive for peer analyses** — the Manager now explicitly passes peer analyses verbatim (never summarized, excerpted, or truncated) in Turn 2+ delegation prompts. The directive is reinforced in 3 places: behavioral heuristic #2, Turn 2 instructions, and template placeholders.
+
+## [2.6.1] - 2026-06-11
+
+### Fixed
+
 ## [2.6.0] - 2026-06-11
 
 ### Changed
