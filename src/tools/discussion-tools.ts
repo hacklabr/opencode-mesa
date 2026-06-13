@@ -141,7 +141,7 @@ export const openAnalysisRoundTool = tool({
         : null
 
       const participantList = participantsWithNames
-        .map((p) => `  ${p.name} (subagent_type="mesa/${p.id}")`)
+        .map((p) => `  ${p.name} (subagent_type="mesa/${p.id}", task_id="mesa-${p.id}")`)
         .join("\n")
 
       const briefingInstruction = briefingFilePath
@@ -151,9 +151,17 @@ export const openAnalysisRoundTool = tool({
       const taskInstructions = participantsWithNames
         .map(
           (p, i) =>
-            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
+            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", task_id="mesa-${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
         )
         .join("\n\n")
+
+      const memoryNote = [
+        ``,
+        `### Memory Across Turns`,
+        `Use \`task_id="mesa-{personaId}"\` when invoking every specialist. This creates a named session that persists across turns.`,
+        `When a specialist is invoked again in Turn 2+, the same task_id resumes their session — they recall their prior analysis automatically.`,
+        `If the task tool returns a \`ses_...\` session ID instead of accepting the slug, save that ID and pass it as task_id in subsequent turns to preserve memory.`,
+      ].join("\n")
 
       return successResponse(
         "Analysis Round Opened",
@@ -175,6 +183,7 @@ export const openAnalysisRoundTool = tool({
           `After each specialist returns their analysis, call \`register_analysis\` to record it.`,
           ``,
           taskInstructions,
+          memoryNote,
         ].join("\n")
       )
     } catch (err) {

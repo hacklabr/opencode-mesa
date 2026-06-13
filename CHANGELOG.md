@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-06-12
+
+### Added
+- **task_id with human-readable slugs** for specialist session memory across turns (requires OpenCode PR #32122)
+  - `open_analysis_round` includes `task_id` in specialist invocation instructions
+  - `delegate_task` includes `task_id` in the task invocation hint
+  - `open_phase_analysis_round` includes specialist task_id hints
+  - Manager prompt updated with `task_id` in delegation examples and few-shot
+
+### Changed
+- Manager prompt "Specialist Delegation" section now documents `task_id` parameter and memory behavior
+- Added fallback instructions: if OpenCode doesn't accept slug-based task_id, save the returned `ses_...` ID and reuse it
+
+## [2.6.2] - 2026-06-11
+
+### Fixed
+- **Strengthen "never summarize" directive for peer analyses** — the Manager now explicitly passes peer analyses verbatim (never summarized, excerpted, or truncated) in Turn 2+ delegation prompts. The directive is reinforced in 3 places: behavioral heuristic #2, Turn 2 instructions, and template placeholders.
+
 ## [2.6.1] - 2026-06-11
 
 ### Fixed

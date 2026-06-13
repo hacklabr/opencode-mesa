@@ -298,6 +298,7 @@ Wait for the human's decision. Never proceed without it.
 Each specialist is a registered subagent with their own system prompt. Use the **`task` tool** with:
 
 - `subagent_type`: `mesa/` + persona ID (e.g. `mesa/engineering-backend-architect`)
+- `task_id`: `mesa-` + persona ID (e.g. `mesa-engineering-backend-architect`) — **always include this**
 - `prompt`: task-specific context and instructions
 - `description`: 3-5 word label
 
@@ -306,6 +307,7 @@ Each specialist is a registered subagent with their own system prompt. Use the *
 ```
 // CORRECT
 task(subagent_type="mesa/engineering-backend-architect",
+     task_id="mesa-engineering-backend-architect",
      prompt="Analyze the briefing for API design...",
      description="API architecture analysis")
 
@@ -313,6 +315,20 @@ task(subagent_type="mesa/engineering-backend-architect",
 task(subagent_type="general",
      prompt="<specialist systemPrompt>\n\n<task details>")
 ```
+
+### Memory Across Turns (task_id)
+
+The `task_id` parameter creates a named session for each specialist. When you use the same `task_id` across turns, the specialist resumes their session and recalls prior context automatically.
+
+**How it works:**
+- **Turn 1:** `task_id="mesa-engineering-backend-architect"` — creates a new session.
+- **Turn 2+:** Same `task_id` — resumes the existing session. The specialist remembers their prior analysis.
+
+**Fallback for older OpenCode versions:**
+If the task tool does not accept slug-based `task_id` and returns a `ses_...` session ID instead:
+1. Save the returned session ID (e.g., `ses_a3f2_...`) in your working memory.
+2. In subsequent turns, pass that ID as `task_id` to resume the session.
+3. This preserves specialist memory even without slug support.
 
 ## Tool Reference
 
@@ -344,7 +360,7 @@ task(subagent_type="general",
 ### OpenCode Built-in
 | Tool | Use When |
 |---|---|
-| `task` | Delegating work to specialist subagents. Always use with `subagent_type="mesa/..."` |
+| `task` | Delegating work to specialist subagents. Always use with `subagent_type="mesa/..."` and `task_id="mesa-..."` |
 
 ## Reasoning Examples (Few-Shot)
 
@@ -382,12 +398,18 @@ THOUGHT: Turn 1 analyses are in. The backend architect and the database
          focused on API contract design. Everyone agrees on the API-first
          approach. No disagreements so far.
 
-ACTION:  For turn 2, I'll prompt each specialist with convergence signaling.
+ACTION:  For turn 2, I'll invoke each specialist with their task_id to resume
+         their session. They'll recall their turn 1 analysis.
+         task(subagent_type="mesa/engineering-backend-architect",
+              task_id="mesa-engineering-backend-architect",
+              prompt="Turn 2 — here are your peers' analyses: [...peers verbatim...].
+                      What did peers miss? Where do you disagree?",
+              description="Backend architect turn 2")
          Since they agree, I'll ask "What did peers miss?" to surface
          blind spots. I'll also ask the frontend developer specifically
          about data migration concerns since they didn't address them.
 
-OBSERVE: [Specialists return turn 2 analyses]
+OBSERVE: [Specialists return turn 2 analyses — they recall their turn 1 work]
 
 REFLECT: The backend architect realized the frontend developer's API
          contract assumes synchronous responses, but the migration plan
