@@ -51,6 +51,8 @@ describe("v1 state migration", () => {
         consensusRound: 0,
         participants: ["eng-1"],
         debateNeeded: false,
+        mode: "analysis",
+        maxConsensusRounds: 2,
       },
       specification: {
         path: join(mesaDir, "specifications", "spec-test.md"),
@@ -85,7 +87,7 @@ describe("v1 state migration", () => {
     expect(loaded.discussion.analyses).toHaveLength(1)
     expect(loaded.discussion.analyses[0].agentId).toBe("eng-1")
     expect(loaded.specification.status).toBe("approved")
-    expect(loaded.stateVersion).toBe(2) // Should be migrated to v2
+    expect(loaded.stateVersion).toBe(3) // Should be migrated to v3
 
     // Verify JSON file was backed up
     const backupExists = await fs
@@ -134,6 +136,6 @@ describe("v1 state migration", () => {
     expect(loaded.discussion.votes).toHaveLength(1)
     expect(loaded.discussion.votes[0].vote).toBe(1)
     expect(loaded.discussion.participants).toEqual(["eng-1", "prod-1"])
-    expect(loaded.stateVersion).toBe(2)
+    expect(loaded.stateVersion).toBe(3)
   })
 })

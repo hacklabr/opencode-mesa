@@ -1,13 +1,14 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState, getSessionId } from "../state"
-import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry } from "../types"
+import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry, AnalysisKind, AnalysisTurnType } from "../types"
 import { canTransition, VALID_TRANSITIONS, requirePhase, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions"
 import { promises as fs } from "node:fs"
-import { join } from "node:path"
+import { join, resolve, relative, isAbsolute } from "node:path"
 import { randomUUID } from "node:crypto"
 import { PLUGIN_STATE_DIR } from "../config"
 import { logAction } from "../audit"
 import { successResponse, errorResponse } from "../utils/responses"
+import { buildAnalysisPath, validateWorkspacePath } from "../utils/paths"
 import { PhaseError, MesaError } from "../errors"
 
 const MAX_TOTAL_CHARS = 400000
@@ -195,12 +196,19 @@ export const openAnalysisRoundTool = tool({
 
 export const registerAnalysisTool = tool({
   description:
-    "Registers an analysis from a specialist in the current round. Call after each specialist completes their analysis.",
+    "Registers an analysis from a specialist in the current round. Call after each specialist completes their analysis. Accepts optional filePath (canonical .md location), kind (full|delta), and turnType (analysis|discussion).",
   args: {
     agent_id: tool.schema.string().describe("Specialist persona ID"),
     agent_name: tool.schema.string().describe("Specialist display name"),
-    content: tool.schema.string().describe("The analysis content"),
+    content: tool.schema.string().describe("The analysis content (FULL, never truncated)"),
     turn: tool.schema.number().describe("Current turn number (1-based)"),
+    file_path: tool.schema.string().optional().describe("Optional: workspace-relative path to the canonical .md file"),
+    kind: tool.schema.enum(["full", "delta"]).optional().describe("Analysis kind: 'full' (default) or 'delta'. Delta requires a prior full for the same agent."),
+    turn_type: tool.schema.enum(["analysis", "discussion"]).optional().describe("Turn type: 'analysis' (default) or 'discussion'"),
+    round: tool.schema.number().optional().describe("Discussion round (only when turn_type='discussion')"),
+    position_in_turn: tool.schema.number().optional().describe("Speaking order, 1-based (only when turn_type='discussion')"),
+    responds_to: tool.schema.string().optional().describe("Agent ID being addressed (discussion only)"),
+    session_resumed: tool.schema.boolean().optional().describe("Whether the specialist session was resumed (memory-integrity flag)"),
   },
   async execute(args, context) {
     try {
@@ -244,11 +252,45 @@ export const registerAnalysisTool = tool({
         return errorResponse(`Analysis already registered for ${args.agent_name} turn ${args.turn}.`)
       }
 
+      // P1-T4: Path-traversal validation for file_path
+      let validatedFilePath: string | null = null
+      if (args.file_path) {
+        const pathCheck = validateWorkspacePath(context.directory, args.file_path)
+        if (!pathCheck.valid) {
+          return errorResponse(pathCheck.error)
+        }
+        validatedFilePath = args.file_path
+      }
+
+      // Determine kind (default "full")
+      const kind: AnalysisKind = args.kind ?? "full"
+      const turnType: AnalysisTurnType = args.turn_type ?? "analysis"
+
+      // P1-T3: Validation gate — kind="delta" requires a prior full for same agentId
+      if (kind === "delta") {
+        const hasFullPrior = state.discussion.analyses.some(
+          (a) => a.agentId === effectiveId && (a.kind ?? "full") === "full"
+        )
+        if (!hasFullPrior) {
+          return errorResponse(
+            `Cannot register delta without a prior full analysis for ${args.agent_name}. ` +
+            `Register a full analysis first, or use kind="full".`
+          )
+        }
+      }
+
       const entry: AnalysisEntry = {
         agentId: effectiveId,
         agentName: args.agent_name,
         content: args.content,
+        filePath: validatedFilePath,
+        kind,
         turn: args.turn,
+        turnType,
+        round: args.round,
+        positionInTurn: args.position_in_turn,
+        respondsTo: args.responds_to,
+        sessionResumed: args.session_resumed,
         timestamp: new Date().toISOString(),
       }
 
@@ -324,6 +366,96 @@ export const registerAnalysisTool = tool({
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
       return errorResponse(`Error registering analysis: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  },
+})
+
+// ---------------------------------------------------------------------------
+// P1-T5: get_peer_analyses — read-only tool for discovering analysis file paths
+// ---------------------------------------------------------------------------
+
+export const getPeerAnalysesTool = tool({
+  description:
+    "Returns analysis file paths and metadata for the current discussion round. Read-only. " +
+    "Use this to discover which peer analyses exist and their file paths before constructing " +
+    "delegation prompts for turn 2+ specialists.",
+  args: {
+    turn: tool.schema.number().optional().describe("Filter by turn number. If omitted, returns all turns."),
+    agent_id: tool.schema.string().optional().describe("Filter by specialist agent ID."),
+  },
+  async execute(args, context) {
+    try {
+      const state = await loadState(context.directory)
+
+      let analyses = state.discussion.analyses
+
+      if (args.turn !== undefined) {
+        analyses = analyses.filter((a) => a.turn === args.turn)
+      }
+      if (args.agent_id) {
+        const matchedId = matchParticipant(args.agent_id, state.discussion.participants)
+        const filterId = matchedId ?? args.agent_id
+        analyses = analyses.filter((a) => a.agentId === filterId)
+      }
+
+      const results = analyses.map((a) => {
+        const contentPreview = a.content.length > 300
+          ? a.content.slice(0, 300) + "..."
+          : a.content
+        return {
+          agentId: a.agentId,
+          agentName: a.agentName,
+          filePath: a.filePath,
+          kind: a.kind ?? "full",
+          turnType: a.turnType ?? "analysis",
+          turn: a.turn,
+          round: a.round,
+          contentPreview,
+          reconciled: false as boolean,
+        }
+      })
+
+      // P1 security: file-existence validation — flag missing files
+      for (const r of results) {
+        if (r.filePath) {
+          const absPath = join(context.directory, r.filePath)
+          try {
+            await fs.access(absPath)
+          } catch {
+            r.reconciled = true // file missing, content falls back to SQLite
+          }
+        }
+      }
+
+      const tableRows = results.map((r) =>
+        `| ${r.agentName} | turn ${r.turn} | ${r.kind} | ${r.turnType} | ${r.filePath ?? "(inline)"} |${r.reconciled ? " ⚠️ missing" : ""}|`
+      )
+
+      const table = [
+        `| Specialist | Turn | Kind | Type | File | Status |`,
+        `|------------|------|------|------|------|--------|`,
+        ...tableRows,
+      ].join("\n")
+
+      const reconciledNote = results.some((r) => r.reconciled)
+        ? `\n\n⚠️ Some files are missing. Content preview from SQLite is shown instead. Re-run the specialist or write the file manually.`
+        : ""
+
+      return successResponse(
+        "Peer Analyses",
+        [
+          `${formatPhaseHeader(state.currentPhase, { topic: state.discussion.topic })}`,
+          ``,
+          `Found ${results.length} analysis entry(ies).`,
+          ``,
+          table,
+          reconciledNote,
+        ].join("\n"),
+        { analyses: results, count: results.length }
+      )
+    } catch (err) {
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error retrieving peer analyses: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })

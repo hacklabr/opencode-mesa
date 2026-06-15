@@ -118,6 +118,7 @@ async function writeSubagents(personas) {
       "  write: allow",
       "  bash: allow",
       "  task:",
+      '    "mesa/*": ask',
       '    "*": deny',
       "---",
       "",

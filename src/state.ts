@@ -7,7 +7,7 @@ import { mkdirSync, existsSync, readFileSync, renameSync } from "node:fs"
 import { join } from "node:path"
 import { hostname } from "node:os"
 import { z, ZodError } from "zod"
-import type { DiscussionState } from "./types"
+import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType } from "./types"
 import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config"
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,15 @@ const AnalysisEntrySchema = z.object({
   agentId: z.string(),
   agentName: z.string(),
   content: z.string(),
+  filePath: z.string().nullable().default(null),
+  kind: z.enum(["full", "delta"]).default("full"),
   turn: z.number(),
+  turnType: z.enum(["analysis", "discussion"]).default("analysis"),
+  round: z.number().optional(),
+  positionInTurn: z.number().optional(),
+  respondsTo: z.string().optional(),
+  tensionsRaised: z.array(z.string()).optional(),
+  sessionResumed: z.boolean().optional(),
   timestamp: z.string(),
 })
 
@@ -71,6 +79,8 @@ export const DiscussionStateSchema = z.object({
     consensusRound: z.number(),
     participants: z.array(z.string()).default([]),
     debateNeeded: z.boolean().default(false),
+    mode: z.enum(["analysis", "debate"]).default("analysis"),
+    maxConsensusRounds: z.number().default(2),
   }),
   specification: z.object({
     path: z.string().nullable(),
@@ -397,14 +407,16 @@ function migrateFromJson(directory: string, db: Database): void {
       briefing_path, briefing_status, briefing_slug,
       discussion_topic, discussion_current_turn, discussion_max_turns,
       discussion_consensus_round, discussion_debate_needed,
+      discussion_mode, discussion_max_consensus_rounds,
       specification_path, specification_status,
       phases, appendices, state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       wsId, state.currentPhase, state.previousPhase,
       state.briefing.path, state.briefing.status, state.briefing.slug,
       state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
       state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
+      state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
       state.specification.path, state.specification.status,
       JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
     ]
@@ -453,6 +465,54 @@ function migrate_v1_to_v2(db: Database): void {
   tx()
 }
 
+function migrate_v2_to_v3(db: Database): void {
+  const tx = db.transaction(() => {
+    const analysisCols: Array<[string, string]> = [
+      ["file_path", "TEXT"],
+      ["kind", "TEXT DEFAULT 'full'"],
+      ["turn_type", "TEXT DEFAULT 'analysis'"],
+      ["round", "INTEGER"],
+      ["position_in_turn", "INTEGER"],
+      ["responds_to", "TEXT"],
+      ["tensions_raised", "TEXT"],
+      ["session_resumed", "INTEGER"],
+    ]
+
+    // Add new analysis columns to both unscoped and session-scoped tables
+    for (const table of ["mesa_analyses", "mesa_session_analyses"]) {
+      for (const [col, def] of analysisCols) {
+        try {
+          db.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
+        } catch (e: unknown) {
+          const err = e as Error
+          if (!err.message.includes("duplicate column name")) throw e
+        }
+      }
+    }
+
+    // Add mode + max_consensus_rounds to state tables
+    const stateCols: Array<[string, string]> = [
+      ["discussion_mode", "TEXT DEFAULT 'analysis'"],
+      ["discussion_max_consensus_rounds", "INTEGER DEFAULT 2"],
+    ]
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      for (const [col, def] of stateCols) {
+        try {
+          db.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
+        } catch (e: unknown) {
+          const err = e as Error
+          if (!err.message.includes("duplicate column name")) throw e
+        }
+      }
+    }
+
+    // Bump state version
+    db.run("UPDATE mesa_state SET state_version = 3 WHERE state_version = 2")
+    db.run("UPDATE mesa_session_state SET state_version = 3 WHERE state_version = 2")
+  })
+  tx()
+}
+
 // ---------------------------------------------------------------------------
 // Database helpers
 // ---------------------------------------------------------------------------
@@ -473,6 +533,7 @@ function getDb(directory: string): Database {
 
   // Migrate schema before data so JSON migration can use new columns
   migrate_v1_to_v2(db)
+  migrate_v2_to_v3(db)
   migrateFromJson(directory, db)
 
   return db
@@ -489,8 +550,14 @@ function insertChildRows(db: Database, wsId: string, state: DiscussionState): vo
 
   for (const a of state.discussion.analyses) {
     db.run(
-      "INSERT INTO mesa_analyses (workspace_id, agent_id, agent_name, content, turn, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-      [wsId, a.agentId, a.agentName, a.content, a.turn, a.timestamp]
+      `INSERT INTO mesa_analyses (workspace_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [wsId, a.agentId, a.agentName, a.content, a.turn, a.timestamp,
+       a.filePath ?? null, a.kind ?? "full", a.turnType ?? "analysis",
+       a.round ?? null, a.positionInTurn ?? null,
+       a.respondsTo ?? null,
+       a.tensionsRaised ? JSON.stringify(a.tensionsRaised) : null,
+       a.sessionResumed ? 1 : 0]
     )
   }
 
@@ -520,8 +587,14 @@ function insertSessionChildRows(db: Database, wsId: string, sessionId: string, s
 
   for (const a of state.discussion.analyses) {
     db.run(
-      "INSERT INTO mesa_session_analyses (workspace_id, session_id, agent_id, agent_name, content, turn, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [wsId, sessionId, a.agentId, a.agentName, a.content, a.turn, a.timestamp]
+      `INSERT INTO mesa_session_analyses (workspace_id, session_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [wsId, sessionId, a.agentId, a.agentName, a.content, a.turn, a.timestamp,
+       a.filePath ?? null, a.kind ?? "full", a.turnType ?? "analysis",
+       a.round ?? null, a.positionInTurn ?? null,
+       a.respondsTo ?? null,
+       a.tensionsRaised ? JSON.stringify(a.tensionsRaised) : null,
+       a.sessionResumed ? 1 : 0]
     )
   }
 
@@ -552,8 +625,8 @@ function loadSessionState(db: Database, wsId: string, sessionId: string): Discus
     .all(wsId, sessionId) as Array<{ persona_id: string; name: string; division: string; status: string }>
 
   const analyses = db
-    .query("SELECT agent_id, agent_name, content, turn, timestamp FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ? ORDER BY turn")
-    .all(wsId, sessionId) as Array<{ agent_id: string; agent_name: string; content: string; turn: number; timestamp: string }>
+    .query("SELECT agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ? ORDER BY turn")
+    .all(wsId, sessionId) as Array<Record<string, unknown>>
 
   const votes = db
     .query("SELECT agent_id, agent_name, vote, reason, round FROM mesa_session_votes WHERE workspace_id = ? AND session_id = ? ORDER BY round")
@@ -566,10 +639,35 @@ function loadSessionState(db: Database, wsId: string, sessionId: string): Discus
   return rowToState(row, team, analyses, votes, participants)
 }
 
+type AnalysisRow = Record<string, unknown>
+
+function mapAnalysisRow(a: AnalysisRow): AnalysisEntry {
+  let tensionsRaised: string[] | undefined
+  const raw = a.tensions_raised as string | null
+  if (raw) {
+    try { tensionsRaised = JSON.parse(raw) } catch { /* leave undefined */ }
+  }
+  return {
+    agentId: a.agent_id as string,
+    agentName: a.agent_name as string,
+    content: a.content as string,
+    filePath: (a.file_path as string | null) ?? null,
+    kind: ((a.kind as string) || "full") as AnalysisKind,
+    turn: a.turn as number,
+    turnType: ((a.turn_type as string) || "analysis") as AnalysisTurnType,
+    round: a.round != null ? (a.round as number) : undefined,
+    positionInTurn: a.position_in_turn != null ? (a.position_in_turn as number) : undefined,
+    respondsTo: (a.responds_to as string | undefined) ?? undefined,
+    tensionsRaised,
+    sessionResumed: a.session_resumed != null ? !!a.session_resumed : undefined,
+    timestamp: a.timestamp as string,
+  }
+}
+
 function rowToState(
   row: Record<string, unknown>,
   team: Array<{ persona_id: string; name: string; division: string; status: string }>,
-  analyses: Array<{ agent_id: string; agent_name: string; content: string; turn: number; timestamp: string }>,
+  analyses: Array<AnalysisRow>,
   votes: Array<{ agent_id: string; agent_name: string; vote: number; reason: string; round: number }>,
   participants: Array<{ persona_id: string }>
 ): DiscussionState {
@@ -592,13 +690,7 @@ function rowToState(
       topic: (row.discussion_topic as string) || "",
       currentTurn: (row.discussion_current_turn as number) ?? 0,
       maxTurns: (row.discussion_max_turns as number) ?? 2,
-      analyses: analyses.map((a) => ({
-        agentId: a.agent_id,
-        agentName: a.agent_name,
-        content: a.content,
-        turn: a.turn,
-        timestamp: a.timestamp,
-      })),
+      analyses: analyses.map(mapAnalysisRow),
       votes: votes.map((v) => ({
         agentId: v.agent_id,
         agentName: v.agent_name,
@@ -609,6 +701,8 @@ function rowToState(
       consensusRound: (row.discussion_consensus_round as number) ?? 0,
       participants: participants.map((p) => p.persona_id),
       debateNeeded: !!(row.discussion_debate_needed as number),
+      mode: ((row.discussion_mode as string) || "analysis") as "analysis" | "debate",
+      maxConsensusRounds: (row.discussion_max_consensus_rounds as number) ?? 2,
     },
     specification: {
       path: row.specification_path as string | null,
@@ -670,8 +764,8 @@ export async function loadState(directory: string): Promise<DiscussionState> {
       .all(directory) as Array<{ persona_id: string; name: string; division: string; status: string }>
 
     const analyses = db
-      .query("SELECT agent_id, agent_name, content, turn, timestamp FROM mesa_analyses WHERE workspace_id = ? ORDER BY turn")
-      .all(directory) as Array<{ agent_id: string; agent_name: string; content: string; turn: number; timestamp: string }>
+      .query("SELECT agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed FROM mesa_analyses WHERE workspace_id = ? ORDER BY turn")
+      .all(directory) as Array<Record<string, unknown>>
 
     const votes = db
       .query("SELECT agent_id, agent_name, vote, reason, round FROM mesa_votes WHERE workspace_id = ? ORDER BY round")
@@ -703,14 +797,16 @@ export async function saveState(directory: string, state: DiscussionState): Prom
           briefing_path, briefing_status, briefing_slug,
           discussion_topic, discussion_current_turn, discussion_max_turns,
           discussion_consensus_round, discussion_debate_needed,
+          discussion_mode, discussion_max_consensus_rounds,
           specification_path, specification_status,
           phases, appendices, state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, state.currentPhase, state.previousPhase,
           state.briefing.path, state.briefing.status, state.briefing.slug,
           state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
           state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
+          state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
           state.specification.path, state.specification.status,
           JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
         ]
@@ -731,14 +827,16 @@ export async function saveState(directory: string, state: DiscussionState): Prom
             briefing_path, briefing_status, briefing_slug,
             discussion_topic, discussion_current_turn, discussion_max_turns,
             discussion_consensus_round, discussion_debate_needed,
+            discussion_mode, discussion_max_consensus_rounds,
             specification_path, specification_status,
             phases, appendices, state_version, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             state.workspaceId, sessionId, state.currentPhase, state.previousPhase,
             state.briefing.path, state.briefing.status, state.briefing.slug,
             state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
             state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
+            state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
             state.specification.path, state.specification.status,
             JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
           ]
