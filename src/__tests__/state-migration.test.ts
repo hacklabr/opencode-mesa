@@ -51,6 +51,8 @@ describe("v1 state migration", () => {
         consensusRound: 0,
         participants: ["eng-1"],
         debateNeeded: false,
+        mode: "analysis",
+        maxConsensusRounds: 2,
       },
       specification: {
         path: join(mesaDir, "specifications", "spec-test.md"),

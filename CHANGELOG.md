@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-06-15
+
+### Added
+- **FS-first analysis storage** — specialists write analyses to files at `.mesa/analyses/{sessionId}/turn{N}/{personaId}.md`; Manager passes file paths (not inline content) to peers
+  - New `get_peer_analyses` read-only tool for discovering peer analysis file paths
+  - New `src/utils/paths.ts` module with `buildAnalysisPath()`, `buildDiscussionPath()`, `buildAskPeerPath()`, `validateWorkspacePath()`
+- **Delta semantics for Turn 2** — specialists produce only the delta (complement) from Turn 1, not a full re-analysis
+  - `register_analysis` accepts `kind` parameter (`"full"` | `"delta"`)
+  - Validation gate: `kind="delta"` requires a prior `kind="full"` for the same agent
+  - Escape hatch: `kind="full"` allowed in any turn for major position revisions
+- **Sequential consensus turn with `task` enabled** — before voting, a sequential discussion turn where specialists can consult peers directly via `task` tool
+  - `generate-agents.js` updated: `task: { "mesa/*": "ask", "*": "deny" }`
+  - Session contamination is a desired feature — questions enter the peer's session history
+  - `permission.ask` hook with 3 gates: phase check, mode check, recursion guard (via local Map, no server callback)
+  - `tool.execute.after` hook for audit logging of peer consultations to `.mesa/analyses/{sessionId}/ask_peer/`
+- **Schema migration v3** — `AnalysisEntry` extended with `filePath`, `kind`, `turnType`, `round`, `positionInTurn`, `respondsTo`, `tensionsRaised`, `sessionResumed`; backward-compatible with defaults for legacy entries
+
+### Changed
+- **Manager system prompt** (`src/agents/manager.md`) overhauled:
+  - Turno 1: specialists write full analyses to files, register with `kind="full"`
+  - Turno 2: specialists read peer files via `read`, write delta, register with `kind="delta"`
+  - Consensus: sequential discussion with `task`-enabled peer consultation, order defined by Manager
+  - Voting: separate `request_consensus` call after all discussion complete
+  - Topology Decision section documenting Manager-mediated + task-enabled hybrid
+
+### Fixed
+- **Deadlock in `permission.ask` hook** — removed `opencodeClient.session.status()` HTTP callback that caused server deadlock when the hook was called during permission evaluation (server waits for hook → hook calls server → server can't respond)
+
+### Security
+- Path-traversal validation on `file_path` arguments (rejects `..`, absolute paths outside `.mesa/`)
+- Fail-safe deny in `permission.ask` hook (defaults to deny on any error)
+
 ## [2.7.0] - 2026-06-12
 
 ### Added

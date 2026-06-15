@@ -16,11 +16,23 @@ export type SpecialistStatus = "proposed" | "summoned" | "active" | "dismissed" 
 
 export type SpecificationStatus = "pending" | "draft" | "approved" | "rejected"
 
+export type AnalysisKind = "full" | "delta"
+
+export type AnalysisTurnType = "analysis" | "discussion"
+
 export interface AnalysisEntry {
   agentId: string
   agentName: string
-  content: string
+  content: string              // FULL content — never truncated
+  filePath?: string | null     // canonical .md path (null/undefined = legacy inline-only)
+  kind?: AnalysisKind          // default "full" via migration
   turn: number
+  turnType?: AnalysisTurnType  // discriminator: analysis vs discussion
+  round?: number               // discussion round (turnType="discussion" only)
+  positionInTurn?: number      // speaking order (turnType="discussion" only)
+  respondsTo?: string          // optional, discussion only
+  tensionsRaised?: string[]    // optional, discussion only
+  sessionResumed?: boolean     // memory-integrity audit flag
   timestamp: string
 }
 
@@ -57,6 +69,8 @@ export interface DiscussionState {
     consensusRound: number
     participants: string[]
     debateNeeded: boolean
+    mode: "analysis" | "debate"  // current discussion mode
+    maxConsensusRounds: number   // circuit breaker for CONSENSUS↔ANALYSIS loop
   }
   specification: {
     path: string | null
