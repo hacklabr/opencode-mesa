@@ -9,6 +9,7 @@ import { PLUGIN_STATE_DIR } from "../config"
 import { logAction } from "../audit"
 import { successResponse, errorResponse } from "../utils/responses"
 import { buildAnalysisPath, validateWorkspacePath } from "../utils/paths"
+import { recordAgentSession } from "./peer-tools"
 import { PhaseError, MesaError } from "../errors"
 
 const MAX_TOTAL_CHARS = 400000
@@ -296,6 +297,12 @@ export const registerAnalysisTool = tool({
 
       state.discussion.analyses.push(entry)
       await saveState(context.directory, state)
+
+      // Track the specialist's OpenCode session ID for ask_peer contamination.
+      // When another specialist calls ask_peer, the question goes to THIS session.
+      if (context.sessionID) {
+        recordAgentSession(effectiveId, context.sessionID)
+      }
 
       // BUG-15: Calculate progress against participants, not team
       const total = participants.length > 0

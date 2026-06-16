@@ -1,12 +1,23 @@
 import { tool } from "@opencode-ai/plugin"
 import { successResponse, errorResponse } from "../utils/responses"
-import { loadState } from "../state"
 
 // Module-level SDK client reference (set from index.ts)
 let sdkClient: unknown = null
 
+// Track OpenCode session IDs for each specialist — populated when they call register_analysis
+// This enables ask_peer to resume the peer's REAL session (contamination is a feature)
+const agentSessions = new Map<string, string>() // agentId → opencodeSessionId
+
 export function setSdkClient(client: unknown): void {
   sdkClient = client
+}
+
+export function recordAgentSession(agentId: string, sessionID: string): void {
+  agentSessions.set(agentId, sessionID)
+}
+
+export function getAgentSession(agentId: string): string | undefined {
+  return agentSessions.get(agentId)
 }
 
 export const askPeerTool = tool({
@@ -35,10 +46,6 @@ export const askPeerTool = tool({
     try {
       const client = sdkClient as {
         session: {
-          create: (opts: {
-            body?: { title?: string }
-            query?: { directory?: string }
-          }) => Promise<{ data?: { id: string } }>
           prompt: (opts: {
             path: { id: string }
             body: {
@@ -50,35 +57,49 @@ export const askPeerTool = tool({
         }
       }
 
-      // Create a new session for this consultation
-      const sessionResult = await client.session.create({
-        body: { title: `Peer consultation: ${peer_id}` },
-        query: { directory: context.directory },
-      })
+      // Look up the peer's EXISTING session — this is critical for contamination.
+      // The question will be added to the peer's session history. When the Manager
+      // later resumes the peer via task(task_id="mesa-..."), the peer remembers
+      // being asked this question. Contamination is a desired feature.
+      const peerSessionId = agentSessions.get(peer_id)
 
-      if (!sessionResult.data?.id) {
-        return errorResponse("Failed to create consultation session.")
-      }
+      let promptResult
 
-      const sessionId = sessionResult.data.id
+      if (peerSessionId) {
+        // Identify the caller by reverse-looking up their session ID in the Map
+        let callerName = "a peer specialist"
+        for (const [agentId, sessId] of agentSessions) {
+          if (sessId === context.sessionID) {
+            callerName = agentId
+            break
+          }
+        }
 
-      // Send the question to the peer agent in this session
-      // The peer will have access to their analysis files via FS-first storage
-      const promptResult = await client.session.prompt({
-        path: { id: sessionId },
-        body: {
-          agent: `mesa/${peer_id}`,
-          parts: [{ type: "text", text: question }],
-          // Restrict tools — the peer should only read files and answer, not orchestrate
-          tools: {
-            task: false,
-            delegate_task: false,
-            open_analysis_round: false,
-            request_consensus: false,
-            generate_specification: false,
+        // Prefix the question so the peer knows WHO is asking
+        const contextualizedQuestion =
+          `[Peer consultation from ${callerName}]\n\n${question}`
+
+        // CONTAMINATION PATH: resume the peer's real session
+        promptResult = await client.session.prompt({
+          path: { id: peerSessionId },
+          body: {
+            parts: [{ type: "text", text: contextualizedQuestion }],
+            tools: {
+              task: false,
+              delegate_task: false,
+              open_analysis_round: false,
+              request_consensus: false,
+              generate_specification: false,
+            },
           },
-        },
-      })
+        })
+      } else {
+        // FALLBACK: peer hasn't registered an analysis yet (no session tracked).
+        // Return an error explaining the requirement.
+        return errorResponse(
+          `Peer ${peer_id} has no active session tracked. The peer must have called register_analysis at least once for their session to be available for consultation.`
+        )
+      }
 
       // Extract the response text from the prompt result
       // SessionPromptResponses[200] = { info: AssistantMessage, parts: Array<Part> }
@@ -100,7 +121,7 @@ export const askPeerTool = tool({
       return successResponse(
         `Peer consultation with ${peer_id}`,
         responseText,
-        { peerId: peer_id, sessionId, callerSession: context.sessionID }
+        { peerId: peer_id, peerSessionId, callerSession: context.sessionID }
       )
     } catch (e: unknown) {
       const err = e as Error
