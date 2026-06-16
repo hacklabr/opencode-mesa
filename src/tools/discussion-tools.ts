@@ -9,7 +9,7 @@ import { PLUGIN_STATE_DIR } from "../config"
 import { logAction } from "../audit"
 import { successResponse, errorResponse } from "../utils/responses"
 import { buildAnalysisPath, validateWorkspacePath } from "../utils/paths"
-import { recordAgentSession } from "./peer-tools"
+import { recordAgentSession, clearAgentSessions } from "./peer-tools"
 import { PhaseError, MesaError } from "../errors"
 
 const MAX_TOTAL_CHARS = 400000
@@ -133,6 +133,9 @@ export const openAnalysisRoundTool = tool({
       await saveState(context.directory, state)
       await logAction(context.directory, "analysis_round_opened", state.currentPhase, { topic: args.topic })
 
+      // Clear stale agent session mappings from any previous round
+      clearAgentSessions()
+
       const participantsWithNames = args.participants.map((id) => {
         const name = state.team.find((t) => t.personaId === id)?.name ?? id
         return { id, name }
@@ -254,6 +257,7 @@ export const registerAnalysisTool = tool({
       }
 
       // P1-T4: Path-traversal validation for file_path
+      // P1-2: If file_path not provided, compute canonical path via buildAnalysisPath
       let validatedFilePath: string | null = null
       if (args.file_path) {
         const pathCheck = validateWorkspacePath(context.directory, args.file_path)
@@ -261,6 +265,12 @@ export const registerAnalysisTool = tool({
           return errorResponse(pathCheck.error)
         }
         validatedFilePath = args.file_path
+      } else {
+        // Compute canonical path so get_peer_analyses always has a valid filePath
+        const mesaSessionId = getSessionId(context.directory)
+        if (mesaSessionId) {
+          validatedFilePath = buildAnalysisPath(mesaSessionId, args.turn, effectiveId)
+        }
       }
 
       // Determine kind (default "full")
@@ -295,8 +305,22 @@ export const registerAnalysisTool = tool({
         timestamp: new Date().toISOString(),
       }
 
+      // P1-1: Set discussion mode to "debate" when a discussion-turn analysis is registered
+      if (turnType === "discussion") {
+        state.discussion.mode = "debate"
+      }
+
       state.discussion.analyses.push(entry)
       await saveState(context.directory, state)
+
+      // P1-4: Audit logging for register_analysis
+      await logAction(context.directory, "analysis_registered", state.currentPhase, {
+        agentId: effectiveId,
+        turn: args.turn,
+        kind,
+        turnType,
+        filePath: validatedFilePath,
+      })
 
       // Track the specialist's OpenCode session ID for ask_peer contamination.
       // When another specialist calls ask_peer, the question goes to THIS session.
@@ -488,6 +512,15 @@ export const requestConsensusTool = tool({
       const state = await loadState(context.directory)
       const phaseError = requirePhase(state, "ANALYSIS")
       if (phaseError) throw new PhaseError(phaseError)
+
+      // P1-3: Enforce maxConsensusRounds circuit breaker
+      const maxRounds = state.discussion.maxConsensusRounds ?? 2
+      if (args.round > maxRounds) {
+        return errorResponse(
+          `Consensus round ${args.round} exceeds maximum (${maxRounds}). ` +
+          `Escalate to the human with the open tensions enumerated.`
+        )
+      }
 
       const VALID_VOTES = new Set([0, 1, 2])
       for (const v of args.votes) {

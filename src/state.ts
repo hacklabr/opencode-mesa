@@ -276,18 +276,10 @@ const HEARTBEAT_INTERVAL_MS = 15_000
 const HEARTBEAT_STALE_THRESHOLD_MS = 90_000
 
 function isSessionAlive(session: { pid: number; hostname: string; last_heartbeat: string }): boolean {
-  let pidAlive = false
-  try {
-    process.kill(session.pid, 0)
-    pidAlive = true
-  } catch {
-    pidAlive = false
-  }
-
+  // Heartbeat-only check — PID check is unreliable due to OS PID recycling.
+  // A recycled PID belonging to an unrelated process would cause indefinite lockout.
   const elapsed = Date.now() - new Date(session.last_heartbeat).getTime()
-  const heartbeatAlive = elapsed < HEARTBEAT_STALE_THRESHOLD_MS
-
-  return pidAlive || heartbeatAlive
+  return elapsed < HEARTBEAT_STALE_THRESHOLD_MS
 }
 
 function updateHeartbeat(directory: string, sessionId: string): void {
@@ -737,45 +729,16 @@ export async function loadState(directory: string): Promise<DiscussionState> {
 
   const db = getDb(directory)
   try {
-    // Try to load session-scoped state first
+    // Load session-scoped state ONLY — no fallback to unscoped tables
+    // This prevents cross-session contamination
     if (sessionId) {
       const sessionState = loadSessionState(db, directory, sessionId)
       if (sessionState) return sessionState
     }
 
-    // Fall back to unscoped state (backward compatibility)
-    const row = db
-      .query("SELECT * FROM mesa_state WHERE workspace_id = ?")
-      .get(directory) as Record<string, unknown> | null
-
-    if (!row) {
-      return createInitialState(directory)
-    }
-
-    if ((row.state_version as number) !== CURRENT_STATE_VERSION) {
-      console.warn(
-        `[Mesa] State version mismatch: db=${row.state_version}, current=${CURRENT_STATE_VERSION}. ` +
-        `Migration may be needed.`
-      )
-    }
-
-    const team = db
-      .query("SELECT persona_id, name, division, status FROM mesa_team WHERE workspace_id = ? ORDER BY sort_order")
-      .all(directory) as Array<{ persona_id: string; name: string; division: string; status: string }>
-
-    const analyses = db
-      .query("SELECT agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed FROM mesa_analyses WHERE workspace_id = ? ORDER BY turn")
-      .all(directory) as Array<Record<string, unknown>>
-
-    const votes = db
-      .query("SELECT agent_id, agent_name, vote, reason, round FROM mesa_votes WHERE workspace_id = ? ORDER BY round")
-      .all(directory) as Array<{ agent_id: string; agent_name: string; vote: number; reason: string; round: number }>
-
-    const participants = db
-      .query("SELECT persona_id FROM mesa_participants WHERE workspace_id = ? ORDER BY sort_order")
-      .all(directory) as Array<{ persona_id: string }>
-
-    return rowToState(row, team, analyses, votes, participants)
+    // No session-scoped state found — return fresh initial state
+    // (previously fell back to unscoped mesa_state, causing cross-session contamination)
+    return createInitialState(directory)
   } finally {
     db.close()
   }
@@ -790,19 +753,24 @@ export async function saveState(directory: string, state: DiscussionState): Prom
   const db = getDb(directory)
   try {
     const save = db.transaction(() => {
-      // ALWAYS save to unscoped tables (backward compatibility)
+      // Save to session-scoped tables ONLY
+      // (previously also dual-wrote to unscoped mesa_state, causing cross-session contamination)
+      if (!sessionId) {
+        throw new Error("[Mesa] Cannot save state without a session ID")
+      }
+
       db.run(
-        `INSERT OR REPLACE INTO mesa_state (
-          workspace_id, current_phase, previous_phase,
+        `INSERT OR REPLACE INTO mesa_session_state (
+          workspace_id, session_id, current_phase, previous_phase,
           briefing_path, briefing_status, briefing_slug,
           discussion_topic, discussion_current_turn, discussion_max_turns,
           discussion_consensus_round, discussion_debate_needed,
           discussion_mode, discussion_max_consensus_rounds,
           specification_path, specification_status,
           phases, appendices, state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          state.workspaceId, state.currentPhase, state.previousPhase,
+          state.workspaceId, sessionId, state.currentPhase, state.previousPhase,
           state.briefing.path, state.briefing.status, state.briefing.slug,
           state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
           state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
@@ -812,43 +780,12 @@ export async function saveState(directory: string, state: DiscussionState): Prom
         ]
       )
 
-      db.run("DELETE FROM mesa_team WHERE workspace_id = ?", [state.workspaceId])
-      db.run("DELETE FROM mesa_analyses WHERE workspace_id = ?", [state.workspaceId])
-      db.run("DELETE FROM mesa_votes WHERE workspace_id = ?", [state.workspaceId])
-      db.run("DELETE FROM mesa_participants WHERE workspace_id = ?", [state.workspaceId])
+      db.run("DELETE FROM mesa_session_team WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
+      db.run("DELETE FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
+      db.run("DELETE FROM mesa_session_votes WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
+      db.run("DELETE FROM mesa_session_participants WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
 
-      insertChildRows(db, state.workspaceId, state)
-
-      // ALSO save to scoped tables if we have a sessionId
-      if (sessionId) {
-        db.run(
-          `INSERT OR REPLACE INTO mesa_session_state (
-            workspace_id, session_id, current_phase, previous_phase,
-            briefing_path, briefing_status, briefing_slug,
-            discussion_topic, discussion_current_turn, discussion_max_turns,
-            discussion_consensus_round, discussion_debate_needed,
-            discussion_mode, discussion_max_consensus_rounds,
-            specification_path, specification_status,
-            phases, appendices, state_version, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            state.workspaceId, sessionId, state.currentPhase, state.previousPhase,
-            state.briefing.path, state.briefing.status, state.briefing.slug,
-            state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
-            state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
-            state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
-            state.specification.path, state.specification.status,
-            JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
-          ]
-        )
-
-        db.run("DELETE FROM mesa_session_team WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
-        db.run("DELETE FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
-        db.run("DELETE FROM mesa_session_votes WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
-        db.run("DELETE FROM mesa_session_participants WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
-
-        insertSessionChildRows(db, state.workspaceId, sessionId, state)
-      }
+      insertSessionChildRows(db, state.workspaceId, sessionId, state)
 
       // Piggyback heartbeat
       const canonicalDir = join(directory, PLUGIN_STATE_DIR)

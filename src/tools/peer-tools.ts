@@ -4,26 +4,18 @@ import { successResponse, errorResponse } from "../utils/responses"
 // Module-level SDK client reference (set from index.ts)
 let sdkClient: unknown = null
 
-// Track OpenCode session IDs for each specialist — populated when they call register_analysis
-// This enables ask_peer to resume the peer's REAL session (contamination is a feature)
-const agentSessions = new Map<string, string>() // agentId → opencodeSessionId
-
 export function setSdkClient(client: unknown): void {
   sdkClient = client
 }
 
-export function recordAgentSession(agentId: string, sessionID: string): void {
-  agentSessions.set(agentId, sessionID)
-}
-
-export function getAgentSession(agentId: string): string | undefined {
-  return agentSessions.get(agentId)
-}
+export function recordAgentSession(_agentId: string, _sessionID: string): void {}
+export function getAgentSession(_agentId: string): string | undefined { return undefined }
+export function clearAgentSessions(): void {}
 
 export const askPeerTool = tool({
   description:
     "Ask a peer specialist a direct question during the sequential consensus turn. " +
-    "The peer will receive your question and respond. " +
+    "The peer will receive your question and respond, with FULL context from their previous turns. " +
     "Use this to clarify ambiguities, challenge positions, or request elaboration. " +
     "Be targeted — do not ask vague questions.",
 
@@ -40,12 +32,15 @@ export const askPeerTool = tool({
     const { peer_id, question } = args
 
     if (!sdkClient) {
-      return errorResponse("SDK client not available. Peer consultation requires the plugin to be fully initialized.")
+      return errorResponse("SDK client not available.")
     }
 
     try {
       const client = sdkClient as {
         session: {
+          list: (opts?: {
+            query?: { directory?: string }
+          }) => Promise<{ data?: Array<{ id: string; title: string; parentID?: string }> }>
           prompt: (opts: {
             path: { id: string }
             body: {
@@ -57,52 +52,52 @@ export const askPeerTool = tool({
         }
       }
 
-      // Look up the peer's EXISTING session — this is critical for contamination.
-      // The question will be added to the peer's session history. When the Manager
-      // later resumes the peer via task(task_id="mesa-..."), the peer remembers
-      // being asked this question. Contamination is a desired feature.
-      const peerSessionId = agentSessions.get(peer_id)
+      // The Manager invokes specialists with task_id="mesa-{personaId}".
+      // OpenCode embeds the task_id in the session ID: ses_{random}_mesa-{personaId}
+      // We search session.list() for a session whose ID contains the task_id pattern.
+      const taskSlug = `mesa-${peer_id}`
+      const listResult = await client.session.list({
+        query: { directory: context.directory },
+      })
 
-      let promptResult
+      const sessions = listResult.data ?? []
+      // Find the peer's session — match by task_id embedded in session ID
+      // Sort by most recent (sessions are returned in order, last = most recent)
+      const peerSession = sessions
+        .filter((s) => s.id.includes(taskSlug))
+        .pop() // most recent matching session
 
-      if (peerSessionId) {
-        // Identify the caller by reverse-looking up their session ID in the Map
-        let callerName = "a peer specialist"
-        for (const [agentId, sessId] of agentSessions) {
-          if (sessId === context.sessionID) {
-            callerName = agentId
-            break
-          }
-        }
-
-        // Prefix the question so the peer knows WHO is asking
-        const contextualizedQuestion =
-          `[Peer consultation from ${callerName}]\n\n${question}`
-
-        // CONTAMINATION PATH: resume the peer's real session
-        promptResult = await client.session.prompt({
-          path: { id: peerSessionId },
-          body: {
-            parts: [{ type: "text", text: contextualizedQuestion }],
-            tools: {
-              task: false,
-              delegate_task: false,
-              open_analysis_round: false,
-              request_consensus: false,
-              generate_specification: false,
-            },
-          },
-        })
-      } else {
-        // FALLBACK: peer hasn't registered an analysis yet (no session tracked).
-        // Return an error explaining the requirement.
+      if (!peerSession) {
         return errorResponse(
-          `Peer ${peer_id} has no active session tracked. The peer must have called register_analysis at least once for their session to be available for consultation.`
+          `No active session found for peer ${peer_id}. ` +
+          `The Manager must have invoked this specialist at least once via task(task_id="mesa-${peer_id}"). ` +
+          `Looked for session ID containing: ${taskSlug}`
         )
       }
 
-      // Extract the response text from the prompt result
-      // SessionPromptResponses[200] = { info: AssistantMessage, parts: Array<Part> }
+      // Prefix question so the peer knows who is asking
+      const contextualizedQuestion =
+        `[Peer consultation]\n\n${question}`
+
+      // Send the question to the peer's REAL session — this is the contamination path.
+      // The question enters the peer's session history. The peer remembers their previous
+      // analyses (Turn 1, Turn 2, etc.) AND this question. When the Manager later resumes
+      // the peer via task(task_id="mesa-{peer_id}"), the peer remembers everything.
+      const promptResult = await client.session.prompt({
+        path: { id: peerSession.id },
+        body: {
+          parts: [{ type: "text", text: contextualizedQuestion }],
+          tools: {
+            task: false,
+            delegate_task: false,
+            open_analysis_round: false,
+            request_consensus: false,
+            generate_specification: false,
+          },
+        },
+      })
+
+      // Extract the response text
       let responseText = "(no response)"
       const data = promptResult.data as {
         info?: unknown
@@ -121,7 +116,7 @@ export const askPeerTool = tool({
       return successResponse(
         `Peer consultation with ${peer_id}`,
         responseText,
-        { peerId: peer_id, peerSessionId, callerSession: context.sessionID }
+        { peerId: peer_id, peerSessionId: peerSession.id, callerSession: context.sessionID }
       )
     } catch (e: unknown) {
       const err = e as Error

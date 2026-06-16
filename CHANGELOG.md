@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] - 2026-06-16
+
+### Fixed
+- **Session isolation (P0):** Eliminated cross-session contamination — `loadState` no longer falls back to unscoped tables; `saveState` no longer dual-writes to unscoped tables. New sessions start with clean state.
+- **PID recycling lockout (P0):** `isSessionAlive` now uses heartbeat-only check instead of `pidAlive || heartbeatAlive`. Prevents indefinite workspace lockout when OS recycles PIDs.
+- **ask_peer stale sessions (P0):** `agentSessions` Map is now cleared when a new analysis round opens (`clearAgentSessions()` in `open_analysis_round`). Prevents routing to sessions from previous rounds.
+- **discussion.mode dead code (P1):** `register_analysis` now sets `mode = "debate"` when `turn_type = "discussion"` is registered. The `permission.ask` hook is no longer dead code.
+- **buildAnalysisPath dead code (P1):** `register_analysis` now calls `buildAnalysisPath()` to compute canonical file paths when `file_path` is not provided. Paths are consistent by construction.
+- **maxConsensusRounds not enforced (P1):** `request_consensus` now rejects rounds exceeding `maxConsensusRounds` (default 2).
+- **Audit trail gap (P1):** `register_analysis` now calls `logAction` with `analysis_registered` event including agentId, turn, kind, turnType, and filePath.
+
 ## [2.8.0] - 2026-06-15
 
 ### Added
