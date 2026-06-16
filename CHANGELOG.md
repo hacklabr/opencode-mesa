@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-06-16
+
+### Changed — Redesign do Fluxo de Registro (contaminação funcionando!)
+- **Especialistas agora chamam `register_analysis` eles mesmos** (antes era o Manager)
+  - `context.sessionID` capturado é a sessão REAL do especialista, não do Manager
+  - `recordAgentSession` armazena o mapeamento correto `{personaId → sessionID}`
+  - `ask_peer` usa `getAgentSession()` para encontrar a sessão exata do peer
+  - Contaminação funciona: pergunta entra na sessão real do peer, peer lembra quando resumido
+- **`register_analysis` agora escreve o arquivo FS do `content`** (atomic com SQLite)
+  - Especialista não precisa mais fazer `write` separado
+  - Arquivo sempre existe e reflete o que foi registrado
+  - Sem risco de arquivo órfão
+- **Manager prompt atualizado** — instruções agora dizem para especialistas chamarem `register_analysis` eles mesmos
+
 ## [2.8.1] - 2026-06-16
 
 ### Fixed

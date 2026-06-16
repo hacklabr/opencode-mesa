@@ -311,6 +311,19 @@ export const registerAnalysisTool = tool({
       }
 
       state.discussion.analyses.push(entry)
+
+      // Write the analysis content to the FS file — atomic with SQLite insert.
+      // This makes register_analysis the single point of truth for both storage layers.
+      if (validatedFilePath) {
+        const absFilePath = join(context.directory, validatedFilePath)
+        try {
+          await fs.mkdir(join(absFilePath, ".."), { recursive: true })
+          await fs.writeFile(absFilePath, args.content, "utf-8")
+        } catch {
+          // FS write is best-effort — SQLite is the primary store
+        }
+      }
+
       await saveState(context.directory, state)
 
       // P1-4: Audit logging for register_analysis

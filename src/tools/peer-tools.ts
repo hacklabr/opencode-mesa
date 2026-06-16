@@ -4,13 +4,27 @@ import { successResponse, errorResponse } from "../utils/responses"
 // Module-level SDK client reference (set from index.ts)
 let sdkClient: unknown = null
 
+// Map: agentId → opencodeSessionId
+// Populated when a specialist calls register_analysis from their OWN session.
+// This is the single source of truth used by BOTH ask_peer AND the Manager
+// (via getAgentSession) to know which session to resume for each specialist.
+const agentSessions = new Map<string, string>()
+
 export function setSdkClient(client: unknown): void {
   sdkClient = client
 }
 
-export function recordAgentSession(_agentId: string, _sessionID: string): void {}
-export function getAgentSession(_agentId: string): string | undefined { return undefined }
-export function clearAgentSessions(): void {}
+export function recordAgentSession(agentId: string, sessionID: string): void {
+  agentSessions.set(agentId, sessionID)
+}
+
+export function getAgentSession(agentId: string): string | undefined {
+  return agentSessions.get(agentId)
+}
+
+export function clearAgentSessions(): void {
+  agentSessions.clear()
+}
 
 export const askPeerTool = tool({
   description:
@@ -52,41 +66,25 @@ export const askPeerTool = tool({
         }
       }
 
-      // The Manager invokes specialists with task_id="mesa-{personaId}".
-      // OpenCode embeds the task_id in the session ID: ses_{random}_mesa-{personaId}
-      // We search session.list() for a session whose ID contains the task_id pattern.
-      const taskSlug = `mesa-${peer_id}`
-      const listResult = await client.session.list({
-        query: { directory: context.directory },
-      })
+      // Look up the peer's REAL session ID from the mapping.
+      // This mapping is populated when the specialist calls register_analysis
+      // from their OWN session — guaranteeing the correct session ID.
+      const peerSessionId = getAgentSession(peer_id)
 
-      const sessions = listResult.data ?? []
-      // Find the peer's session — match by task_id embedded in session ID
-      // Sort by most recent (sessions are returned in order, last = most recent)
-      const peerSession = sessions
-        .filter((s) => s.id.includes(taskSlug))
-        .pop() // most recent matching session
-
-      if (!peerSession) {
+      if (!peerSessionId) {
         return errorResponse(
-          `No active session found for peer ${peer_id}. ` +
-          `The Manager must have invoked this specialist at least once via task(task_id="mesa-${peer_id}"). ` +
-          `Looked for session ID containing: ${taskSlug}`
+          `No session tracked for peer ${peer_id}. ` +
+          `The specialist must call register_analysis from their own session to register their session ID.`
         )
       }
 
-      // Prefix question so the peer knows who is asking
-      const contextualizedQuestion =
-        `[Peer consultation]\n\n${question}`
-
-      // Send the question to the peer's REAL session — this is the contamination path.
-      // The question enters the peer's session history. The peer remembers their previous
-      // analyses (Turn 1, Turn 2, etc.) AND this question. When the Manager later resumes
-      // the peer via task(task_id="mesa-{peer_id}"), the peer remembers everything.
+      // Send the question to the peer's REAL session — contamination path.
+      // The question enters the peer's session history alongside their Turn 1, Turn 2, etc.
+      // When the Manager resumes the peer, they remember everything INCLUDING this question.
       const promptResult = await client.session.prompt({
-        path: { id: peerSession.id },
+        path: { id: peerSessionId },
         body: {
-          parts: [{ type: "text", text: contextualizedQuestion }],
+          parts: [{ type: "text", text: `[Peer consultation]\n\n${question}` }],
           tools: {
             task: false,
             delegate_task: false,
@@ -116,7 +114,7 @@ export const askPeerTool = tool({
       return successResponse(
         `Peer consultation with ${peer_id}`,
         responseText,
-        { peerId: peer_id, peerSessionId: peerSession.id, callerSession: context.sessionID }
+        { peerId: peer_id, peerSessionId, callerSession: context.sessionID }
       )
     } catch (e: unknown) {
       const err = e as Error

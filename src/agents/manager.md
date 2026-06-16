@@ -121,27 +121,25 @@ Do NOT ask for a summary. Read the file yourself.
 
 ## Task
 1. Analyze the briefing from your expertise perspective. Provide your independent assessment.
-2. Write your COMPLETE analysis to the file: .mesa/analyses/{sessionId}/turn1/{personaId}.md
-   - Use markdown headings and structure
-   - This file is what your peers will read — make it thorough and self-contained
+2. Register your analysis using the register_analysis tool:
+   register_analysis(
+     agent_id: "{personaId}",
+     agent_name: "{name}",
+     content: "<your COMPLETE analysis in markdown>",
+     turn: 1,
+     kind: "full"
+   )
+   The tool will automatically write your analysis to a file AND store it in the database.
+   Do NOT write the file separately — the tool handles it.
 3. Return a 3-5 sentence summary of your key findings.
 
-Your analysis file is the canonical artifact. The summary you return is for the Manager's progress tracking only.
+Your analysis content passed to register_analysis is the canonical artifact. The summary you return is for the Manager's progress tracking only.
 ```
 
-After each specialist completes, register their analysis:
-```
-register_analysis(
-  agent_id: "{personaId}",
-  agent_name: "{name}",
-  content: "{the summary returned by the specialist}",
-  turn: 1,
-  kind: "full",
-  file_path: ".mesa/analyses/{sessionId}/turn1/{personaId}.md"
-)
-```
-
-The `kind: "full"` marks this as a complete, standalone analysis. The `file_path` records where the canonical content lives.
+**IMPORTANT:** Each specialist must call `register_analysis` THEMSELVES from their own session.
+This is critical for the ask_peer contamination feature — when a specialist registers
+their own analysis, their session ID is captured so peers can consult them later.
+Do NOT call register_analysis on behalf of a specialist — instruct them to do it.
 
 #### Turn 2 — Peer Review & Delta (Parallel)
 
@@ -167,30 +165,24 @@ Re-read the full briefing if needed: .mesa/briefing-for-discussion-{sessionId}.m
 
 ## Task — Write a DELTA, not a full re-analysis
 1. Read every peer's analysis file completely
-2. Identify points of AGREEMENT and DISAGREMENT
+2. Identify points of AGREEMENT and DISAGREEMENT
 3. Note anything important your peers missed
 4. Write ONLY what is new or changed — do NOT repeat your Turn 1 content
-5. Write your delta to: .mesa/analyses/{sessionId}/turn2/{personaId}.md
+5. Register your delta using the register_analysis tool:
+   register_analysis(
+     agent_id: "{personaId}",
+     agent_name: "{name}",
+     content: "<your DELTA analysis>",
+     turn: 2,
+     kind: "delta"
+   )
 6. Return a 3-5 sentence summary of your delta
 
 Focus on DEPTH — dig into tensions and gaps. Your delta should complement, not duplicate, your Turn 1 analysis.
 ```
 
-Register all Turn 2 analyses with `kind: "delta"`:
-```
-register_analysis(
-  agent_id: "{personaId}",
-  agent_name: "{name}",
-  content: "{the delta summary returned by the specialist}",
-  turn: 2,
-  kind: "delta",
-  file_path: ".mesa/analyses/{sessionId}/turn2/{personaId}.md"
-)
-```
-
-**Escape hatch:** If a specialist's position has fundamentally changed (not just refined), register with `kind: "full"` instead of `"delta"`. This signals a major revision that supersedes the Turn 1 analysis.
-
-**Why delta, not full re-analysis:** Token efficiency and clarity. Peers read the delta knowing the full Turn 1 context is already available. Repetition wastes tokens and obscures what actually changed.
+**IMPORTANT:** As in Turn 1, each specialist must call `register_analysis` THEMSELVES.
+This ensures their session ID is tracked for ask_peer contamination.
 
 #### Quality Heuristics
 
