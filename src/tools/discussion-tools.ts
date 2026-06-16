@@ -2,6 +2,7 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState, getSessionId } from "../state"
 import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry, AnalysisKind, AnalysisTurnType } from "../types"
 import { canTransition, VALID_TRANSITIONS, requirePhase, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions"
+import { getProfile, DEVIATION_RATE_CAP, type RigorProfile } from "../workflow/profiles"
 import { promises as fs } from "node:fs"
 import { join, resolve, relative, isAbsolute } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -213,6 +214,13 @@ export const registerAnalysisTool = tool({
     position_in_turn: tool.schema.number().optional().describe("Speaking order, 1-based (only when turn_type='discussion')"),
     responds_to: tool.schema.string().optional().describe("Agent ID being addressed (discussion only)"),
     session_resumed: tool.schema.boolean().optional().describe("Whether the specialist session was resumed (memory-integrity flag)"),
+    reason: tool.schema
+      .string()
+      .optional()
+      .describe(
+        "Deviation reason — REQUIRED when registering an analysis turn beyond the profile's profileTurns (Tier 3 procedural deviation). " +
+        "Recording a reason increments the session deviation counter and is audit-logged."
+      ),
   },
   async execute(args, context) {
     try {
@@ -234,17 +242,65 @@ export const registerAnalysisTool = tool({
         )
       }
 
-      // BUG-02: Enforce maxTurns
-      if (args.turn > state.discussion.maxTurns) {
-        return errorResponse(
-          `Turn ${args.turn} exceeds maxTurns (${state.discussion.maxTurns}). ` +
-          `All turns completed. Proceed to consensus.`
-        )
-      }
+      // D4 (bug fix) + D2 (two-bound model): counters are INDEPENDENT.
+      // hardMaxTurns bounds ONLY turn_type="analysis"; maxConsensusRounds
+      // bounds ONLY turn_type="discussion". Derive turnType first.
+      const turnType: AnalysisTurnType = args.turn_type ?? "analysis"
+      const rigor: RigorProfile = state.discussion.rigor ?? "standard"
+      const profile = getProfile(rigor)
 
-      // BUG-01: Derive current turn from analyses, validate turn progression
+      // BUG-01: validate turn progression
       if (args.turn < 1) {
         return errorResponse(`Turn must be 1 or greater. Got: ${args.turn}.`)
+      }
+
+      if (turnType === "analysis") {
+        // Tier 1 hard ceiling — non-raisable without human authorization.
+        if (args.turn > profile.hardMaxTurns) {
+          return errorResponse(
+            `Analysis turn ${args.turn} exceeds hard ceiling (hardMaxTurns=${profile.hardMaxTurns}) ` +
+            `for the "${rigor}" profile. This is a Tier 1 invariant — only the human can authorize ` +
+            `turns beyond the ceiling.`
+          )
+        }
+        // Tier 2 soft bound — beyond profileTurns requires an auditable deviation reason.
+        if (args.turn > profile.profileTurns) {
+          if (!args.reason) {
+            return errorResponse(
+              `Analysis turn ${args.turn} exceeds profileTurns (${profile.profileTurns}) for the "${rigor}" profile. ` +
+              `Provide a 'reason' to register this as a Tier 3 procedural deviation. ` +
+              `(hardMaxTurns ceiling is ${profile.hardMaxTurns}.)`
+            )
+          }
+          // Rate-cap circuit breaker: >3 deviations/session → human escalation.
+          const nextDeviations = (state.discussion.deviations ?? 0) + 1
+          if (nextDeviations > DEVIATION_RATE_CAP) {
+            return errorResponse(
+              `Deviation rate cap exceeded: this would be deviation ${nextDeviations} (cap is ${DEVIATION_RATE_CAP}). ` +
+              `Human escalation required to authorize further procedural deviations or re-select the rigor profile.`
+            )
+          }
+          state.discussion.deviations = nextDeviations
+          await logAction(context.directory, "analysis_turn_deviation", state.currentPhase, {
+            agentId: matchedId ?? args.agent_id,
+            turn: args.turn,
+            profileTurns: profile.profileTurns,
+            hardMaxTurns: profile.hardMaxTurns,
+            rigor,
+            reason: args.reason,
+            deviationCount: nextDeviations,
+          })
+        }
+      } else {
+        // turn_type="discussion" — bounded by maxConsensusRounds, NOT by maxTurns.
+        const round = args.round ?? 1
+        const maxRounds = state.discussion.maxConsensusRounds ?? 2
+        if (round > maxRounds) {
+          return errorResponse(
+            `Discussion round ${round} exceeds maxConsensusRounds (${maxRounds}). ` +
+            `Escalate to the human with the open tensions enumerated.`
+          )
+        }
       }
 
       // Dedup check (existing) — use matchedId
@@ -273,9 +329,8 @@ export const registerAnalysisTool = tool({
         }
       }
 
-      // Determine kind (default "full")
+      // Determine kind (default "full"); turnType derived above (D4 fix).
       const kind: AnalysisKind = args.kind ?? "full"
-      const turnType: AnalysisTurnType = args.turn_type ?? "analysis"
 
       // P1-T3: Validation gate — kind="delta" requires a prior full for same agentId
       if (kind === "delta") {
@@ -333,6 +388,8 @@ export const registerAnalysisTool = tool({
         kind,
         turnType,
         filePath: validatedFilePath,
+        reason: args.reason,
+        deviationCount: state.discussion.deviations ?? 0,
       })
 
       // Track the specialist's OpenCode session ID for ask_peer contamination.
@@ -382,14 +439,15 @@ export const registerAnalysisTool = tool({
         }
       }
 
-      // Next-step hint
+      // Next-step hint — profileTurns is the soft bound (Tier 2); beyond it is a deviation.
       let nextStep = ""
       if (current < total) {
         nextStep = `Next: Register analysis from the next specialist for turn ${args.turn}.`
-      } else if (args.turn < state.discussion.maxTurns) {
+      } else if (args.turn < profile.profileTurns) {
         nextStep = `Turn ${args.turn} complete! All ${total} analyses received. Proceed to turn ${args.turn + 1}.`
       } else {
-        nextStep = `All turns complete (${state.discussion.maxTurns}/${state.discussion.maxTurns}). Call request_consensus to proceed.`
+        nextStep = `Profile turns complete (${args.turn}/${profile.profileTurns} for "${rigor}"). Call request_consensus to proceed.` +
+          (args.turn < profile.hardMaxTurns ? ` Further turns are allowed with a deviation reason (hard ceiling: ${profile.hardMaxTurns}).` : "")
       }
 
       return successResponse(

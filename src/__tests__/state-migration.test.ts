@@ -53,6 +53,9 @@ describe("v1 state migration", () => {
         debateNeeded: false,
         mode: "analysis",
         maxConsensusRounds: 2,
+        rigor: "standard",
+        analysisMode: "parallel",
+        deviations: 0,
       },
       specification: {
         path: join(mesaDir, "specifications", "spec-test.md"),

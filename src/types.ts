@@ -20,6 +20,18 @@ export type AnalysisKind = "full" | "delta"
 
 export type AnalysisTurnType = "analysis" | "discussion"
 
+/**
+ * Governance profile controlling ceremony level (spec-4dcc492f, Decision 1).
+ * Selected at team assembly with human confirmation.
+ */
+export type RigorProfile = "light" | "standard" | "deep"
+
+/**
+ * Turn topology for Turn 2+ analysis (spec-4dcc492f, Decision 5).
+ * Turn 1 is ALWAYS parallel regardless of this value.
+ */
+export type AnalysisMode = "parallel" | "sequential" | "hybrid"
+
 export interface AnalysisEntry {
   agentId: string
   agentName: string
@@ -71,6 +83,10 @@ export interface DiscussionState {
     debateNeeded: boolean
     mode: "analysis" | "debate"  // current discussion mode
     maxConsensusRounds: number   // circuit breaker for CONSENSUS↔ANALYSIS loop
+    // --- Governance fields (spec-4dcc492f) ---
+    rigor: RigorProfile          // Tier 2 profile (default "standard")
+    analysisMode: AnalysisMode   // Turn 2+ topology (default "parallel")
+    deviations: number           // Tier 3 deviation counter (default 0)
   }
   specification: {
     path: string | null

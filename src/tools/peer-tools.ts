@@ -1,5 +1,7 @@
 import { tool } from "@opencode-ai/plugin"
 import { successResponse, errorResponse } from "../utils/responses"
+import { loadState } from "../state"
+import { peerConsultationCap, type RigorProfile } from "../workflow/profiles"
 
 // Module-level SDK client reference (set from index.ts)
 let sdkClient: unknown = null
@@ -9,6 +11,10 @@ let sdkClient: unknown = null
 // This is the single source of truth used by BOTH ask_peer AND the Manager
 // (via getAgentSession) to know which session to resume for each specialist.
 const agentSessions = new Map<string, string>()
+
+// D6 (ask_peer governance): per-turn consultation rate cap.
+// Map<callerAgentId, Map<turn, count>> — prevents N×N mesh explosion.
+const peerConsultations = new Map<string, Map<number, number>>()
 
 export function setSdkClient(client: unknown): void {
   sdkClient = client
@@ -24,6 +30,20 @@ export function getAgentSession(agentId: string): string | undefined {
 
 export function clearAgentSessions(): void {
   agentSessions.clear()
+  peerConsultations.clear()
+}
+
+/** Reset the per-turn consultation counters (used on new analysis round). */
+export function resetPeerConsultations(): void {
+  peerConsultations.clear()
+}
+
+/** Reverse-lookup the caller's agentId from its opencode session ID. */
+function findCallerAgentId(sessionId: string): string | undefined {
+  for (const [agentId, sid] of agentSessions) {
+    if (sid === sessionId) return agentId
+  }
+  return undefined
 }
 
 export const askPeerTool = tool({
@@ -76,6 +96,28 @@ export const askPeerTool = tool({
           `No session tracked for peer ${peer_id}. ` +
           `The specialist must call register_analysis from their own session to register their session ID.`
         )
+      }
+
+      // D6: per-turn consultation rate cap (profile-gated).
+      // `standard`: max 2 consultations per specialist per turn.
+      // `deep`: unlimited. `light`: not applicable (single turn).
+      const state = await loadState(context.directory, context.sessionID)
+      const rigor: RigorProfile = state.discussion.rigor ?? "standard"
+      const currentTurn = state.discussion.currentTurn ?? 0
+
+      if (rigor !== "deep") {
+        const cap = peerConsultationCap(rigor)
+        const callerKey = (context.sessionID && findCallerAgentId(context.sessionID)) || context.sessionID || "unknown"
+        const turnCounts = peerConsultations.get(callerKey) ?? new Map<number, number>()
+        const used = turnCounts.get(currentTurn) ?? 0
+        if (used >= cap) {
+          return errorResponse(
+            `Per-turn consultation cap reached: ${used}/${cap} consultations for ${callerKey} in turn ${currentTurn} ` +
+            `("${rigor}" profile). Use the "deep" profile or escalate to the human for additional consultations.`
+          )
+        }
+        turnCounts.set(currentTurn, used + 1)
+        peerConsultations.set(callerKey, turnCounts)
       }
 
       // Send the question to the peer's REAL session — contamination path.

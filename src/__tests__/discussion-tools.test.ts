@@ -689,7 +689,8 @@ describe("register_analysis validation gates", () => {
     state.discussion.topic = "Test Topic"
     state.discussion.maxTurns = 2
     state.discussion.participants = ["eng-1", "design-1"]
-    await saveState(TEST_DIR, state)
+    // Seed under the same session ID the tool uses (makeContext → "test-session")
+    await saveState(TEST_DIR, state, "test-session")
   })
 
   afterEach(async () => {
@@ -711,7 +712,12 @@ describe("register_analysis validation gates", () => {
     expect(result).toContain("not a participant")
   })
 
-  test("rejects turn exceeding maxTurns (BUG-02)", async () => {
+  test("rejects analysis turn exceeding hardMaxTurns ceiling (Tier 1)", async () => {
+    // Use "light" profile where hardMaxTurns=2 so turn 3 exceeds the hard ceiling.
+    const state = await loadState(TEST_DIR, "test-session")
+    state.discussion.rigor = "light"
+    await saveState(TEST_DIR, state, "test-session")
+
     const result = await registerAnalysisTool.execute(
       {
         agent_id: "eng-1",
@@ -722,7 +728,95 @@ describe("register_analysis validation gates", () => {
       makeContext()
     )
 
-    expect(result).toContain("exceeds maxTurns")
+    expect(result).toContain("exceeds hard ceiling")
+  })
+
+  test("discussion turns are not blocked by analysis maxTurns (D4 bug fix)", async () => {
+    // maxTurns=2 but a discussion turn at turn 3 must NOT be rejected by it.
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Consensus position",
+        turn: 3,
+        turn_type: "discussion",
+        round: 1,
+      },
+      makeContext()
+    )
+
+    const output = (result as { title?: string }).title
+    expect(output).toBe("Analysis Registered: Engineer")
+  })
+
+  test("discussion turn beyond maxConsensusRounds is rejected (D4)", async () => {
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Debate position",
+        turn: 1,
+        turn_type: "discussion",
+        round: 5, // exceeds maxConsensusRounds (2)
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("exceeds maxConsensusRounds")
+  })
+
+  test("analysis turn beyond profileTurns requires a reason (D2 deviation)", async () => {
+    // standard profile: profileTurns=2, so turn 3 is a deviation needing a reason.
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Extra turn analysis",
+        turn: 3,
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("profileTurns")
+    expect(result).toContain("reason")
+  })
+
+  test("analysis turn beyond profileTurns with reason is accepted and counted (D2)", async () => {
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Extra turn analysis with justification",
+        turn: 3,
+        reason: "Unresolved tension between security and performance requires a third pass.",
+      },
+      makeContext()
+    )
+
+    expect((result as { title?: string }).title).toBe("Analysis Registered: Engineer")
+
+    const loaded = await loadState(TEST_DIR, "test-session")
+    expect(loaded.discussion.deviations).toBe(1)
+  })
+
+  test("deviation rate cap (>3/session) triggers human escalation (D2)", async () => {
+    // Pre-seed deviations at the cap threshold.
+    const state = await loadState(TEST_DIR, "test-session")
+    state.discussion.deviations = 3
+    await saveState(TEST_DIR, state, "test-session")
+
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "One deviation too many",
+        turn: 3,
+        reason: "Yet another extra turn.",
+      },
+      makeContext()
+    )
+
+    expect(result).toContain("rate cap")
   })
 
   test("rejects turn less than 1 (BUG-01)", async () => {
@@ -754,7 +848,7 @@ describe("register_analysis validation gates", () => {
     expect(output).toContain("Analysis Registered")
 
     // Verify stored with full ID
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.discussion.analyses[0].agentId).toBe("eng-1")
   })
 

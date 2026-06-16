@@ -30,6 +30,10 @@ const SpecialistStatusEnum = z.enum(["proposed", "summoned", "active", "dismisse
 const SpecificationStatusEnum = z.enum(["pending", "draft", "approved", "rejected"])
 const ConsensusVoteEnum = z.union([z.literal(0), z.literal(1), z.literal(2)])
 
+const AnalysisTurnTypeEnum = z.enum(["analysis", "discussion"])
+const RigorProfileEnum = z.enum(["light", "standard", "deep"])
+const AnalysisModeEnum = z.enum(["parallel", "sequential", "hybrid"])
+
 const AnalysisEntrySchema = z.object({
   agentId: z.string(),
   agentName: z.string(),
@@ -37,7 +41,7 @@ const AnalysisEntrySchema = z.object({
   filePath: z.string().nullable().default(null),
   kind: z.enum(["full", "delta"]).default("full"),
   turn: z.number(),
-  turnType: z.enum(["analysis", "discussion"]).default("analysis"),
+  turnType: AnalysisTurnTypeEnum.default("analysis"),
   round: z.number().optional(),
   positionInTurn: z.number().optional(),
   respondsTo: z.string().optional(),
@@ -81,6 +85,10 @@ export const DiscussionStateSchema = z.object({
     debateNeeded: z.boolean().default(false),
     mode: z.enum(["analysis", "debate"]).default("analysis"),
     maxConsensusRounds: z.number().default(2),
+    // Governance fields (spec-4dcc492f) — defaults ensure backward-compat on load
+    rigor: RigorProfileEnum.default("standard"),
+    analysisMode: AnalysisModeEnum.default("parallel"),
+    deviations: z.number().default(0),
   }),
   specification: z.object({
     path: z.string().nullable(),
@@ -115,7 +123,10 @@ CREATE TABLE IF NOT EXISTS mesa_state (
   specification_status TEXT DEFAULT 'pending',
   phases TEXT DEFAULT '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]',
   appendices TEXT DEFAULT '[]',
-  state_version INTEGER DEFAULT 2,
+  rigor TEXT DEFAULT 'standard',
+  analysis_mode TEXT DEFAULT 'parallel',
+  deviations INTEGER DEFAULT 0,
+  state_version INTEGER DEFAULT 4,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -190,7 +201,10 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   specification_status TEXT DEFAULT 'pending',
   phases TEXT DEFAULT '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]',
   appendices TEXT DEFAULT '[]',
-  state_version INTEGER DEFAULT 2,
+  rigor TEXT DEFAULT 'standard',
+  analysis_mode TEXT DEFAULT 'parallel',
+  deviations INTEGER DEFAULT 0,
+  state_version INTEGER DEFAULT 4,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, session_id)
@@ -402,8 +416,10 @@ function migrateFromJson(directory: string, db: Database): void {
       discussion_consensus_round, discussion_debate_needed,
       discussion_mode, discussion_max_consensus_rounds,
       specification_path, specification_status,
-      phases, appendices, state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      phases, appendices,
+      rigor, analysis_mode, deviations,
+      state_version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       wsId, state.currentPhase, state.previousPhase,
       state.briefing.path, state.briefing.status, state.briefing.slug,
@@ -411,7 +427,11 @@ function migrateFromJson(directory: string, db: Database): void {
       state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
       state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
       state.specification.path, state.specification.status,
-      JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
+      JSON.stringify(state.phases), JSON.stringify(state.appendices),
+      state.discussion.rigor ?? "standard",
+      state.discussion.analysisMode ?? "parallel",
+      state.discussion.deviations ?? 0,
+      state.stateVersion, state.createdAt, state.updatedAt,
     ]
   )
 
@@ -506,6 +526,32 @@ function migrate_v2_to_v3(db: Database): void {
   tx()
 }
 
+function migrate_v3_to_v4(db: Database): void {
+  const tx = db.transaction(() => {
+    // Governance columns (spec-4dcc492f): rigor, analysis_mode, deviations
+    const stateCols: Array<[string, string]> = [
+      ["rigor", "TEXT DEFAULT 'standard'"],
+      ["analysis_mode", "TEXT DEFAULT 'parallel'"],
+      ["deviations", "INTEGER DEFAULT 0"],
+    ]
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      for (const [col, def] of stateCols) {
+        try {
+          db.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
+        } catch (e: unknown) {
+          const err = e as Error
+          if (!err.message.includes("duplicate column name")) throw e
+        }
+      }
+    }
+
+    // Bump state version
+    db.run("UPDATE mesa_state SET state_version = 4 WHERE state_version = 3")
+    db.run("UPDATE mesa_session_state SET state_version = 4 WHERE state_version = 3")
+  })
+  tx()
+}
+
 // ---------------------------------------------------------------------------
 // Database helpers
 // ---------------------------------------------------------------------------
@@ -527,6 +573,7 @@ function getDb(directory: string): Database {
   // Migrate schema before data so JSON migration can use new columns
   migrate_v1_to_v2(db)
   migrate_v2_to_v3(db)
+  migrate_v3_to_v4(db)
   migrateFromJson(directory, db)
 
   return db
@@ -696,6 +743,9 @@ function rowToState(
       debateNeeded: !!(row.discussion_debate_needed as number),
       mode: ((row.discussion_mode as string) || "analysis") as "analysis" | "debate",
       maxConsensusRounds: (row.discussion_max_consensus_rounds as number) ?? 2,
+      rigor: ((row.rigor as string) || "standard") as DiscussionState["discussion"]["rigor"],
+      analysisMode: ((row.analysis_mode as string) || "parallel") as DiscussionState["discussion"]["analysisMode"],
+      deviations: (row.deviations as number) ?? 0,
     },
     specification: {
       path: row.specification_path as string | null,
@@ -811,8 +861,10 @@ export async function saveState(directory: string, state: DiscussionState, openc
           discussion_consensus_round, discussion_debate_needed,
           discussion_mode, discussion_max_consensus_rounds,
           specification_path, specification_status,
-          phases, appendices, state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          phases, appendices,
+          rigor, analysis_mode, deviations,
+          state_version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, sessionId, state.currentPhase, state.previousPhase,
           state.briefing.path, state.briefing.status, state.briefing.slug,
@@ -820,7 +872,11 @@ export async function saveState(directory: string, state: DiscussionState, openc
           state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
           state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
           state.specification.path, state.specification.status,
-          JSON.stringify(state.phases), JSON.stringify(state.appendices), state.stateVersion, state.createdAt, state.updatedAt,
+          JSON.stringify(state.phases), JSON.stringify(state.appendices),
+          state.discussion.rigor ?? "standard",
+          state.discussion.analysisMode ?? "parallel",
+          state.discussion.deviations ?? 0,
+          state.stateVersion, state.createdAt, state.updatedAt,
         ]
       )
 

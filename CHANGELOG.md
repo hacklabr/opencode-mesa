@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-06-16
+
+### Added — Governance Model (spec-4dcc492f.md)
+- **D1: Rigor profiles** — `light`/`standard`/`deep` profiles with tool-level enforcement
+  - `light`: 1 analysis turn, no voting required, max 2 turns hard ceiling
+  - `standard`: 2 analysis turns, voting required, max 5 turns hard ceiling (default)
+  - `deep`: 3 analysis turns, voting + mandatory debate, max 7 turns hard ceiling
+  - New file `src/workflow/profiles.ts` with profile constants and helpers
+- **D2: Two-bound turn model** — `profileTurns` (soft) + `hardMaxTurns` (hard ceiling)
+  - Turns between soft and hard bound require a `reason` (Tier 3 deviation)
+  - Deviation counter with rate-cap circuit breaker (>3 deviations → human escalation)
+  - `reason` field added to `register_analysis`
+  - Deviations are audit-logged
+- **D4: maxTurns bug fix** — analysis turns and consensus rounds use independent counters
+  - `turn_type="analysis"` bounded by `hardMaxTurns`
+  - `turn_type="discussion"` bounded by `maxConsensusRounds`
+  - No longer conflates the two retry axes
+- **D5: analysisMode** — `parallel`/`sequential`/`hybrid` turn topology, declared at team assembly
+- **D6: ask_peer rate cap** — per-turn consultation cap (2/specialist/turn for standard, unlimited for deep)
+- **Schema migration v4** — added `rigor`, `analysis_mode`, `deviations` columns
+
+### Changed
+- `DiscussionState` extended with `rigor`, `analysisMode`, `deviations` fields
+- `register_analysis` now validates turns against profile bounds, tracks deviations
+- `ask_peer` enforces per-turn consultation rate cap based on rigor profile
+
 ## [2.9.0] - 2026-06-16
 
 ### Changed — Redesign do Fluxo de Registro (contaminação funcionando!)
