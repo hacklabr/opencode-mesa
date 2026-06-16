@@ -112,7 +112,7 @@ export const detectPhasesTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const specPath = args.spec_path
         ? join(context.directory, args.spec_path)
         : state.specification.path
@@ -189,8 +189,8 @@ export const openPhaseAnalysisRoundTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
-      const sessionId = getSessionId(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
+      const sessionId = getSessionId(context.directory, context.sessionID)
       if (!sessionId) {
         throw new Error("No active session. Ensure loadState() was called.")
       }
@@ -305,8 +305,8 @@ export const requestPhaseConsensusTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
-      const sessionId = getSessionId(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
+      const sessionId = getSessionId(context.directory, context.sessionID)
       if (!sessionId) {
         throw new Error("No active session. Ensure loadState() was called.")
       }
@@ -421,8 +421,8 @@ export const generatePhaseAppendixTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
-      const sessionId = getSessionId(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
+      const sessionId = getSessionId(context.directory, context.sessionID)
       if (!sessionId) {
         throw new Error("No active session. Ensure loadState() was called.")
       }
@@ -494,7 +494,7 @@ export const generatePhaseAppendixTool = tool({
       if (!state.appendices.includes(appendixRef)) {
         state.appendices.push(appendixRef)
       }
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
 
       // Update phase context
       const now = new Date().toISOString()

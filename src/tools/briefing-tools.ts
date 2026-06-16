@@ -52,11 +52,11 @@ export const createBriefingTool = tool({
 
       await fs.writeFile(filePath, frontmatter + args.content, "utf-8")
 
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       state.briefing.path = filePath
       state.briefing.slug = args.slug
       state.briefing.status = "draft"
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
 
       return successResponse(
         "Briefing Created",
@@ -75,7 +75,7 @@ export const approveBriefingTool = tool({
   args: {},
   async execute(_args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       if (!state.briefing.path) {
         return errorResponse("No briefing found. Create a briefing first.")
       }
@@ -91,7 +91,7 @@ export const approveBriefingTool = tool({
       content = updated
       await fs.writeFile(filePath, content, "utf-8")
 
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "briefing_approved", state.currentPhase, { slug: state.briefing.slug })
 
       return successResponse(
@@ -147,7 +147,7 @@ export const importBriefingTool = tool({
 
       await fs.copyFile(args.file_path, destPath)
 
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
 
       state.briefing = {
         path: destPath,
@@ -170,7 +170,7 @@ export const importBriefingTool = tool({
       }
       state.previousPhase = null
 
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
 
       return successResponse(
         "Briefing Imported",
@@ -188,7 +188,7 @@ export const deliverBriefingTool = tool({
   args: {},
   async execute(_args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       if (state.briefing.status !== "approved") {
         return errorResponse("Briefing must be approved before delivery. Use approve_briefing first.")
       }
@@ -196,7 +196,7 @@ export const deliverBriefingTool = tool({
         return errorResponse("No briefing path found.")
       }
 
-      const sessionId = getSessionId(context.directory)
+      const sessionId = getSessionId(context.directory, context.sessionID)
       if (!sessionId) {
         throw new Error("No active session. Ensure loadState() was called.")
       }
@@ -207,7 +207,7 @@ export const deliverBriefingTool = tool({
 
       state.currentPhase = "PLANNING"
       state.briefing.status = "delivered"
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "briefing_delivered", state.currentPhase, { slug: state.briefing.slug })
 
       return successResponse(

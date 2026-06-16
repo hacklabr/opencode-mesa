@@ -8,7 +8,7 @@ export const mesaStatusTool = tool({
   args: {},
   async execute(_args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
 
       const updated = new Date(state.updatedAt).toLocaleString()
       const summary = [

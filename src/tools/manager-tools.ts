@@ -19,7 +19,7 @@ export const analyzeBriefingTool = tool({
   args: {},
   async execute(_args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "PLANNING")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -62,7 +62,7 @@ export const proposeTeamTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "PLANNING")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -83,7 +83,7 @@ export const proposeTeamTool = tool({
       }))
 
       state.team = team
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
 
       const proposalTable = args.specialists
         .map(
@@ -110,7 +110,7 @@ export const summonTeamTool = tool({
   args: {},
   async execute(_args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "PLANNING")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -129,7 +129,7 @@ export const summonTeamTool = tool({
         }
       }
 
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "team_summoned", state.currentPhase, { count: state.team.filter(s => s.status === "summoned").length })
 
       const summonedList = state.team
@@ -205,7 +205,7 @@ export const delegateTaskTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -263,7 +263,7 @@ export const delegateTaskTool = tool({
         promptParts.push(``, `### Context`, effectiveContext)
       }
 
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
 
       return successResponse(
         `Task ready for ${specialist.name}`,
@@ -300,7 +300,7 @@ export const definePhasesTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const validPhases: DiscussionPhase[] = [
         "PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION",
       ]
@@ -311,7 +311,7 @@ export const definePhasesTool = tool({
       }
 
       state.phases = args.phases
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
 
       return successResponse(
         "Workflow Phases Defined",
@@ -334,7 +334,7 @@ export const checkExecutionPhasesTool = tool({
   args: {},
   async execute(_args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -405,7 +405,7 @@ export const selectPhasesForAnalysisTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -427,7 +427,7 @@ export const selectPhasesForAnalysisTool = tool({
       }
 
       // Persist selection to phase context sidecar
-      const sessionId = getSessionId(context.directory)
+      const sessionId = getSessionId(context.directory, context.sessionID)
       if (sessionId) {
         const repo = new SqliteStateRepository(context.directory)
         await repo.savePhaseContext({
@@ -491,11 +491,11 @@ export const configurePhaseObservationTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
-      const sessionId = getSessionId(context.directory)
+      const sessionId = getSessionId(context.directory, context.sessionID)
       const now = new Date().toISOString()
 
       if (args.mode === "guided") {
@@ -619,11 +619,11 @@ export const verifyImplementationTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
-      const sessionId = getSessionId(context.directory)
+      const sessionId = getSessionId(context.directory, context.sessionID)
       const verificationKey = `verification-${slugify(args.phase_name)}`
       const now = new Date().toISOString()
 

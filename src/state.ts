@@ -267,7 +267,8 @@ interface SessionState {
 const activeSessions = new Map<string, SessionState>()
 const sessionLocks = new Map<string, Promise<string>>()
 
-export function getSessionId(directory: string): string | undefined {
+export function getSessionId(directory: string, opencodeSessionId?: string): string | undefined {
+  if (opencodeSessionId) return opencodeSessionId
   const canonicalDir = join(directory, PLUGIN_STATE_DIR)
   return activeSessions.get(canonicalDir)?.sessionId
 }
@@ -723,9 +724,46 @@ export async function getStatePath(directory: string): Promise<string> {
   return join(stateDir, "state.db")
 }
 
-export async function loadState(directory: string): Promise<DiscussionState> {
-  await initSession(directory)
-  const sessionId = getSessionId(directory)
+// Ensure a session exists in mesa_session table (without full initSession overhead)
+// Used when opencodeSessionId is provided directly to loadState/saveState
+function ensureSession(directory: string, sessionId: string): void {
+  const db = getDb(directory)
+  try {
+    const existing = db
+      .query("SELECT session_id FROM mesa_session WHERE session_id = ?")
+      .get(sessionId) as { session_id: string } | null
+
+    if (!existing) {
+      const now = new Date().toISOString()
+      db.run(
+        "INSERT INTO mesa_session (session_id, pid, hostname, started_at, last_heartbeat, status) VALUES (?, ?, ?, ?, ?, 'active')",
+        [sessionId, process.pid, hostname(), now, now]
+      )
+    } else {
+      // Update heartbeat
+      db.run(
+        "UPDATE mesa_session SET last_heartbeat = ?, status = 'active' WHERE session_id = ?",
+        [new Date().toISOString(), sessionId]
+      )
+    }
+  } finally {
+    db.close()
+  }
+}
+
+export async function loadState(directory: string, opencodeSessionId?: string): Promise<DiscussionState> {
+  // Use the OpenCode session ID directly if provided — this ensures each
+  // OpenCode tab/window gets its own isolated Mesa session.
+  // Falls back to initSession for backward compatibility.
+  let sessionId: string | undefined
+  if (opencodeSessionId) {
+    sessionId = opencodeSessionId
+    // Ensure this session exists in mesa_session table
+    ensureSession(directory, opencodeSessionId)
+  } else {
+    await initSession(directory)
+    sessionId = getSessionId(directory)
+  }
 
   const db = getDb(directory)
   try {
@@ -744,9 +782,15 @@ export async function loadState(directory: string): Promise<DiscussionState> {
   }
 }
 
-export async function saveState(directory: string, state: DiscussionState): Promise<void> {
-  await initSession(directory)
-  const sessionId = getSessionId(directory)
+export async function saveState(directory: string, state: DiscussionState, opencodeSessionId?: string): Promise<void> {
+  let sessionId: string | undefined
+  if (opencodeSessionId) {
+    sessionId = opencodeSessionId
+    ensureSession(directory, opencodeSessionId)
+  } else {
+    await initSession(directory)
+    sessionId = getSessionId(directory)
+  }
 
   state.updatedAt = new Date().toISOString()
 

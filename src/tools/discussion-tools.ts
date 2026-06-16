@@ -61,8 +61,8 @@ export const openAnalysisRoundTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
-      const sessionId = getSessionId(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
+      const sessionId = getSessionId(context.directory, context.sessionID)
       if (!sessionId) {
         throw new Error("No active session. Ensure loadState() was called.")
       }
@@ -130,7 +130,7 @@ export const openAnalysisRoundTool = tool({
         await logAction(context.directory, "briefing_for_discussion_written", state.currentPhase, { path: briefingFile })
       }
 
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "analysis_round_opened", state.currentPhase, { topic: args.topic })
 
       // Clear stale agent session mappings from any previous round
@@ -216,7 +216,7 @@ export const registerAnalysisTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "ANALYSIS")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -267,7 +267,7 @@ export const registerAnalysisTool = tool({
         validatedFilePath = args.file_path
       } else {
         // Compute canonical path so get_peer_analyses always has a valid filePath
-        const mesaSessionId = getSessionId(context.directory)
+        const mesaSessionId = getSessionId(context.directory, context.sessionID)
         if (mesaSessionId) {
           validatedFilePath = buildAnalysisPath(mesaSessionId, args.turn, effectiveId)
         }
@@ -324,7 +324,7 @@ export const registerAnalysisTool = tool({
         }
       }
 
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
 
       // P1-4: Audit logging for register_analysis
       await logAction(context.directory, "analysis_registered", state.currentPhase, {
@@ -429,7 +429,7 @@ export const getPeerAnalysesTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
 
       let analyses = state.discussion.analyses
 
@@ -522,7 +522,7 @@ export const requestConsensusTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "ANALYSIS")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -612,7 +612,7 @@ export const requestConsensusTool = tool({
 
       state.discussion.debateNeeded = hasDisagreement
 
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "consensus_requested", state.currentPhase, { round: args.round })
 
       const voteSummary = args.votes
@@ -668,7 +668,7 @@ export const generateSpecificationTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
 
       // Transition CONSENSUS → DOCUMENTATION
       const toDoc = transitionPhase(state.currentPhase, "DOCUMENTATION")
@@ -730,7 +730,7 @@ export const generateSpecificationTool = tool({
       if (!toApproval.ok) throw new PhaseError(toApproval.error)
       state.currentPhase = toApproval.phase
 
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "specification_generated", state.currentPhase, { path: specPath })
 
       return successResponse(
@@ -757,7 +757,7 @@ export const approveSpecificationTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
 
       if (args.approved) {
         const result = transitionPhase(state.currentPhase, "EXECUTION")
@@ -765,7 +765,7 @@ export const approveSpecificationTool = tool({
 
         state.currentPhase = result.phase
         state.specification.status = "approved"
-        await saveState(context.directory, state)
+        await saveState(context.directory, state, context.sessionID)
         await logAction(context.directory, "specification_approved", state.currentPhase)
 
         return successResponse(
@@ -778,7 +778,7 @@ export const approveSpecificationTool = tool({
 
         state.currentPhase = result.phase
         state.specification.status = "rejected"
-        await saveState(context.directory, state)
+        await saveState(context.directory, state, context.sessionID)
         await logAction(context.directory, "specification_rejected", state.currentPhase, { feedback: args.feedback })
 
         return successResponse(
@@ -798,13 +798,13 @@ export const pauseDiscussionTool = tool({
   args: {},
   async execute(_args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       state.previousPhase = state.currentPhase
       const result = transitionPhase(state.currentPhase, "PAUSED")
       if (!result.ok) throw new PhaseError(result.error)
 
       state.currentPhase = result.phase
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "discussion_paused", state.currentPhase, { previousPhase: state.previousPhase })
 
       return successResponse(
@@ -825,7 +825,7 @@ export const resumeDiscussionTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       if (state.currentPhase !== "PAUSED") {
         return errorResponse(`Discussion is not paused. Current phase: ${state.currentPhase}`)
       }
@@ -846,7 +846,7 @@ export const resumeDiscussionTool = tool({
 
       state.currentPhase = result.phase
       state.previousPhase = null
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "discussion_resumed", state.currentPhase)
 
       return successResponse(
@@ -865,7 +865,7 @@ export const cancelDiscussionTool = tool({
   args: {},
   async execute(_args, context) {
     try {
-      const state = await loadState(context.directory)
+      const state = await loadState(context.directory, context.sessionID)
       const result = transitionPhase(state.currentPhase, "CANCELLED")
       if (!result.ok) throw new PhaseError(result.error)
 
@@ -873,7 +873,7 @@ export const cancelDiscussionTool = tool({
       state.discussion.analyses = []
       state.discussion.votes = []
       state.discussion.currentTurn = 0
-      await saveState(context.directory, state)
+      await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "discussion_cancelled", state.currentPhase)
 
       return successResponse(

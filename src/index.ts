@@ -99,7 +99,7 @@ export const mesa: Plugin = async (input) => {
 
       try {
         const directory = (permissionInput.metadata?.directory as string) || input.directory
-        const state = await loadState(directory)
+        const state = await loadState(directory, permissionInput.sessionID)
 
         // Gate 1: Only during ANALYSIS phase
         if (state.currentPhase !== "ANALYSIS") {
