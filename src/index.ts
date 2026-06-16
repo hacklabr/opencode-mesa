@@ -32,6 +32,7 @@ import {
 } from "./tools/phase-analysis-tools"
 import { checkForUpdate } from "./updater/checker"
 import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools"
+import { askPeerTool, setSdkClient } from "./tools/peer-tools"
 import { loadState, getSessionId } from "./state"
 import { logAction } from "./audit"
 import { buildAskPeerPath } from "./utils/paths"
@@ -46,6 +47,7 @@ const activeTaskCalls = new Map<string, Set<string>>()
 
 export const mesa: Plugin = async (input) => {
   opencodeClient = input.client
+  setSdkClient(input.client)
 
   // Fire-and-forget update check — populates cache for tools
   checkForUpdate().catch(() => {})
@@ -83,6 +85,7 @@ export const mesa: Plugin = async (input) => {
       generate_phase_appendix: generatePhaseAppendixTool,
       mesa_check_update: mesaCheckUpdateTool,
       mesa_update: mesaUpdateTool,
+      ask_peer: askPeerTool,
     },
 
     "permission.ask": async (permissionInput, output) => {
@@ -252,7 +255,7 @@ export const mesa: Plugin = async (input) => {
       "open_analysis_round", "register_analysis", "get_peer_analyses", "request_consensus",
       "generate_specification", "approve_specification",
       "pause_discussion", "resume_discussion", "cancel_discussion",
-      "mesa_check_update", "mesa_update",
+      "mesa_check_update", "mesa_update", "ask_peer",
       ]
 
       if (mesaTools.includes(toolDefInput.toolID)) {
