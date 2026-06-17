@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import { parse_phase_selection } from "../utils/phase-detection"
+import { parse_phase_selection } from "../utils/phase-detection.js"
 
 describe("parse_phase_selection edge cases", () => {
   test("handles extra whitespace around inputs", () => {

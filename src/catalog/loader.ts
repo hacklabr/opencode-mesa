@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs"
 import { join, basename } from "node:path"
-import type { Persona, CatalogSummary } from "./types"
+import type { Persona, CatalogSummary } from "./types.js"
 
 export type { Persona, CatalogSummary }
 

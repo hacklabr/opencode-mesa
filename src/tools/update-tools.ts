@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { successResponse, errorResponse } from "../utils/responses"
-import { checkForUpdate } from "../updater/checker"
-import { runUpdate } from "../updater/runner"
+import { successResponse, errorResponse } from "../utils/responses.js"
+import { checkForUpdate } from "../updater/checker.js"
+import { runUpdate } from "../updater/runner.js"
 
 export const mesaCheckUpdateTool = tool({
   description: "Check if a newer version of the Mesa plugin is available.",

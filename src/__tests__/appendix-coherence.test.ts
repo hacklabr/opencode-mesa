@@ -1,10 +1,10 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage } from "../state"
-import { createInitialState } from "../config"
-import { generatePhaseAppendixTool, openPhaseAnalysisRoundTool } from "../tools/phase-analysis-tools"
-import { SqliteStateRepository } from "../repositories/sqlite-state-repository"
+import { loadState, saveState, closeStorage } from "../state.js"
+import { createInitialState } from "../config.js"
+import { generatePhaseAppendixTool, openPhaseAnalysisRoundTool } from "../tools/phase-analysis-tools.js"
+import { SqliteStateRepository } from "../repositories/sqlite-state-repository.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "appendix-coherence")
 
@@ -165,7 +165,7 @@ describe("appendix coherence", () => {
       const appendixId = metadata?.appendixId as string
 
       // Load phase context from SQLite
-      const sessionId = (await import("../state")).getSessionId(TEST_DIR)
+      const sessionId = (await import("../state.js")).getSessionId(TEST_DIR)
       if (sessionId) {
         const repo = new SqliteStateRepository(TEST_DIR)
         const contextRecord = await repo.getPhaseContext(TEST_DIR, sessionId, "phase-1-database")

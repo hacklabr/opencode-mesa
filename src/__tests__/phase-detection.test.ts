@@ -4,7 +4,7 @@ import {
   is_phase_analysis_applicable,
   parse_phase_selection,
   slugify,
-} from "../utils/phase-detection"
+} from "../utils/phase-detection.js"
 
 describe("detect_execution_phases", () => {
   test("returns null for empty text", () => {

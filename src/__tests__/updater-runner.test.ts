@@ -9,8 +9,8 @@ import {
   releaseLock,
   rollback,
   runUpdate,
-} from "../updater/runner"
-import { UpdaterError } from "../errors"
+} from "../updater/runner.js"
+import { UpdaterError } from "../errors.js"
 
 const TEST_DIR = join(tmpdir(), "mesa-runner-test")
 

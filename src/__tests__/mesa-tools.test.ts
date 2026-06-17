@@ -1,9 +1,9 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { saveState } from "../state"
-import { createInitialState, PLUGIN_VERSION } from "../config"
-import { mesaStatusTool } from "../tools/mesa-tools"
+import { saveState } from "../state.js"
+import { createInitialState, PLUGIN_VERSION } from "../config.js"
+import { mesaStatusTool } from "../tools/mesa-tools.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "mesa-tools")
 

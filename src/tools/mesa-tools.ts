@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { PLUGIN_VERSION } from "../config"
-import { loadState } from "../state"
-import { successResponse, errorResponse } from "../utils/responses"
+import { PLUGIN_VERSION } from "../config.js"
+import { loadState } from "../state.js"
+import { successResponse, errorResponse } from "../utils/responses.js"
 
 export const mesaStatusTool = tool({
   description: "Returns the current status and version of the Mesa plugin.",

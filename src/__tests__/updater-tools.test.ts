@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import type { UpdateCheckResult, UpdateResult } from "../updater/types"
+import type { UpdateCheckResult, UpdateResult } from "../updater/types.js"
 
 // Mock dependencies before importing the module under test
 const mockCheckForUpdate = vi.fn<() => Promise<UpdateCheckResult>>()
@@ -18,7 +18,7 @@ vi.mock("@opencode-ai/plugin/tool", () => ({
   tool: (def: Record<string, unknown>) => def,
 }))
 
-import { mesaCheckUpdateTool, mesaUpdateTool } from "../tools/update-tools"
+import { mesaCheckUpdateTool, mesaUpdateTool } from "../tools/update-tools.js"
 
 // Type the execute function for our tests
 type ExecuteFn = (args: Record<string, never>, context: unknown) => Promise<unknown>

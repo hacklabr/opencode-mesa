@@ -1,19 +1,19 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage } from "../state"
-import { createInitialState } from "../config"
+import { loadState, saveState, closeStorage } from "../state.js"
+import { createInitialState } from "../config.js"
 import {
   checkExecutionPhasesTool,
   selectPhasesForAnalysisTool,
   configurePhaseObservationTool,
-} from "../tools/manager-tools"
+} from "../tools/manager-tools.js"
 import {
   detectPhasesTool,
   openPhaseAnalysisRoundTool,
   generatePhaseAppendixTool,
-} from "../tools/phase-analysis-tools"
-import { SqliteStateRepository } from "../repositories/sqlite-state-repository"
+} from "../tools/phase-analysis-tools.js"
+import { SqliteStateRepository } from "../repositories/sqlite-state-repository.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "phase-orchestrator")
 
@@ -279,7 +279,7 @@ No implementation is planned.
       expect(appendixContent).toContain("appendix_id")
 
       // Verify phase context was updated
-      const sessionId = (await import("../state")).getSessionId(TEST_DIR)
+      const sessionId = (await import("../state.js")).getSessionId(TEST_DIR)
       if (sessionId) {
         const repo = new SqliteStateRepository(TEST_DIR)
         const contextRecord = await repo.getPhaseContext(TEST_DIR, sessionId, "phase-1-backend-api")

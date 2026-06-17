@@ -1,14 +1,14 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage, getSessionId } from "../state"
-import { createInitialState } from "../config"
+import { loadState, saveState, closeStorage, getSessionId } from "../state.js"
+import { createInitialState } from "../config.js"
 import {
   createBriefingTool,
   approveBriefingTool,
   deliverBriefingTool,
   importBriefingTool,
-} from "../tools/briefing-tools"
+} from "../tools/briefing-tools.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "briefing-tools")
 

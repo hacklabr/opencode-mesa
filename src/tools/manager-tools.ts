@@ -1,17 +1,17 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState, getSessionId } from "../state"
-import type { DiscussionPhase, SpecialistEntry, SpecialistStatus } from "../types"
-import { getPersonaById } from "./catalog-tools"
-import { logAction } from "../audit"
-import { canTransition, requirePhase, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions"
+import { loadState, saveState, getSessionId } from "../state.js"
+import type { DiscussionPhase, SpecialistEntry, SpecialistStatus } from "../types.js"
+import { getPersonaById } from "./catalog-tools.js"
+import { logAction } from "../audit.js"
+import { canTransition, requirePhase, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions.js"
 import { promises as fs } from "node:fs"
-import { successResponse, errorResponse } from "../utils/responses"
-import { PhaseError, MesaError } from "../errors"
-import { build_mini_briefing_questions } from "../utils/mini-briefing"
-import { detect_execution_phases, parse_phase_selection, slugify } from "../utils/phase-detection"
-import { SqliteStateRepository } from "../repositories/sqlite-state-repository"
+import { successResponse, errorResponse } from "../utils/responses.js"
+import { PhaseError, MesaError } from "../errors.js"
+import { build_mini_briefing_questions } from "../utils/mini-briefing.js"
+import { detect_execution_phases, parse_phase_selection, slugify } from "../utils/phase-detection.js"
+import { SqliteStateRepository } from "../repositories/sqlite-state-repository.js"
 import { join } from "node:path"
-import { PLUGIN_STATE_DIR } from "../config"
+import { PLUGIN_STATE_DIR } from "../config.js"
 
 export const analyzeBriefingTool = tool({
   description:
@@ -226,7 +226,7 @@ export const delegateTaskTool = tool({
 
       if (!specialist) {
         const teamMembers = state.team.map((s) => `  - ${s.personaId} (${s.name})`).join("\n")
-        const { listSpecialistsTool } = await import("./catalog-tools")
+        const { listSpecialistsTool } = await import("./catalog-tools.js")
         const term = args.personaId.toLowerCase()
         return errorResponse(
           `Specialist "${args.personaId}" not found in the current team or catalog.\n\n` +

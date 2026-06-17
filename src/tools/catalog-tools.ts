@@ -1,9 +1,9 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadCatalogFromDirectory, type Persona, type CatalogSummary } from "../catalog/loader"
+import { loadCatalogFromDirectory, type Persona, type CatalogSummary } from "../catalog/loader.js"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { formatPhaseHeader } from "../workflow/transitions"
-import { successResponse, errorResponse } from "../utils/responses"
+import { formatPhaseHeader } from "../workflow/transitions.js"
+import { successResponse, errorResponse } from "../utils/responses.js"
 
 const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const CATALOG_DIR = join(PLUGIN_ROOT, "catalog", "agency-agents")

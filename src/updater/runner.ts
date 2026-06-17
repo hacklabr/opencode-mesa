@@ -9,9 +9,9 @@ import {
   readFileSync,
 } from "node:fs"
 import { execSync, spawn as nodeSpawn, type ChildProcess } from "node:child_process"
-import type { UpdateResult } from "./types"
-import { assertSemver } from "./semver"
-import { UpdaterError } from "../errors"
+import type { UpdateResult } from "./types.js"
+import { assertSemver } from "./semver.js"
+import { UpdaterError } from "../errors.js"
 
 const REPO_URL = "https://github.com/hacklabr/opencode-mesa"
 const UPDATE_TIMEOUT_MS = 120_000

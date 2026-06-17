@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
-import { mesaStatusTool } from "./tools/mesa-tools"
-import { listSpecialistsTool, getSpecialistTool } from "./tools/catalog-tools"
-import { createBriefingTool, approveBriefingTool, deliverBriefingTool, importBriefingTool } from "./tools/briefing-tools"
+import { mesaStatusTool } from "./tools/mesa-tools.js"
+import { listSpecialistsTool, getSpecialistTool } from "./tools/catalog-tools.js"
+import { createBriefingTool, approveBriefingTool, deliverBriefingTool, importBriefingTool } from "./tools/briefing-tools.js"
 import {
   analyzeBriefingTool,
   proposeTeamTool,
@@ -12,7 +12,7 @@ import {
   selectPhasesForAnalysisTool,
   configurePhaseObservationTool,
   verifyImplementationTool,
-} from "./tools/manager-tools"
+} from "./tools/manager-tools.js"
 import {
   openAnalysisRoundTool,
   registerAnalysisTool,
@@ -23,20 +23,20 @@ import {
   pauseDiscussionTool,
   resumeDiscussionTool,
   cancelDiscussionTool,
-} from "./tools/discussion-tools"
+} from "./tools/discussion-tools.js"
 import {
   detectPhasesTool,
   openPhaseAnalysisRoundTool,
   requestPhaseConsensusTool,
   generatePhaseAppendixTool,
-} from "./tools/phase-analysis-tools"
-import { checkForUpdate } from "./updater/checker"
-import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools"
-import { askPeerTool, setSdkClient } from "./tools/peer-tools"
-import { loadState, getSessionId } from "./state"
-import { setStateSdkClient } from "./state"
-import { logAction } from "./audit"
-import { buildAskPeerPath } from "./utils/paths"
+} from "./tools/phase-analysis-tools.js"
+import { checkForUpdate } from "./updater/checker.js"
+import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools.js"
+import { askPeerTool, setSdkClient } from "./tools/peer-tools.js"
+import { loadState, getSessionId } from "./state.js"
+import { setStateSdkClient } from "./state.js"
+import { logAction } from "./audit.js"
+import { buildAskPeerPath } from "./utils/paths.js"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"

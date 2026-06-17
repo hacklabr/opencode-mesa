@@ -1,8 +1,8 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage, getSessionId } from "../state"
-import { createInitialState } from "../config"
+import { loadState, saveState, closeStorage, getSessionId } from "../state.js"
+import { createInitialState } from "../config.js"
 import {
   openAnalysisRoundTool,
   registerAnalysisTool,
@@ -12,7 +12,7 @@ import {
   pauseDiscussionTool,
   resumeDiscussionTool,
   cancelDiscussionTool,
-} from "../tools/discussion-tools"
+} from "../tools/discussion-tools.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "discussion-tools")
 

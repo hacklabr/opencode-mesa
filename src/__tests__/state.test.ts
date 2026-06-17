@@ -1,10 +1,10 @@
 import { describe, expect, test, afterAll, afterEach } from "vitest"
-import { createInitialState, PLUGIN_VERSION } from "../config"
-import type { DiscussionPhase } from "../types"
+import { createInitialState, PLUGIN_VERSION } from "../config.js"
+import type { DiscussionPhase } from "../types.js"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { Database } from "bun:sqlite"
-import { loadState, saveState, getStatePath, closeStorage, getSessionId } from "../state"
+import { openDatabase } from "../db/driver.js"
+import { loadState, saveState, getStatePath, closeStorage, getSessionId } from "../state.js"
 
 describe("config", () => {
   test("PLUGIN_VERSION is semver format", () => {
@@ -117,7 +117,7 @@ describe("state persistence", () => {
 
     // Verify both sessions persisted independently in scoped tables
     const dbPath = await getStatePath(testDir)
-    const db = new Database(dbPath, { readonly: true })
+    const db = openDatabase(dbPath, { readonly: true })
     try {
       const rowA = db
         .query("SELECT current_phase FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
@@ -128,19 +128,16 @@ describe("state persistence", () => {
         .query("SELECT current_phase FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
         .get(testDir, sessionBId) as { current_phase: string } | null
       expect(rowB?.current_phase).toBe("DISCUSSION")
-
-      // Verify unscoped table has the latest state (dual-write)
-      const rowUnscoped = db
-        .query("SELECT current_phase FROM mesa_state WHERE workspace_id = ?")
-        .get(testDir) as { current_phase: string } | null
-      expect(rowUnscoped?.current_phase).toBe("DISCUSSION")
     } finally {
       db.close()
     }
 
-    // Verify loadState falls back to unscoped when no scoped state for current session
+    // Regression guard for session-isolation fix (commit c18a0805):
+    // dual-write to the unscoped mesa_state table was removed, so a new
+    // session with no scoped state of its own (and no parent) must receive a
+    // FRESH initial state rather than falling back to stale unscoped data.
     const stateC = await loadState(testDir)
-    expect(stateC.currentPhase).toBe("DISCUSSION") // from unscoped fallback
+    expect(stateC.currentPhase).toBe("PLANNING")
     closeStorage(testDir)
   })
 })

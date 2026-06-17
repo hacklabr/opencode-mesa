@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import { parsePersonaFile, loadCatalogFromDirectory } from "../catalog/loader"
+import { parsePersonaFile, loadCatalogFromDirectory } from "../catalog/loader.js"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 

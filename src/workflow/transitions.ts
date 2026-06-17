@@ -1,4 +1,4 @@
-import type { DiscussionPhase, DiscussionState, DiscussionMode } from "../types"
+import type { DiscussionPhase, DiscussionState, DiscussionMode } from "../types.js"
 
 /**
  * Phase enum collapsed 8→4 (spec-4dcc492f, Decision 3).

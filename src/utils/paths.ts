@@ -1,6 +1,6 @@
 import { join, resolve, relative, isAbsolute } from "node:path"
 import { mkdirSync } from "node:fs"
-import { PLUGIN_STATE_DIR } from "../config"
+import { PLUGIN_STATE_DIR } from "../config.js"
 
 export function getAppendixPath(
   masterSpecId: string,

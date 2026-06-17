@@ -1,9 +1,9 @@
 import { describe, expect, test, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage } from "../state"
-import { createInitialState } from "../config"
-import type { DiscussionState } from "../types"
+import { loadState, saveState, closeStorage } from "../state.js"
+import { createInitialState } from "../config.js"
+import type { DiscussionState } from "../types.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "state-migration")
 

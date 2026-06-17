@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest"
-import { canTransition } from "../workflow/transitions"
-import type { DiscussionPhase } from "../types"
+import { canTransition } from "../workflow/transitions.js"
+import type { DiscussionPhase } from "../types.js"
 
 describe("state machine transitions", () => {
   const allPhases: DiscussionPhase[] = [

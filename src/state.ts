@@ -1,14 +1,10 @@
-if (!process.versions?.bun) {
-  throw new Error("Mesa plugin requires Bun runtime (bun:sqlite)")
-}
-
-import { Database } from "bun:sqlite"
+import { openDatabase, type IDatabase } from "./db/driver.js"
 import { mkdirSync, existsSync, readFileSync, renameSync } from "node:fs"
 import { join } from "node:path"
 import { hostname } from "node:os"
 import { z, ZodError } from "zod"
-import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, DiscussionMode } from "./types"
-import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config"
+import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, DiscussionMode } from "./types.js"
+import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config.js"
 
 // SDK client for parent session lookup (set from index.ts)
 type SessionGetter = (sessionId: string) => Promise<{ parentID?: string } | null>
@@ -33,7 +29,7 @@ export function setStateSdkClient(client: unknown): void {
 }
 
 // Walk up the parent chain to find a session that has discussion state
-async function findRootSessionId(db: Database, directory: string, sessionId: string): Promise<string | null> {
+async function findRootSessionId(db: IDatabase, directory: string, sessionId: string): Promise<string | null> {
   let currentId = sessionId
   const visited = new Set<string>([sessionId]) // prevent cycles
 
@@ -217,6 +213,14 @@ CREATE TABLE IF NOT EXISTS mesa_analyses (
   content TEXT,
   turn INTEGER,
   timestamp TEXT,
+  file_path TEXT,
+  kind TEXT DEFAULT 'full',
+  turn_type TEXT DEFAULT 'analysis',
+  round INTEGER,
+  position_in_turn INTEGER,
+  responds_to TEXT,
+  tensions_raised TEXT,
+  session_resumed INTEGER,
   UNIQUE(workspace_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_analyses_turn ON mesa_analyses(workspace_id, turn);
@@ -300,6 +304,14 @@ CREATE TABLE IF NOT EXISTS mesa_session_analyses (
   content TEXT,
   turn INTEGER,
   timestamp TEXT,
+  file_path TEXT,
+  kind TEXT DEFAULT 'full',
+  turn_type TEXT DEFAULT 'analysis',
+  round INTEGER,
+  position_in_turn INTEGER,
+  responds_to TEXT,
+  tensions_raised TEXT,
+  session_resumed INTEGER,
   UNIQUE(workspace_id, session_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_session_analyses_turn ON mesa_session_analyses(workspace_id, session_id, turn);
@@ -468,7 +480,7 @@ async function initSession(directory: string): Promise<string> {
 // JSON migration
 // ---------------------------------------------------------------------------
 
-function migrateFromJson(directory: string, db: Database): void {
+function migrateFromJson(directory: string, db: IDatabase): void {
   const jsonPath = join(directory, PLUGIN_STATE_DIR, "state.json")
   if (!existsSync(jsonPath)) return
 
@@ -510,7 +522,7 @@ function migrateFromJson(directory: string, db: Database): void {
   renameSync(jsonPath, jsonPath + ".v1.bak")
 }
 
-function migrate_v1_to_v2(db: Database): void {
+function migrate_v1_to_v2(db: IDatabase): void {
   const tx = db.transaction(() => {
     // Create phase context sidecar table (idempotent)
     db.run(`
@@ -548,7 +560,7 @@ function migrate_v1_to_v2(db: Database): void {
   tx()
 }
 
-function migrate_v2_to_v3(db: Database): void {
+function migrate_v2_to_v3(db: IDatabase): void {
   const tx = db.transaction(() => {
     const analysisCols: Array<[string, string]> = [
       ["file_path", "TEXT"],
@@ -596,7 +608,7 @@ function migrate_v2_to_v3(db: Database): void {
   tx()
 }
 
-function migrate_v3_to_v4(db: Database): void {
+function migrate_v3_to_v4(db: IDatabase): void {
   const tx = db.transaction(() => {
     // Governance columns (spec-4dcc492f): rigor, analysis_mode, deviations
     const stateCols: Array<[string, string]> = [
@@ -630,7 +642,7 @@ function migrate_v3_to_v4(db: Database): void {
  * merged into SPECIFICATION. Adds `status` and `discussion_progress` columns and
  * rewrites stored phase values + the `phases` config array.
  */
-function migrate_v4_to_v5(db: Database): void {
+function migrate_v4_to_v5(db: IDatabase): void {
   const tx = db.transaction(() => {
     // 1. Add the new orthogonal columns to both state tables.
     for (const table of ["mesa_state", "mesa_session_state"]) {
@@ -711,7 +723,7 @@ function migrate_v4_to_v5(db: Database): void {
   tx()
 }
 
-function migrate_v5_to_v6(db: Database): void {
+function migrate_v5_to_v6(db: IDatabase): void {
   // Recreate analyses tables with turn_type in UNIQUE constraint.
   // SQLite cannot ALTER constraints — must use table recreation pattern.
   const tx = db.transaction(() => {
@@ -790,12 +802,12 @@ function migrate_v5_to_v6(db: Database): void {
 // Database helpers
 // ---------------------------------------------------------------------------
 
-function getDb(directory: string): Database {
+function getDb(directory: string): IDatabase {
   const stateDir = join(directory, PLUGIN_STATE_DIR)
   mkdirSync(stateDir, { recursive: true })
 
   const dbPath = join(stateDir, "state.db")
-  const db = new Database(dbPath, { create: true })
+  const db = openDatabase(dbPath, { create: true })
 
   db.run("PRAGMA foreign_keys = ON")
   db.run("PRAGMA journal_mode = WAL")
@@ -815,7 +827,7 @@ function getDb(directory: string): Database {
   return db
 }
 
-function insertChildRows(db: Database, wsId: string, state: DiscussionState): void {
+function insertChildRows(db: IDatabase, wsId: string, state: DiscussionState): void {
   for (let i = 0; i < state.team.length; i++) {
     const m = state.team[i]
     db.run(
@@ -852,7 +864,7 @@ function insertChildRows(db: Database, wsId: string, state: DiscussionState): vo
   }
 }
 
-function insertSessionChildRows(db: Database, wsId: string, sessionId: string, state: DiscussionState): void {
+function insertSessionChildRows(db: IDatabase, wsId: string, sessionId: string, state: DiscussionState): void {
   for (let i = 0; i < state.team.length; i++) {
     const m = state.team[i]
     db.run(
@@ -889,7 +901,7 @@ function insertSessionChildRows(db: Database, wsId: string, sessionId: string, s
   }
 }
 
-function loadSessionState(db: Database, wsId: string, sessionId: string): DiscussionState | null {
+function loadSessionState(db: IDatabase, wsId: string, sessionId: string): DiscussionState | null {
   const row = db
     .query("SELECT * FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
     .get(wsId, sessionId) as Record<string, unknown> | null

@@ -1,10 +1,10 @@
 import { tool } from "@opencode-ai/plugin"
-import { Database } from "bun:sqlite"
+import { openDatabase } from "../db/driver.js"
 import { join } from "node:path"
-import { successResponse, errorResponse } from "../utils/responses"
-import { peerConsultationCap, type RigorProfile } from "../workflow/profiles"
-import { loadState } from "../state"
-import { PLUGIN_STATE_DIR } from "../config"
+import { successResponse, errorResponse } from "../utils/responses.js"
+import { peerConsultationCap, type RigorProfile } from "../workflow/profiles.js"
+import { loadState } from "../state.js"
+import { PLUGIN_STATE_DIR } from "../config.js"
 
 // Module-level SDK client reference (set from index.ts)
 let sdkClient: unknown = null
@@ -39,10 +39,10 @@ export function clearAgentSessions(): void {
 // Find the peer's session ID from SQLite (survives restarts).
 // Queries mesa_session_analyses for the most recent session_id that has
 // analyses from the given agent_id in this workspace.
-function findSessionFromDb(directory: string, agentId: string): string | null {
+export function findSessionFromDb(directory: string, agentId: string): string | null {
   try {
     const dbPath = join(directory, PLUGIN_STATE_DIR, "state.db")
-    const db = new Database(dbPath, { readonly: true })
+    const db = openDatabase(dbPath, { readonly: true })
     try {
       // Try exact match first
       let row = db

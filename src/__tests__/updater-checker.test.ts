@@ -25,7 +25,7 @@ import {
   writeCache,
   fetchLatestTag,
   checkForUpdate,
-} from "../updater/checker"
+} from "../updater/checker.js"
 
 // Override getCachePath by importing the module and patching it dynamically
 // Since getCachePath is used internally, we need a different approach.

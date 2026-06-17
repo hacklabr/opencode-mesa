@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { parseSemver, compareSemver, isNewerVersion, assertSemver, SEMVER_RE } from "../updater/semver"
+import { parseSemver, compareSemver, isNewerVersion, assertSemver, SEMVER_RE } from "../updater/semver.js"
 
 describe("updater/semver", () => {
   describe("SEMVER_RE", () => {

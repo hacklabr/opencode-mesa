@@ -1,11 +1,11 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
-import { loadState, saveState } from "../state"
-import { createInitialState } from "../config"
-import type { DiscussionState } from "../types"
-import { canTransition } from "../workflow/transitions"
+import { loadState, saveState } from "../state.js"
+import { createInitialState } from "../config.js"
+import type { DiscussionState } from "../types.js"
+import { canTransition } from "../workflow/transitions.js"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { PLUGIN_STATE_DIR } from "../config"
+import { PLUGIN_STATE_DIR } from "../config.js"
 
 const TEST_DIR = join(import.meta.dirname, "__e2e_fixtures__")
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest"
-import { listSpecialistsTool, getSpecialistTool } from "../tools/catalog-tools"
+import { listSpecialistsTool, getSpecialistTool } from "../tools/catalog-tools.js"
 
 function makeContext() {
   return {
