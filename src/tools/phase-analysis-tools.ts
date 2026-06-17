@@ -248,6 +248,15 @@ export const openPhaseAnalysisRoundTool = tool({
       // Reset consultation counts and session tracking for the new phase round
       clearAgentSessions()
 
+      // Reset discussion state so each phase round has its own analysis context.
+      // Main flow analyses are already preserved in the specification document and FS files.
+      state.discussion.currentTurn = 0
+      state.discussion.analyses = []
+      state.discussion.votes = []
+      state.discussion.mode = "analysis"
+      state.discussion.consensusRound = 0
+      await saveState(context.directory, state, context.sessionID)
+
       const lines = [
         `Phase ${args.phase_index}: ${args.phase_name}`,
         `Mode: ${args.mode}`,

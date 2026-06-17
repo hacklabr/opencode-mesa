@@ -91,8 +91,9 @@ export const askPeerTool = tool({
 
       if (!peerSessionId) {
         return errorResponse(
-          `No session tracked for peer ${peer_id}. ` +
-          `The specialist must call register_analysis from their own session to register their session ID.`
+          `Peer ${peer_id} has not registered an analysis in the current round yet. ` +
+          `The peer must call register_analysis from their own session first, which registers ` +
+          `their session ID for consultation. Wait for the peer to register, then try again.`
         )
       }
 

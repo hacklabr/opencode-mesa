@@ -608,25 +608,24 @@ export const requestConsensusTool = tool({
       // BUG-04: Completeness gate — verify all participants completed all turns
       const participants = state.discussion.participants
       if (participants.length > 0) {
-        const lastTurn = Math.max(...state.discussion.analyses.map((a) => a.turn), 1)
-        const completedForLastTurn = new Set(
-          state.discussion.analyses
-            .filter((a) => a.turn === lastTurn)
-            .map((a) => a.agentId)
+        // Completeness gate: each participant must have at least ONE analysis
+        // (at any turn). Does NOT require all at the same turn — the adaptive
+        // workflow may have specialists who completed at different turn numbers.
+        const participantsWithAnalyses = new Set(
+          state.discussion.analyses.map((a) => a.agentId)
         )
         const missing = participants.filter((id) => {
-          // Check both exact match and suffix match
-          return !completedForLastTurn.has(id) &&
-            !Array.from(completedForLastTurn).some(cid => cid.endsWith(id) || id.endsWith(cid))
+          return !participantsWithAnalyses.has(id) &&
+            !Array.from(participantsWithAnalyses).some(cid => cid.endsWith(id) || id.endsWith(cid))
         })
         if (missing.length > 0) {
           const missingNames = missing.map(
             (id) => state.team.find((t) => t.personaId === id)?.name ?? id
           )
           return errorResponse(
-            `Cannot proceed to consensus. Not all analyses complete for turn ${lastTurn}.\n` +
+            `Cannot proceed to consensus. Not all participants have registered analyses.\n` +
             `Missing: ${missingNames.join(", ")}.\n` +
-            `Register their analyses first.`
+            `Each participant must call register_analysis at least once before voting.`
           )
         }
       }
