@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url"
 
 export type {
   DiscussionPhase,
+  DiscussionStatus,
+  DiscussionMode,
   ConsensusVote,
   BriefingStatus,
   SpecialistStatus,
@@ -11,6 +13,7 @@ export type {
   AnalysisEntry,
   ConsensusVoteEntry,
   SpecialistEntry,
+  DiscussionProgress,
   DiscussionState,
 } from "./types"
 
@@ -31,7 +34,7 @@ export const PLUGIN_STATE_DIR = ".mesa"
 
 export const DEFAULT_MAX_TURNS = 2
 
-export const CURRENT_STATE_VERSION = 4
+export const CURRENT_STATE_VERSION = 5
 
 import type { DiscussionState } from "./types"
 
@@ -40,6 +43,7 @@ export function createInitialState(workspaceId: string): DiscussionState {
   return {
     workspaceId,
     currentPhase: "PLANNING",
+    status: "active",
     briefing: { path: null, status: "draft", slug: null },
     team: [],
     discussion: {
@@ -57,10 +61,17 @@ export function createInitialState(workspaceId: string): DiscussionState {
       rigor: "standard",
       analysisMode: "parallel",
       deviations: 0,
+      // Observability (spec-4dcc492f, Decision 3, Requirement 1)
+      progress: {
+        currentTurn: 0,
+        completedParticipants: [],
+        activeProfile: "standard",
+        deviations: 0,
+      },
     },
     specification: { path: null, status: "pending" },
     appendices: [],
-    phases: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION"],
+    phases: ["PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION"],
     createdAt: now,
     updatedAt: now,
     stateVersion: CURRENT_STATE_VERSION,

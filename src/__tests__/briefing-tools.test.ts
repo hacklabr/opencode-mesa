@@ -319,7 +319,7 @@ describe("import_briefing tool", () => {
 
   test("resets discussion and specification state on import", async () => {
     const state = createInitialState(TEST_DIR)
-    state.currentPhase = "ANALYSIS"
+    state.currentPhase = "DISCUSSION"
     state.discussion.analyses = [
       { agentId: "a", agentName: "A", content: "c", turn: 1, timestamp: new Date().toISOString() },
     ]

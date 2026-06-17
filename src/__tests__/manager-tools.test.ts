@@ -68,13 +68,13 @@ describe("analyze_briefing tool", () => {
 
   test("returns error when not in PLANNING phase", async () => {
     const state = createInitialState(TEST_DIR)
-    state.currentPhase = "ANALYSIS"
+    state.currentPhase = "DISCUSSION"
     await saveState(TEST_DIR, state)
 
     const result = await analyzeBriefingTool.execute({}, makeContext())
 
     expect(typeof result).toBe("string")
-    expect(result).toContain("ANALYSIS")
+    expect(result).toContain("DISCUSSION")
   })
 })
 
@@ -143,7 +143,7 @@ describe("propose_team tool", () => {
 
   test("returns error when not in PLANNING phase", async () => {
     const state = createInitialState(TEST_DIR)
-    state.currentPhase = "ANALYSIS"
+    state.currentPhase = "DISCUSSION"
     await saveState(TEST_DIR, state)
 
     const result = await proposeTeamTool.execute(
@@ -161,7 +161,7 @@ describe("propose_team tool", () => {
     )
 
     expect(typeof result).toBe("string")
-    expect(result).toContain("ANALYSIS")
+    expect(result).toContain("DISCUSSION")
   })
 })
 
@@ -332,7 +332,7 @@ describe("define_phases tool", () => {
     await saveState(TEST_DIR, state)
 
     const result = await definePhasesTool.execute(
-      { phases: ["PLANNING", "ANALYSIS", "CONSENSUS"] },
+      { phases: ["PLANNING", "DISCUSSION", "DISCUSSION"] },
       makeContext()
     )
 
@@ -341,7 +341,7 @@ describe("define_phases tool", () => {
     expect(output).toContain("PLANNING → ANALYSIS → CONSENSUS")
 
     const loaded = await loadState(TEST_DIR)
-    expect(loaded.phases).toEqual(["PLANNING", "ANALYSIS", "CONSENSUS"])
+    expect(loaded.phases).toEqual(["PLANNING", "DISCUSSION", "DISCUSSION"])
   })
 
   test("returns error for invalid phase names", async () => {
@@ -363,7 +363,7 @@ describe("define_phases tool", () => {
     await saveState(TEST_DIR, state)
 
     const result = await definePhasesTool.execute(
-      { phases: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION"] },
+      { phases: ["PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION", "SPECIFICATION", "EXECUTION"] },
       makeContext()
     )
 

@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState, getSessionId } from "../state"
 import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry, AnalysisKind, AnalysisTurnType } from "../types"
-import { canTransition, VALID_TRANSITIONS, requirePhase, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions"
+import { canTransition, VALID_TRANSITIONS, requirePhase, requireMode, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions"
 import { getProfile, DEVIATION_RATE_CAP, type RigorProfile } from "../workflow/profiles"
 import { promises as fs } from "node:fs"
 import { join, resolve, relative, isAbsolute } from "node:path"
@@ -98,10 +98,13 @@ export const openAnalysisRoundTool = tool({
         )
       }
 
-      const result = transitionPhase(state.currentPhase, "ANALYSIS")
+      const result = transitionPhase(state.currentPhase, "DISCUSSION")
       if (!result.ok) throw new PhaseError(result.error)
 
       state.currentPhase = result.phase
+      // Entering DISCUSSION resets the sub-state to independent analysis
+      // (spec-4dcc492f, Decision 3 — analysis-vs-consensus distinction lives in mode).
+      state.discussion.mode = "analysis"
       state.discussion.topic = args.topic
       state.discussion.currentTurn = 1
       state.discussion.maxTurns = args.max_turns ?? 2
@@ -179,7 +182,7 @@ export const openAnalysisRoundTool = tool({
           `Participants (in order):`,
           participantList,
           ``,
-          `Turns: ${state.discussion.maxTurns} | Phase: ANALYSIS`,
+          `Turns: ${state.discussion.maxTurns} | Phase: DISCUSSION | Mode: analysis`,
           ``,
           `## How to run this round`,
           ``,
@@ -225,7 +228,7 @@ export const registerAnalysisTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
-      const phaseError = requirePhase(state, "ANALYSIS")
+      const phaseError = requirePhase(state, "DISCUSSION")
       if (phaseError) throw new PhaseError(phaseError)
 
       // BUG-13: Agent ID suffix matching
@@ -583,7 +586,7 @@ export const requestConsensusTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
-      const phaseError = requirePhase(state, "ANALYSIS")
+      const phaseError = requirePhase(state, "DISCUSSION")
       if (phaseError) throw new PhaseError(phaseError)
 
       // P1-3: Enforce maxConsensusRounds circuit breaker
@@ -635,10 +638,12 @@ export const requestConsensusTool = tool({
         }
       }
 
-      const result = transitionPhase(state.currentPhase, "CONSENSUS")
-      if (!result.ok) throw new PhaseError(result.error)
-
-      state.currentPhase = result.phase
+      // Consensus now lives WITHIN the DISCUSSION phase (spec-4dcc492f, Decision 3).
+      // request_consensus is a first-class audit event equivalent to a phase transition,
+      // but it only advances discussion.mode → "voting"; the phase stays DISCUSSION.
+      const modeError = requireMode(state, "analysis", "debate")
+      if (modeError) throw new PhaseError(modeError)
+      state.discussion.mode = "voting"
       state.discussion.consensusRound = args.round
 
       // BUG-05/13: Validate votes come from participants
@@ -730,10 +735,10 @@ export const generateSpecificationTool = tool({
     try {
       const state = await loadState(context.directory, context.sessionID)
 
-      // Transition CONSENSUS → DOCUMENTATION
-      const toDoc = transitionPhase(state.currentPhase, "DOCUMENTATION")
-      if (!toDoc.ok) throw new PhaseError(toDoc.error)
-      state.currentPhase = toDoc.phase
+      // Transition DISCUSSION → SPECIFICATION (spec-4dcc492f, Decision 3)
+      const toSpec = transitionPhase(state.currentPhase, "SPECIFICATION")
+      if (!toSpec.ok) throw new PhaseError(toSpec.error)
+      state.currentPhase = toSpec.phase
 
       const specsDir = join(context.directory, PLUGIN_STATE_DIR, "specifications")
       await fs.mkdir(specsDir, { recursive: true })
@@ -751,8 +756,8 @@ export const generateSpecificationTool = tool({
 
       // Budget Gate: Total document size validation
       if (document.length > MAX_TOTAL_CHARS) {
-        // Revert phase change
-        state.currentPhase = "CONSENSUS"
+        // Revert phase change — back to DISCUSSION
+        state.currentPhase = "DISCUSSION"
         return errorResponse(
           `Specification exceeds total budget: ${document.length} chars (max ${MAX_TOTAL_CHARS}).\n` +
           `Reduce content length to fit within the budget.`
@@ -785,11 +790,7 @@ export const generateSpecificationTool = tool({
       state.specification.path = specPath
       state.specification.status = "draft"
 
-      // Transition DOCUMENTATION → APPROVAL
-      const toApproval = transitionPhase(state.currentPhase, "APPROVAL")
-      if (!toApproval.ok) throw new PhaseError(toApproval.error)
-      state.currentPhase = toApproval.phase
-
+      // In SPECIFICATION phase, spec is ready for approval (no phase transition needed)
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "specification_generated", state.currentPhase, { path: specPath })
 
@@ -833,17 +834,14 @@ export const approveSpecificationTool = tool({
           `${formatPhaseHeader(state.currentPhase)}\n\nSpecification approved. Phase changed to EXECUTION. The Manager may now delegate implementation tasks.`
         )
       } else {
-        const result = transitionPhase(state.currentPhase, "DOCUMENTATION")
-        if (!result.ok) throw new PhaseError(result.error)
-
-        state.currentPhase = result.phase
+        // Rejection: stay in SPECIFICATION (no back-edge needed — spec revision happens in same phase)
         state.specification.status = "rejected"
         await saveState(context.directory, state, context.sessionID)
         await logAction(context.directory, "specification_rejected", state.currentPhase, { feedback: args.feedback })
 
         return successResponse(
           "Specification Rejected",
-          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification rejected.${args.feedback ? ` Feedback: ${args.feedback}` : ""}\n\nReturned to DOCUMENTATION phase for revision.`
+          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification rejected.${args.feedback ? ` Feedback: ${args.feedback}` : ""}\n\nRemains in SPECIFICATION phase for revision.`
         )
       }
     } catch (err) {
@@ -859,17 +857,15 @@ export const pauseDiscussionTool = tool({
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
+      // Pause sets status, not phase — phase is preserved for resume
+      state.status = "paused"
       state.previousPhase = state.currentPhase
-      const result = transitionPhase(state.currentPhase, "PAUSED")
-      if (!result.ok) throw new PhaseError(result.error)
-
-      state.currentPhase = result.phase
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "discussion_paused", state.currentPhase, { previousPhase: state.previousPhase })
 
       return successResponse(
         "Discussion Paused",
-        `${formatPhaseHeader(state.currentPhase)}\n\nDiscussion paused. Previous phase: ${state.previousPhase}. Use resume_discussion to resume.`
+        `${formatPhaseHeader(state.currentPhase)}\n\nDiscussion paused at phase: ${state.currentPhase}. Use resume_discussion to resume.`
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -881,37 +877,36 @@ export const pauseDiscussionTool = tool({
 export const resumeDiscussionTool = tool({
   description: "Resumes a paused discussion, returning to the previous phase.",
   args: {
-    target_phase: tool.schema.string().describe("The phase to resume to (e.g. 'ANALYSIS', 'CONSENSUS')"),
+    target_phase: tool.schema.string().optional().describe("Optional: phase to resume to (e.g. 'DISCUSSION'). Defaults to previous phase."),
   },
   async execute(args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
-      if (state.currentPhase !== "PAUSED") {
-        return errorResponse(`Discussion is not paused. Current phase: ${state.currentPhase}`)
+      if (state.status !== "paused") {
+        return errorResponse(`Discussion is not paused. Current status: ${state.status}`)
       }
 
-      const allPhasesSet = new Set(ALL_PHASES)
-      if (!allPhasesSet.has(args.target_phase as DiscussionPhase)) {
-        return errorResponse(`Invalid phase "${args.target_phase}". Valid phases: ${ALL_PHASES.join(", ")}`)
+      // Resume: set status back to active
+      state.status = "active"
+
+      // If target_phase provided, validate and use it
+      if (args.target_phase) {
+        const allPhasesSet = new Set(ALL_PHASES)
+        if (!allPhasesSet.has(args.target_phase as DiscussionPhase)) {
+          return errorResponse(`Invalid phase "${args.target_phase}". Valid phases: ${ALL_PHASES.join(", ")}`)
+        }
+        state.currentPhase = args.target_phase as DiscussionPhase
+      } else if (state.previousPhase) {
+        state.currentPhase = state.previousPhase
       }
 
-      const target = args.target_phase as DiscussionPhase
-      const result = transitionPhase("PAUSED", target)
-      if (!result.ok) throw new PhaseError(result.error)
-
-      let warning = ""
-      if (state.previousPhase && args.target_phase !== state.previousPhase) {
-        warning = `\nWarning: Workflow was paused from ${state.previousPhase}, resuming to ${args.target_phase} instead.`
-      }
-
-      state.currentPhase = result.phase
       state.previousPhase = null
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "discussion_resumed", state.currentPhase)
 
       return successResponse(
         "Discussion Resumed",
-        `${formatPhaseHeader(state.currentPhase)}\n\nDiscussion resumed at phase: ${result.phase}.${warning}`
+        `${formatPhaseHeader(state.currentPhase)}\n\nDiscussion resumed at phase: ${state.currentPhase}.`
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -921,15 +916,13 @@ export const resumeDiscussionTool = tool({
 })
 
 export const cancelDiscussionTool = tool({
-  description: "Cancels the current discussion and resets the state.",
+  description: "Cancels the current discussion and clears analysis data.",
   args: {},
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
-      const result = transitionPhase(state.currentPhase, "CANCELLED")
-      if (!result.ok) throw new PhaseError(result.error)
-
-      state.currentPhase = result.phase
+      // Cancel sets status, not phase — phase is kept for audit
+      state.status = "cancelled"
       state.discussion.analyses = []
       state.discussion.votes = []
       state.discussion.currentTurn = 0

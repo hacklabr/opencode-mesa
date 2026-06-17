@@ -51,6 +51,7 @@ describe("v1 state migration", () => {
         consensusRound: 0,
         participants: ["eng-1"],
         debateNeeded: false,
+        progress: { currentTurn: 0, completedParticipants: [], activeProfile: 'standard', deviations: 0 },
         mode: "analysis",
         maxConsensusRounds: 2,
         rigor: "standard",
@@ -61,11 +62,12 @@ describe("v1 state migration", () => {
         path: join(mesaDir, "specifications", "spec-test.md"),
         status: "approved",
       },
-      phases: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION"],
+      phases: ["PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION", "SPECIFICATION", "EXECUTION"],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       stateVersion: 1,
       previousPhase: null,
+  status: 'active',
     }
 
     await fs.writeFile(
@@ -112,7 +114,7 @@ describe("v1 state migration", () => {
     await fs.mkdir(mesaDir, { recursive: true })
 
     const v1State = createInitialState(TEST_DIR)
-    v1State.currentPhase = "CONSENSUS"
+    v1State.currentPhase = "DISCUSSION"
     v1State.discussion.votes = [
       {
         agentId: "eng-1",

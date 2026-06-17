@@ -7,7 +7,7 @@ import { mkdirSync, existsSync, readFileSync, renameSync } from "node:fs"
 import { join } from "node:path"
 import { hostname } from "node:os"
 import { z, ZodError } from "zod"
-import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType } from "./types"
+import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, DiscussionMode } from "./types"
 import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config"
 
 // SDK client for parent session lookup (set from index.ts)
@@ -67,14 +67,13 @@ async function findRootSessionId(db: Database, directory: string, sessionId: str
 
 const DiscussionPhaseEnum = z.enum([
   "PLANNING",
-  "ANALYSIS",
-  "CONSENSUS",
-  "DOCUMENTATION",
-  "APPROVAL",
+  "DISCUSSION",
+  "SPECIFICATION",
   "EXECUTION",
-  "PAUSED",
-  "CANCELLED",
 ])
+
+const DiscussionStatusEnum = z.enum(["active", "paused", "cancelled"])
+const DiscussionModeEnum = z.enum(["analysis", "debate", "voting"])
 
 const BriefingStatusEnum = z.enum(["draft", "approved", "delivered"])
 const SpecialistStatusEnum = z.enum(["proposed", "summoned", "active", "dismissed", "delegated"])
@@ -84,6 +83,13 @@ const ConsensusVoteEnum = z.union([z.literal(0), z.literal(1), z.literal(2)])
 const AnalysisTurnTypeEnum = z.enum(["analysis", "discussion"])
 const RigorProfileEnum = z.enum(["light", "standard", "deep"])
 const AnalysisModeEnum = z.enum(["parallel", "sequential", "hybrid"])
+
+const DiscussionProgressSchema = z.object({
+  currentTurn: z.number().default(0),
+  completedParticipants: z.array(z.string()).default([]),
+  activeProfile: z.string().default("standard"),
+  deviations: z.number().default(0),
+})
 
 const AnalysisEntrySchema = z.object({
   agentId: z.string(),
@@ -119,6 +125,7 @@ const SpecialistEntrySchema = z.object({
 export const DiscussionStateSchema = z.object({
   workspaceId: z.string(),
   currentPhase: DiscussionPhaseEnum,
+  status: DiscussionStatusEnum.default("active"),
   briefing: z.object({
     path: z.string().nullable(),
     status: BriefingStatusEnum,
@@ -134,19 +141,26 @@ export const DiscussionStateSchema = z.object({
     consensusRound: z.number(),
     participants: z.array(z.string()).default([]),
     debateNeeded: z.boolean().default(false),
-    mode: z.enum(["analysis", "debate"]).default("analysis"),
+    mode: DiscussionModeEnum.default("analysis"),
     maxConsensusRounds: z.number().default(2),
     // Governance fields (spec-4dcc492f) — defaults ensure backward-compat on load
     rigor: RigorProfileEnum.default("standard"),
     analysisMode: AnalysisModeEnum.default("parallel"),
     deviations: z.number().default(0),
+    // Observability (spec-4dcc492f, Decision 3, Requirement 1)
+    progress: DiscussionProgressSchema.default({
+      currentTurn: 0,
+      completedParticipants: [],
+      activeProfile: "standard",
+      deviations: 0,
+    }),
   }),
   specification: z.object({
     path: z.string().nullable(),
     status: SpecificationStatusEnum,
   }),
   appendices: z.array(z.string()).default([]),
-  phases: z.array(z.string()).default(["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION"]),
+  phases: z.array(z.string()).default(["PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION"]),
   createdAt: z.string(),
   updatedAt: z.string(),
   stateVersion: z.number().default(1),
@@ -162,6 +176,7 @@ CREATE TABLE IF NOT EXISTS mesa_state (
   workspace_id TEXT PRIMARY KEY,
   current_phase TEXT NOT NULL DEFAULT 'PLANNING',
   previous_phase TEXT DEFAULT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
   briefing_path TEXT,
   briefing_status TEXT NOT NULL DEFAULT 'draft',
   briefing_slug TEXT,
@@ -170,14 +185,15 @@ CREATE TABLE IF NOT EXISTS mesa_state (
   discussion_max_turns INTEGER DEFAULT 2,
   discussion_consensus_round INTEGER DEFAULT 0,
   discussion_debate_needed INTEGER DEFAULT 0,
+  discussion_progress TEXT DEFAULT '{}',
   specification_path TEXT,
   specification_status TEXT DEFAULT 'pending',
-  phases TEXT DEFAULT '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]',
+  phases TEXT DEFAULT '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]',
   appendices TEXT DEFAULT '[]',
   rigor TEXT DEFAULT 'standard',
   analysis_mode TEXT DEFAULT 'parallel',
   deviations INTEGER DEFAULT 0,
-  state_version INTEGER DEFAULT 4,
+  state_version INTEGER DEFAULT 5,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -240,6 +256,7 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   session_id TEXT NOT NULL,
   current_phase TEXT NOT NULL DEFAULT 'PLANNING',
   previous_phase TEXT DEFAULT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
   briefing_path TEXT,
   briefing_status TEXT NOT NULL DEFAULT 'draft',
   briefing_slug TEXT,
@@ -248,14 +265,15 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   discussion_max_turns INTEGER DEFAULT 2,
   discussion_consensus_round INTEGER DEFAULT 0,
   discussion_debate_needed INTEGER DEFAULT 0,
+  discussion_progress TEXT DEFAULT '{}',
   specification_path TEXT,
   specification_status TEXT DEFAULT 'pending',
-  phases TEXT DEFAULT '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]',
+  phases TEXT DEFAULT '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]',
   appendices TEXT DEFAULT '[]',
   rigor TEXT DEFAULT 'standard',
   analysis_mode TEXT DEFAULT 'parallel',
   deviations INTEGER DEFAULT 0,
-  state_version INTEGER DEFAULT 4,
+  state_version INTEGER DEFAULT 5,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, session_id)
@@ -461,21 +479,22 @@ function migrateFromJson(directory: string, db: Database): void {
 
   db.run(
     `INSERT OR REPLACE INTO mesa_state (
-      workspace_id, current_phase, previous_phase,
+      workspace_id, current_phase, previous_phase, status,
       briefing_path, briefing_status, briefing_slug,
       discussion_topic, discussion_current_turn, discussion_max_turns,
-      discussion_consensus_round, discussion_debate_needed,
+      discussion_consensus_round, discussion_debate_needed, discussion_progress,
       discussion_mode, discussion_max_consensus_rounds,
       specification_path, specification_status,
       phases, appendices,
       rigor, analysis_mode, deviations,
       state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      wsId, state.currentPhase, state.previousPhase,
+      wsId, state.currentPhase, state.previousPhase, state.status ?? "active",
       state.briefing.path, state.briefing.status, state.briefing.slug,
       state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
       state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
+      JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
       state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
       state.specification.path, state.specification.status,
       JSON.stringify(state.phases), JSON.stringify(state.appendices),
@@ -603,6 +622,95 @@ function migrate_v3_to_v4(db: Database): void {
   tx()
 }
 
+/**
+ * v4 → v5: Phase enum collapse 8→4 (spec-4dcc492f, Decision 3).
+ *
+ * PAUSED/CANCELLED lifted into the orthogonal `status` field; ANALYSIS/CONSENSUS
+ * merged into DISCUSSION (sub-state lives in discussion.mode); DOCUMENTATION/APPROVAL
+ * merged into SPECIFICATION. Adds `status` and `discussion_progress` columns and
+ * rewrites stored phase values + the `phases` config array.
+ */
+function migrate_v4_to_v5(db: Database): void {
+  const tx = db.transaction(() => {
+    // 1. Add the new orthogonal columns to both state tables.
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      for (const [col, def] of [
+        ["status", "TEXT NOT NULL DEFAULT 'active'"],
+        ["discussion_progress", "TEXT DEFAULT '{}'"],
+      ] as Array<[string, string]>) {
+        try {
+          db.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
+        } catch (e: unknown) {
+          const err = e as Error
+          if (!err.message.includes("duplicate column name")) throw e
+        }
+      }
+    }
+
+    // 2. PAUSED/CANCELLED → orthogonal status. The phase they displaced is
+    //    recovered from previous_phase (set on pause); fall back to PLANNING.
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      db.run(
+        `UPDATE ${table} SET status = 'paused',
+          current_phase = COALESCE(previous_phase, 'PLANNING')
+         WHERE current_phase = 'PAUSED'`
+      )
+      db.run(
+        `UPDATE ${table} SET status = 'cancelled',
+          current_phase = COALESCE(previous_phase, 'PLANNING')
+         WHERE current_phase = 'CANCELLED'`
+      )
+    }
+
+    // 3. Carry CONSENSUS semantics into discussion.mode BEFORE merging the phase.
+    //    A row still in CONSENSUS was mid-vote, so its sub-state becomes "voting".
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      db.run(
+        `UPDATE ${table} SET discussion_mode = 'voting' WHERE current_phase = 'CONSENSUS'`
+      )
+    }
+
+    // 4. Merge the phases per the collapse mapping.
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      db.run(
+        `UPDATE ${table} SET current_phase = 'DISCUSSION'
+         WHERE current_phase IN ('ANALYSIS', 'CONSENSUS')`
+      )
+      db.run(
+        `UPDATE ${table} SET current_phase = 'SPECIFICATION'
+         WHERE current_phase IN ('DOCUMENTATION', 'APPROVAL')`
+      )
+      // previous_phase may also hold legacy values.
+      db.run(
+        `UPDATE ${table} SET previous_phase = 'DISCUSSION'
+         WHERE previous_phase IN ('ANALYSIS', 'CONSENSUS')`
+      )
+      db.run(
+        `UPDATE ${table} SET previous_phase = 'SPECIFICATION'
+         WHERE previous_phase IN ('DOCUMENTATION', 'APPROVAL')`
+      )
+      db.run(
+        `UPDATE ${table} SET previous_phase = NULL
+         WHERE previous_phase IN ('PAUSED', 'CANCELLED')`
+      )
+    }
+
+    // 5. Rewrite the `phases` config array. Only rows still carrying the legacy
+    //    default (contains "ANALYSIS") are reset — user customizations are kept.
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      db.run(
+        `UPDATE ${table} SET phases = '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]'
+         WHERE phases LIKE '%ANALYSIS%'`
+      )
+    }
+
+    // 6. Bump state version.
+    db.run("UPDATE mesa_state SET state_version = 5 WHERE state_version = 4")
+    db.run("UPDATE mesa_session_state SET state_version = 5 WHERE state_version = 4")
+  })
+  tx()
+}
+
 // ---------------------------------------------------------------------------
 // Database helpers
 // ---------------------------------------------------------------------------
@@ -625,6 +733,7 @@ function getDb(directory: string): Database {
   migrate_v1_to_v2(db)
   migrate_v2_to_v3(db)
   migrate_v3_to_v4(db)
+  migrate_v4_to_v5(db)
   migrateFromJson(directory, db)
 
   return db
@@ -762,9 +871,32 @@ function rowToState(
   votes: Array<{ agent_id: string; agent_name: string; vote: number; reason: string; round: number }>,
   participants: Array<{ persona_id: string }>
 ): DiscussionState {
+  // discussion.progress may be absent on legacy rows; parse defensively.
+  let progress: DiscussionState["discussion"]["progress"] = {
+    currentTurn: 0,
+    completedParticipants: [],
+    activeProfile: "standard",
+    deviations: 0,
+  }
+  const rawProgress = row.discussion_progress as string | undefined
+  if (rawProgress) {
+    try {
+      const parsed = JSON.parse(rawProgress) as Partial<DiscussionState["discussion"]["progress"]>
+      progress = {
+        currentTurn: typeof parsed.currentTurn === "number" ? parsed.currentTurn : 0,
+        completedParticipants: Array.isArray(parsed.completedParticipants) ? parsed.completedParticipants : [],
+        activeProfile: typeof parsed.activeProfile === "string" ? parsed.activeProfile : "standard",
+        deviations: typeof parsed.deviations === "number" ? parsed.deviations : 0,
+      }
+    } catch {
+      // keep defaults on malformed JSON
+    }
+  }
+
   return {
     workspaceId: row.workspace_id as string,
     currentPhase: row.current_phase as string as DiscussionState["currentPhase"],
+    status: ((row.status as string) || "active") as DiscussionState["status"],
     previousPhase: (row.previous_phase as string | null) as DiscussionState["previousPhase"],
     briefing: {
       path: row.briefing_path as string | null,
@@ -792,18 +924,19 @@ function rowToState(
       consensusRound: (row.discussion_consensus_round as number) ?? 0,
       participants: participants.map((p) => p.persona_id),
       debateNeeded: !!(row.discussion_debate_needed as number),
-      mode: ((row.discussion_mode as string) || "analysis") as "analysis" | "debate",
+      mode: ((row.discussion_mode as string) || "analysis") as DiscussionMode,
       maxConsensusRounds: (row.discussion_max_consensus_rounds as number) ?? 2,
       rigor: ((row.rigor as string) || "standard") as DiscussionState["discussion"]["rigor"],
       analysisMode: ((row.analysis_mode as string) || "parallel") as DiscussionState["discussion"]["analysisMode"],
       deviations: (row.deviations as number) ?? 0,
+      progress,
     },
     specification: {
       path: row.specification_path as string | null,
       status: row.specification_status as DiscussionState["specification"]["status"],
     },
     appendices: JSON.parse((row.appendices as string) || '[]'),
-    phases: JSON.parse((row.phases as string) || '["PLANNING","ANALYSIS","CONSENSUS","DOCUMENTATION","APPROVAL","EXECUTION"]'),
+    phases: JSON.parse((row.phases as string) || '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]'),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     stateVersion: (row.state_version as number) ?? 1,
@@ -932,21 +1065,22 @@ export async function saveState(directory: string, state: DiscussionState, openc
 
       db.run(
         `INSERT OR REPLACE INTO mesa_session_state (
-          workspace_id, session_id, current_phase, previous_phase,
+          workspace_id, session_id, current_phase, previous_phase, status,
           briefing_path, briefing_status, briefing_slug,
           discussion_topic, discussion_current_turn, discussion_max_turns,
-          discussion_consensus_round, discussion_debate_needed,
+          discussion_consensus_round, discussion_debate_needed, discussion_progress,
           discussion_mode, discussion_max_consensus_rounds,
           specification_path, specification_status,
           phases, appendices,
           rigor, analysis_mode, deviations,
           state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          state.workspaceId, sessionId, state.currentPhase, state.previousPhase,
+          state.workspaceId, sessionId, state.currentPhase, state.previousPhase, state.status ?? "active",
           state.briefing.path, state.briefing.status, state.briefing.slug,
           state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
           state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
+          JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
           state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
           state.specification.path, state.specification.status,
           JSON.stringify(state.phases), JSON.stringify(state.appendices),

@@ -28,20 +28,16 @@ describe("config", () => {
   })
 
   const VALID_PHASES: DiscussionPhase[] = [
-    "PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION",
-    "APPROVAL", "EXECUTION", "PAUSED", "CANCELLED",
+    "PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION",
+    "SPECIFICATION", "EXECUTION", "PAUSED" as any, "CANCELLED" as any,
   ]
 
   test("all phases are covered", () => {
     const transitions: Record<DiscussionPhase, DiscussionPhase[]> = {
-      PLANNING: ["ANALYSIS", "PAUSED", "CANCELLED"],
-      ANALYSIS: ["CONSENSUS", "PAUSED", "CANCELLED"],
-      CONSENSUS: ["DOCUMENTATION", "ANALYSIS", "PAUSED", "CANCELLED"],
-      DOCUMENTATION: ["APPROVAL", "PAUSED", "CANCELLED"],
-      APPROVAL: ["EXECUTION", "DOCUMENTATION", "PAUSED", "CANCELLED"],
-      EXECUTION: ["PLANNING", "PAUSED", "CANCELLED"],
-      PAUSED: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION", "CANCELLED"],
-      CANCELLED: ["PLANNING"],
+      PLANNING: ["DISCUSSION"],
+      DISCUSSION: ["SPECIFICATION", "PLANNING"],
+      SPECIFICATION: ["EXECUTION", "DISCUSSION"],
+      EXECUTION: ["PLANNING"],
     }
 
     for (const phase of VALID_PHASES) {
@@ -102,7 +98,7 @@ describe("state persistence", () => {
   test("two sessions in same workspace have independent state", async () => {
     // Session A: create and save with ANALYSIS phase
     const stateA = await loadState(testDir)
-    stateA.currentPhase = "ANALYSIS"
+    stateA.currentPhase = "DISCUSSION"
     await saveState(testDir, stateA)
     const sessionAId = getSessionId(testDir)
     expect(sessionAId).toBeDefined()
@@ -111,7 +107,7 @@ describe("state persistence", () => {
 
     // Session B: create and save with CONSENSUS phase
     const stateB = await loadState(testDir)
-    stateB.currentPhase = "CONSENSUS"
+    stateB.currentPhase = "DISCUSSION"
     await saveState(testDir, stateB)
     const sessionBId = getSessionId(testDir)
     expect(sessionBId).toBeDefined()
@@ -126,25 +122,25 @@ describe("state persistence", () => {
       const rowA = db
         .query("SELECT current_phase FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
         .get(testDir, sessionAId) as { current_phase: string } | null
-      expect(rowA?.current_phase).toBe("ANALYSIS")
+      expect(rowA?.current_phase).toBe("DISCUSSION")
 
       const rowB = db
         .query("SELECT current_phase FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
         .get(testDir, sessionBId) as { current_phase: string } | null
-      expect(rowB?.current_phase).toBe("CONSENSUS")
+      expect(rowB?.current_phase).toBe("DISCUSSION")
 
       // Verify unscoped table has the latest state (dual-write)
       const rowUnscoped = db
         .query("SELECT current_phase FROM mesa_state WHERE workspace_id = ?")
         .get(testDir) as { current_phase: string } | null
-      expect(rowUnscoped?.current_phase).toBe("CONSENSUS")
+      expect(rowUnscoped?.current_phase).toBe("DISCUSSION")
     } finally {
       db.close()
     }
 
     // Verify loadState falls back to unscoped when no scoped state for current session
     const stateC = await loadState(testDir)
-    expect(stateC.currentPhase).toBe("CONSENSUS") // from unscoped fallback
+    expect(stateC.currentPhase).toBe("DISCUSSION") // from unscoped fallback
     closeStorage(testDir)
   })
 })

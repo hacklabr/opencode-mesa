@@ -103,8 +103,8 @@ export const mesa: Plugin = async (input) => {
         const directory = (permissionInput.metadata?.directory as string) || input.directory
         const state = await loadState(directory, permissionInput.sessionID)
 
-        // Gate 1: Only during ANALYSIS phase
-        if (state.currentPhase !== "ANALYSIS") {
+        // Gate 1: Only during DISCUSSION phase (spec-4dcc492f, Decision 3)
+        if (state.currentPhase !== "DISCUSSION") {
           output.status = "deny"
           return
         }
@@ -191,7 +191,7 @@ export const mesa: Plugin = async (input) => {
           responseText,
         ].join("\n"), "utf-8")
 
-        await logAction(directory, "peer_task_completed", "ANALYSIS", {
+        await logAction(directory, "peer_task_completed", "DISCUSSION", {
           callerSession: toolInput.sessionID,
           peer: calleePersonaId,
           exchangeFile: exchangeRelPath,

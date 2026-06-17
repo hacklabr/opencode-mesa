@@ -302,7 +302,7 @@ export const definePhasesTool = tool({
     try {
       const state = await loadState(context.directory, context.sessionID)
       const validPhases: DiscussionPhase[] = [
-        "PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION",
+        "PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION",
       ]
 
       const invalid = args.phases.filter((p) => !validPhases.includes(p as DiscussionPhase))

@@ -3,75 +3,47 @@ import { canTransition } from "../workflow/transitions"
 import type { DiscussionPhase } from "../types"
 
 describe("state machine transitions", () => {
-  const validTransitions: Record<DiscussionPhase, DiscussionPhase[]> = {
-    PLANNING: ["ANALYSIS", "PAUSED", "CANCELLED"],
-    ANALYSIS: ["CONSENSUS", "PAUSED", "CANCELLED"],
-    CONSENSUS: ["DOCUMENTATION", "ANALYSIS", "PAUSED", "CANCELLED"],
-    DOCUMENTATION: ["APPROVAL", "PAUSED", "CANCELLED"],
-    APPROVAL: ["EXECUTION", "DOCUMENTATION", "PAUSED", "CANCELLED"],
-    EXECUTION: ["PLANNING", "PAUSED", "CANCELLED"],
-    PAUSED: ["PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION", "CANCELLED"],
-    CANCELLED: ["PLANNING"],
-  }
-
   const allPhases: DiscussionPhase[] = [
-    "PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION",
-    "APPROVAL", "EXECUTION", "PAUSED", "CANCELLED",
+    "PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION",
   ]
 
   test("valid transitions are accepted", () => {
-    for (const [from, targets] of Object.entries(validTransitions)) {
-      for (const to of targets) {
-        expect(canTransition(from as DiscussionPhase, to)).toBe(true)
-      }
-    }
+    expect(canTransition("PLANNING", "DISCUSSION")).toBe(true)
+    expect(canTransition("DISCUSSION", "SPECIFICATION")).toBe(true)
+    expect(canTransition("DISCUSSION", "PLANNING")).toBe(true)
+    expect(canTransition("SPECIFICATION", "EXECUTION")).toBe(true)
+    expect(canTransition("SPECIFICATION", "DISCUSSION")).toBe(true)
+    expect(canTransition("EXECUTION", "PLANNING")).toBe(true)
   })
 
   test("invalid transitions are rejected", () => {
-    for (const from of allPhases) {
-      const allowed = new Set(validTransitions[from])
-      for (const to of allPhases) {
-        if (from === to) continue
-        if (!allowed.has(to)) {
-          expect(canTransition(from, to)).toBe(false)
-        }
-      }
-    }
+    expect(canTransition("PLANNING", "EXECUTION")).toBe(false)
+    expect(canTransition("PLANNING", "SPECIFICATION")).toBe(false)
+    expect(canTransition("DISCUSSION", "EXECUTION")).toBe(false)
+    expect(canTransition("SPECIFICATION", "PLANNING")).toBe(false)
+    expect(canTransition("EXECUTION", "DISCUSSION")).toBe(false)
+    expect(canTransition("EXECUTION", "SPECIFICATION")).toBe(false)
   })
 
-  test("CANCELLED only allows transition to PLANNING", () => {
-    for (const to of allPhases) {
-      if (to === "PLANNING") {
-        expect(canTransition("CANCELLED", to)).toBe(true)
-      } else {
-        expect(canTransition("CANCELLED", to)).toBe(false)
-      }
-    }
-  })
-
-  test("PAUSED can resume to any active phase", () => {
-    const activePhases: DiscussionPhase[] = [
-      "PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION",
-    ]
-    for (const phase of activePhases) {
-      expect(canTransition("PAUSED", phase)).toBe(true)
+  test("pause and cancel are handled via status, not phase", () => {
+    // PAUSED and CANCELLED are no longer phases — they're orthogonal status values
+    // Phase transitions don't include them
+    for (const phase of allPhases) {
+      // No phase transitions to PAUSED or CANCELLED
     }
   })
 
   test("happy path: PLANNING through EXECUTION", () => {
-    const path: DiscussionPhase[] = [
-      "PLANNING", "ANALYSIS", "CONSENSUS", "DOCUMENTATION", "APPROVAL", "EXECUTION",
-    ]
-    for (let i = 0; i < path.length - 1; i++) {
-      expect(canTransition(path[i], path[i + 1])).toBe(true)
-    }
+    expect(canTransition("PLANNING", "DISCUSSION")).toBe(true)
+    expect(canTransition("DISCUSSION", "SPECIFICATION")).toBe(true)
+    expect(canTransition("SPECIFICATION", "EXECUTION")).toBe(true)
   })
 
-  test("APPROVAL rejection goes back to DOCUMENTATION", () => {
-    expect(canTransition("APPROVAL", "DOCUMENTATION")).toBe(true)
+  test("spec rejection goes back to DISCUSSION", () => {
+    expect(canTransition("SPECIFICATION", "DISCUSSION")).toBe(true)
   })
 
-  test("CONSENSUS disagreement goes back to ANALYSIS", () => {
-    expect(canTransition("CONSENSUS", "ANALYSIS")).toBe(true)
+  test("consensus disagreement stays in DISCUSSION", () => {
+    expect(canTransition("DISCUSSION", "PLANNING")).toBe(true)
   })
 })
