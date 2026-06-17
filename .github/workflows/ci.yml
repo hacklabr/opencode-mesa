@@ -1,0 +1,58 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Three legs cover the engines floor (node 22), the Desktop actual
+        # (node 26), and the Bun runtime (1.3). fail-fast: false so a failure
+        # on one leg does not mask the others.
+        include:
+          - { runtime: node, version: "22" }
+          - { runtime: node, version: "26" }
+          - { runtime: bun,  version: "1.3" }
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The catalog submodule is optional for build/test — dist already
+          # ships a copy of the agents catalog (see the build script).
+          submodules: false
+
+      # Both runtimes are installed on EVERY leg. `test:smoke` runs the
+      # dual-runtime shell which invokes node AND bun, so each leg needs both
+      # engines available regardless of its primary matrix runtime. (Chosen
+      # over per-runtime smoke scripts to avoid drift between the two.)
+      - uses: actions/setup-node@v4
+        with:
+          # Node leg: its matrix version (22/26). Bun leg: 22 (engines floor —
+          # the minimum that supports node:sqlite for smoke's node sub-run).
+          node-version: "${{ matrix.runtime == 'node' && matrix.version || '22' }}"
+          # `npm ci` needs a lockfile; cache speeds up repeated runs.
+          cache: "npm"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Bun leg: its matrix version (1.3). Node legs: 1.3 (for smoke's bun sub-run).
+          bun-version: "${{ matrix.runtime == 'bun' && matrix.version || '1.3' }}"
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # Runtime-native test suites. NODE_OPTIONS injects --experimental-sqlite
+      # which node 22 requires for `node:sqlite`; it is accepted (and inert) on
+      # node 26 where node:sqlite is unflagged.
+      - if: matrix.runtime == 'node'
+        run: npm run test:node
+        env:
+          NODE_OPTIONS: "--experimental-sqlite"
+      - if: matrix.runtime == 'bun'
+        run: npm run test:bun
+
+      # Dual-runtime smoke: proves dist/index.js loads AND mesa_status executes
+      # under the matrix leg's engine (and, via the shell, its counterpart).
+      - run: npm run test:smoke
