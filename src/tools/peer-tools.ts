@@ -83,7 +83,9 @@ export const askPeerTool = tool({
     "Ask a peer specialist a direct question during the sequential consensus turn. " +
     "The peer will receive your question and respond, with FULL context from their previous turns. " +
     "Use this to clarify ambiguities, challenge positions, or request elaboration. " +
-    "Be targeted — do not ask vague questions.",
+    "Be targeted — do not ask vague questions. " +
+    "IMPORTANT: ask_peer is UNIDIRECTIONAL — you ask, the peer answers in their response. " +
+    "Do NOT use ask_peer to reply to a consultation you received. Reply naturally in your analysis output instead.",
 
   args: {
     peer_id: tool.schema
