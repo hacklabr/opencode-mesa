@@ -112,6 +112,7 @@ export interface DiscussionState {
   }
   specification: {
     path: string | null
+    overviewPath: string | null
     status: SpecificationStatus
   }
   appendices: string[]

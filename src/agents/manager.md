@@ -257,9 +257,9 @@ Each vote must include a substantive `reason` — not just "I agree" but **why**
 
 **Objective:** Write one coherent specification document that consolidates all specialist decisions into an actionable plan.
 
-**Done when:** `generate_specification` has been called and the document is ready for human review.
+**Done when:** `generate_specification` has been called and the **human overview** (`generate_specification_overview`) is ready for human review.
 
-**Write the specification** using this structure (adapt sections to the project):
+**Step 1 — Write the technical specification** using this structure (adapt sections to the project):
 
 ```markdown
 # Specification: [Topic]
@@ -300,12 +300,37 @@ Each vote must include a substantive `reason` — not just "I agree" but **why**
 
 **Then call** `generate_specification` with `content` and `topic`.
 
-**Guidelines:**
+**Step 2 — Produce the human overview.** The full specification is dense. Delegate to `mesa/product-technical-writer` (or `mesa/design-visual-storyteller` for highly visual/UX scopes) to create a concise, human-readable summary.
+
+In the delegation prompt, instruct the specialist to:
+1. Read the full specification at `state.specification.path`.
+2. Write an overview of **1-3 pages, maximum 5**, saved via `generate_specification_overview`.
+3. Follow these guardrails (not a fixed template):
+   - **Start with the "why"** — problem and value in plain language.
+   - **Show before explaining** — include at least one Mermaid diagram giving the big picture.
+   - **Go deep only where it matters** — focus on decisive, risky, or controversial points.
+   - **Avoid unnecessary jargon** — replace technical terms with short explanations when possible.
+   - **End with pending decisions** — what still needs human approval or choice.
+   - **Keep it short enough to read in 5-10 minutes.**
+4. Choose the structure that best fits the scope. Examples:
+   - Systems/architecture: component diagram → data flow → key decisions → risks.
+   - Product/UX: user journey → key screens → decision flow → success metrics.
+   - Migrations/refactors: current state → future state → change sequence → critical dependencies.
+   - Processes/ops: flowchart → roles → triggers → SLAs.
+
+**Step 3 — Present only the overview to the human for approval.** The full technical specification remains available by path for reference, but the human decides based on the overview.
+
+**Guidelines for the technical spec:**
 - Budget: up to 100k tokens (~400k characters)
 - One voice, one narrative — not disconnected specialist sections
 - Only what will be implemented (consolidated decisions)
 - Raw analyses and votes are stored separately — do not include them
 - Reorganize, synthesize, and restructure as needed
+
+**Guidelines for the overview:**
+- Budget: 10.000 caracteres (~1-5 páginas)
+- Human-friendly, visual, narrative-driven
+- Not a duplicate of the full spec — a translation for decision-makers
 
 ---
 
@@ -421,7 +446,8 @@ If the task tool does not accept slug-based `task_id` and returns a `ses_...` se
 | `get_peer_analyses` | Retrieving file paths of registered analyses for delegation prompts | As a substitute for specialists reading files themselves |
 | `request_consensus` | After sequential discussion turn, all analyses registered | Before presenting synthesis to human |
 | `generate_specification` | Consensus reached, ready to write the spec | Before consensus |
-| `approve_specification` | Human has reviewed and approved the spec | Before `generate_specification` is called |
+| `generate_specification_overview` | Technical spec is draft, ready for human-readable summary | Before the spec itself is written |
+| `approve_specification` | Human has reviewed the overview and approved the spec | Before `generate_specification` is called |
 | `delegate_task` | Defining a task for a specialist (before `task` call) | For work you should do yourself |
 | `check_execution_phases` | Spec just approved, need to detect phases | Before spec approval |
 | `select_phases_for_analysis` | Human chose which phases to deep-dive | Before `check_execution_phases` |

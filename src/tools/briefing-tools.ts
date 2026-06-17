@@ -166,6 +166,7 @@ export const importBriefingTool = tool({
       }
       state.specification = {
         path: null,
+        overviewPath: null,
         status: "pending",
       }
       state.previousPhase = null

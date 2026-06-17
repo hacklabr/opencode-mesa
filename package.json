@@ -1,6 +1,6 @@
 {
   "name": "opencode-mesa",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "OpenCode plugin for structured discussion tables with specialized AI agents",
   "type": "module",
   "main": "dist/index.js",

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-06-17
+
+### Added
+- **Human-readable specification overview** — new `generate_specification_overview` tool produces a concise, visual summary (1-5 pages, budget 10.000 caracteres) for human approval.
+  - Saved as `.mesa/specifications/overview-{id}.md`, separate from the full technical spec.
+  - Linked to the master spec via `state.specification.overviewPath`.
+  - Manager prompt updated to delegate overview creation to `product-technical-writer` (or `design-visual-storyteller` for visual/UX scopes) using guardrails, not a fixed template.
+  - `approve_specification` notes the overview path on approval.
+  - New tests in `src/__tests__/specification-overview.test.ts`.
+
+### Changed
+- `DiscussionState.specification` now includes `overviewPath: string | null`.
+- State schema migrated to version 7 with `specification_overview_path` column.
+
+### Fixed
+- Base SQL schema now includes analysis columns (`file_path`, `kind`, `turn_type`, `round`, etc.) that the UNIQUE constraint already referenced.
+
 ## [3.0.0] - 2026-06-16
 
 ### Added — Governance Model (spec-4dcc492f.md)

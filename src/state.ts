@@ -157,6 +157,7 @@ export const DiscussionStateSchema = z.object({
   }),
   specification: z.object({
     path: z.string().nullable(),
+    overviewPath: z.string().nullable().default(null),
     status: SpecificationStatusEnum,
   }),
   appendices: z.array(z.string()).default([]),
@@ -187,6 +188,7 @@ CREATE TABLE IF NOT EXISTS mesa_state (
   discussion_debate_needed INTEGER DEFAULT 0,
   discussion_progress TEXT DEFAULT '{}',
   specification_path TEXT,
+  specification_overview_path TEXT,
   specification_status TEXT DEFAULT 'pending',
   phases TEXT DEFAULT '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]',
   appendices TEXT DEFAULT '[]',
@@ -217,6 +219,14 @@ CREATE TABLE IF NOT EXISTS mesa_analyses (
   content TEXT,
   turn INTEGER,
   timestamp TEXT,
+  file_path TEXT,
+  kind TEXT DEFAULT 'full',
+  turn_type TEXT DEFAULT 'analysis',
+  round INTEGER,
+  position_in_turn INTEGER,
+  responds_to TEXT,
+  tensions_raised TEXT,
+  session_resumed INTEGER,
   UNIQUE(workspace_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_analyses_turn ON mesa_analyses(workspace_id, turn);
@@ -267,6 +277,7 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   discussion_debate_needed INTEGER DEFAULT 0,
   discussion_progress TEXT DEFAULT '{}',
   specification_path TEXT,
+  specification_overview_path TEXT,
   specification_status TEXT DEFAULT 'pending',
   phases TEXT DEFAULT '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]',
   appendices TEXT DEFAULT '[]',
@@ -300,6 +311,14 @@ CREATE TABLE IF NOT EXISTS mesa_session_analyses (
   content TEXT,
   turn INTEGER,
   timestamp TEXT,
+  file_path TEXT,
+  kind TEXT DEFAULT 'full',
+  turn_type TEXT DEFAULT 'analysis',
+  round INTEGER,
+  position_in_turn INTEGER,
+  responds_to TEXT,
+  tensions_raised TEXT,
+  session_resumed INTEGER,
   UNIQUE(workspace_id, session_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_session_analyses_turn ON mesa_session_analyses(workspace_id, session_id, turn);
@@ -484,11 +503,11 @@ function migrateFromJson(directory: string, db: Database): void {
       discussion_topic, discussion_current_turn, discussion_max_turns,
       discussion_consensus_round, discussion_debate_needed, discussion_progress,
       discussion_mode, discussion_max_consensus_rounds,
-      specification_path, specification_status,
+      specification_path, specification_overview_path, specification_status,
       phases, appendices,
       rigor, analysis_mode, deviations,
       state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       wsId, state.currentPhase, state.previousPhase, state.status ?? "active",
       state.briefing.path, state.briefing.status, state.briefing.slug,
@@ -496,7 +515,7 @@ function migrateFromJson(directory: string, db: Database): void {
       state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
       JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
       state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
-      state.specification.path, state.specification.status,
+      state.specification.path, state.specification.overviewPath, state.specification.status,
       JSON.stringify(state.phases), JSON.stringify(state.appendices),
       state.discussion.rigor ?? "standard",
       state.discussion.analysisMode ?? "parallel",
@@ -790,6 +809,23 @@ function migrate_v5_to_v6(db: Database): void {
 // Database helpers
 // ---------------------------------------------------------------------------
 
+function migrate_v6_to_v7(db: Database): void {
+  const tx = db.transaction(() => {
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      try {
+        db.run(`ALTER TABLE ${table} ADD COLUMN specification_overview_path TEXT`)
+      } catch (e: unknown) {
+        const err = e as Error
+        if (!err.message.includes("duplicate column name")) throw e
+      }
+    }
+
+    db.run("UPDATE mesa_state SET state_version = 7 WHERE state_version = 6")
+    db.run("UPDATE mesa_session_state SET state_version = 7 WHERE state_version = 6")
+  })
+  tx()
+}
+
 function getDb(directory: string): Database {
   const stateDir = join(directory, PLUGIN_STATE_DIR)
   mkdirSync(stateDir, { recursive: true })
@@ -810,6 +846,7 @@ function getDb(directory: string): Database {
   migrate_v3_to_v4(db)
   migrate_v4_to_v5(db)
   migrate_v5_to_v6(db)
+  migrate_v6_to_v7(db)
   migrateFromJson(directory, db)
 
   return db
@@ -1009,6 +1046,7 @@ function rowToState(
     },
     specification: {
       path: row.specification_path as string | null,
+      overviewPath: row.specification_overview_path as string | null,
       status: row.specification_status as DiscussionState["specification"]["status"],
     },
     appendices: JSON.parse((row.appendices as string) || '[]'),
@@ -1146,11 +1184,11 @@ export async function saveState(directory: string, state: DiscussionState, openc
           discussion_topic, discussion_current_turn, discussion_max_turns,
           discussion_consensus_round, discussion_debate_needed, discussion_progress,
           discussion_mode, discussion_max_consensus_rounds,
-          specification_path, specification_status,
+          specification_path, specification_overview_path, specification_status,
           phases, appendices,
           rigor, analysis_mode, deviations,
           state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, sessionId, state.currentPhase, state.previousPhase, state.status ?? "active",
           state.briefing.path, state.briefing.status, state.briefing.slug,
@@ -1158,7 +1196,7 @@ export async function saveState(directory: string, state: DiscussionState, openc
           state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
           JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
           state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
-          state.specification.path, state.specification.status,
+          state.specification.path, state.specification.overviewPath, state.specification.status,
           JSON.stringify(state.phases), JSON.stringify(state.appendices),
           state.discussion.rigor ?? "standard",
           state.discussion.analysisMode ?? "parallel",

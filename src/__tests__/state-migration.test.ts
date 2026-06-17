@@ -60,6 +60,7 @@ describe("v1 state migration", () => {
       },
       specification: {
         path: join(mesaDir, "specifications", "spec-test.md"),
+        overviewPath: null,
         status: "approved",
       },
       phases: ["PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION", "SPECIFICATION", "EXECUTION"],

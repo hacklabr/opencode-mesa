@@ -76,7 +76,7 @@ describe("open_analysis_round tool", () => {
     state.team = [
       { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
     ]
-    state.specification = { path: "/old/spec.md", status: "draft" }
+    state.specification = { path: "/old/spec.md", overviewPath: null, status: "draft" }
     state.discussion.votes = [
       { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
     ]
@@ -451,7 +451,7 @@ describe("approve_specification tool", () => {
   test("approves specification and moves to EXECUTION", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "SPECIFICATION"
-    state.specification = { path: "/spec.md", status: "draft" }
+    state.specification = { path: "/spec.md", overviewPath: "/overview.md", status: "draft" }
     await saveState(TEST_DIR, state)
 
     const result = await approveSpecificationTool.execute(
@@ -471,7 +471,7 @@ describe("approve_specification tool", () => {
   test("rejects specification and returns to DOCUMENTATION", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "SPECIFICATION"
-    state.specification = { path: "/spec.md", status: "draft" }
+    state.specification = { path: "/spec.md", overviewPath: null, status: "draft" }
     await saveState(TEST_DIR, state)
 
     const result = await approveSpecificationTool.execute(

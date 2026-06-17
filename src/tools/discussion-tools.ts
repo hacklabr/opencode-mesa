@@ -14,6 +14,7 @@ import { recordAgentSession, clearAgentSessions } from "./peer-tools"
 import { PhaseError, MesaError } from "../errors"
 
 const MAX_TOTAL_CHARS = 400000
+const MAX_OVERVIEW_CHARS = 10000
 
 function transitionPhase(
   current: DiscussionPhase,
@@ -122,7 +123,7 @@ export const openAnalysisRoundTool = tool({
       state.discussion.consensusRound = 0
       state.discussion.participants = args.participants
       state.discussion.debateNeeded = false
-      state.specification = { path: null, status: "pending" }
+      state.specification = { path: null, overviewPath: null, status: "pending" }
 
       if (args.briefing_content) {
         const briefingFile = join(
@@ -721,6 +722,70 @@ export const requestConsensusTool = tool({
   },
 })
 
+export const generateSpecificationOverviewTool = tool({
+  description:
+    "Generates a human-readable overview document for the approved specification. This is a concise, visual summary (1-5 pages, ideally 1-3) with diagrams that the human uses to understand and approve the proposed architecture/solution. The technical specification remains the authoritative source.",
+  args: {
+    content: tool.schema
+      .string()
+      .describe("The complete overview content in Markdown. Should be concise, visual, and human-friendly — not a copy of the full spec."),
+    topic: tool.schema.string().describe("The overview topic/title"),
+  },
+  async execute(args, context) {
+    try {
+      const state = await loadState(context.directory, context.sessionID)
+      const phaseError = requirePhase(state, "SPECIFICATION")
+      if (phaseError) throw new PhaseError(phaseError)
+
+      if (state.specification.status !== "draft" || !state.specification.path) {
+        return errorResponse(
+          "No draft specification found. Generate the specification first using generate_specification."
+        )
+      }
+
+      if (args.content.length > MAX_OVERVIEW_CHARS) {
+        return errorResponse(
+          `Overview exceeds maximum length: ${args.content.length} chars (max ${MAX_OVERVIEW_CHARS}).\n` +
+          `Reduce the content to fit within 1-5 pages (ideally 1-3).`
+        )
+      }
+
+      const specsDir = join(context.directory, PLUGIN_STATE_DIR, "specifications")
+      const specIdMatch = state.specification.path.match(/spec-([a-zA-Z0-9]+)\.md$/)
+      const id = specIdMatch ? specIdMatch[1] : randomUUID().slice(0, 8)
+      const overviewPath = join(specsDir, `overview-${id}.md`)
+
+      const document = [
+        `# Overview: ${args.topic}`,
+        ``,
+        `**Generated at:** ${new Date().toISOString()}`,
+        `**Technical specification:** ${state.specification.path}`,
+        ``,
+        args.content,
+      ].join("\n")
+
+      await fs.writeFile(overviewPath, document, "utf-8")
+
+      state.specification.overviewPath = overviewPath
+      await saveState(context.directory, state, context.sessionID)
+      await logAction(context.directory, "specification_overview_generated", state.currentPhase, {
+        overviewPath,
+        specPath: state.specification.path,
+      })
+
+      return successResponse(
+        "Specification Overview Generated",
+        `${formatPhaseHeader(state.currentPhase, { topic: args.topic })}\n\nOverview saved to: ${overviewPath}\n\n` +
+        `This is the human-readable summary for approval. The full technical specification remains at: ${state.specification.path}`,
+        { overviewPath, specPath: state.specification.path }
+      )
+    } catch (err) {
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(`Error generating overview: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  },
+})
+
 export const generateSpecificationTool = tool({
   description:
     "Generates the specification document. The Manager writes a single coherent document (up to 100k tokens) covering: executive summary, context, technical decisions, execution plan with tasks and priorities. Analyses are stored separately — they do NOT appear in the spec.",
@@ -828,9 +893,13 @@ export const approveSpecificationTool = tool({
         await saveState(context.directory, state, context.sessionID)
         await logAction(context.directory, "specification_approved", state.currentPhase)
 
+        const overviewNote = state.specification.overviewPath
+          ? `Human overview: ${state.specification.overviewPath}`
+          : "Note: no human overview was generated. The full technical specification was approved directly."
+
         return successResponse(
           "Specification Approved",
-          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification approved. Phase changed to EXECUTION. The Manager may now delegate implementation tasks.`
+          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification approved. Phase changed to EXECUTION. The Manager may now delegate implementation tasks.\n\n${overviewNote}`
         )
       } else {
         // Rejection: stay in SPECIFICATION (no back-edge needed — spec revision happens in same phase)
