@@ -303,13 +303,15 @@ export const registerAnalysisTool = tool({
         }
       }
 
-      // Dedup check (existing) — use matchedId
+      // Dedup check — include turnType to allow same agent+turn for different types
+      // (e.g., turn=3 analysis AND turn=3 discussion for the same agent)
       const effectiveId = matchedId ?? args.agent_id
       const existing = state.discussion.analyses.find(
         (a) => a.agentId === effectiveId && a.turn === args.turn
+          && (a.turnType ?? "analysis") === turnType
       )
       if (existing) {
-        return errorResponse(`Analysis already registered for ${args.agent_name} turn ${args.turn}.`)
+        return errorResponse(`Analysis already registered for ${args.agent_name} turn ${args.turn} (${turnType}).`)
       }
 
       // P1-T4: Path-traversal validation for file_path

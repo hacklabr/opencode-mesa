@@ -802,13 +802,9 @@ function ensureSession(directory: string, sessionId: string): void {
 }
 
 export async function loadState(directory: string, opencodeSessionId?: string): Promise<DiscussionState> {
-  // Use the OpenCode session ID directly if provided — this ensures each
-  // OpenCode tab/window gets its own isolated Mesa session.
-  // Falls back to initSession for backward compatibility.
   let sessionId: string | undefined
   if (opencodeSessionId) {
     sessionId = opencodeSessionId
-    // Ensure this session exists in mesa_session table
     ensureSession(directory, opencodeSessionId)
   } else {
     await initSession(directory)
@@ -817,15 +813,32 @@ export async function loadState(directory: string, opencodeSessionId?: string): 
 
   const db = getDb(directory)
   try {
-    // Load session-scoped state ONLY — no fallback to unscoped tables
-    // This prevents cross-session contamination
+    // 1. Try to load from THIS session
     if (sessionId) {
       const sessionState = loadSessionState(db, directory, sessionId)
       if (sessionState) return sessionState
     }
 
-    // No session-scoped state found — return fresh initial state
-    // (previously fell back to unscoped mesa_state, causing cross-session contamination)
+    // 2. ROOT SESSION FALLBACK: If this session has no state (e.g., a specialist
+    //    subagent whose session was created by the Manager via task()), look for
+    //    an active discussion session in the same workspace. This allows subagents
+    //    to inherit the discussion state (ANALYSIS phase, participants, etc.)
+    //    from the Manager session that started the analysis round.
+    if (sessionId) {
+      const rootRow = db
+        .query(`SELECT session_id FROM mesa_session_state
+                WHERE workspace_id = ? AND session_id != ?
+                AND current_phase IN ('ANALYSIS', 'CONSENSUS')
+                ORDER BY updated_at DESC LIMIT 1`)
+        .get(directory, sessionId) as { session_id: string } | null
+
+      if (rootRow) {
+        const rootState = loadSessionState(db, directory, rootRow.session_id)
+        if (rootState) return rootState
+      }
+    }
+
+    // 3. No state found — return fresh initial state
     return createInitialState(directory)
   } finally {
     db.close()
@@ -840,6 +853,34 @@ export async function saveState(directory: string, state: DiscussionState, openc
   } else {
     await initSession(directory)
     sessionId = getSessionId(directory)
+  }
+
+  // ROOT SESSION RESOLUTION: If this session has no state of its own,
+  // it's likely a subagent. Write to the root discussion session instead
+  // so that all participants share the same discussion state.
+  if (opencodeSessionId) {
+    const db0 = getDb(directory)
+    try {
+      const hasOwnState = db0
+        .query("SELECT session_id FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
+        .get(directory, opencodeSessionId)
+
+      if (!hasOwnState) {
+        // Look for root discussion session
+        const rootRow = db0
+          .query(`SELECT session_id FROM mesa_session_state
+                  WHERE workspace_id = ? AND session_id != ?
+                  AND current_phase IN ('ANALYSIS', 'CONSENSUS')
+                  ORDER BY updated_at DESC LIMIT 1`)
+          .get(directory, opencodeSessionId) as { session_id: string } | null
+
+        if (rootRow) {
+          sessionId = rootRow.session_id
+        }
+      }
+    } finally {
+      db0.close()
+    }
   }
 
   state.updatedAt = new Date().toISOString()
