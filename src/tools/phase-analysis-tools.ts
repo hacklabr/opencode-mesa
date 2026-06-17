@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { promises as fs } from "node:fs"
 import { loadState, saveState, getSessionId } from "../state"
+import { clearAgentSessions } from "./peer-tools"
 import { SqliteStateRepository } from "../repositories/sqlite-state-repository"
 import { FsArtifactRepository } from "../repositories/fs-artifact-repository"
 import type { StateRepository } from "../repositories/state-repository"
@@ -243,6 +244,9 @@ export const openPhaseAnalysisRoundTool = tool({
         phaseName: args.phase_name,
         mode: args.mode,
       })
+
+      // Reset consultation counts and session tracking for the new phase round
+      clearAgentSessions()
 
       const lines = [
         `Phase ${args.phase_index}: ${args.phase_name}`,
