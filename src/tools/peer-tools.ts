@@ -72,9 +72,9 @@ export const askPeerTool = tool({
     try {
       const client = sdkClient as {
         session: {
-          list: (opts?: {
+          status: (opts?: {
             query?: { directory?: string }
-          }) => Promise<{ data?: Array<{ id: string; title: string; parentID?: string }> }>
+          }) => Promise<{ data?: Record<string, { type: string }> }>
           prompt: (opts: {
             path: { id: string }
             body: {
@@ -87,8 +87,6 @@ export const askPeerTool = tool({
       }
 
       // Look up the peer's REAL session ID from the mapping.
-      // This mapping is populated when the specialist calls register_analysis
-      // from their OWN session — guaranteeing the correct session ID.
       const peerSessionId = getAgentSession(peer_id)
 
       if (!peerSessionId) {
@@ -96,6 +94,26 @@ export const askPeerTool = tool({
           `No session tracked for peer ${peer_id}. ` +
           `The specialist must call register_analysis from their own session to register their session ID.`
         )
+      }
+
+      // DEADLOCK PREVENTION: Check if the peer's session is busy before sending.
+      // During parallel turns, specialists are mid-analysis and cannot respond.
+      // Calling ask_peer on a busy peer would block indefinitely (deadlock if
+      // both specialists call ask_peer on each other simultaneously).
+      try {
+        const statusResult = await client.session.status({
+          query: { directory: context.directory },
+        })
+        const peerStatus = statusResult.data?.[peerSessionId]
+        if (peerStatus && peerStatus.type === "busy") {
+          return errorResponse(
+            `Peer ${peer_id} is currently busy (session status: ${peerStatus.type}). ` +
+            `Peer consultation is only available during sequential turns when the peer is idle. ` +
+            `Wait for the Manager to initiate the consensus turn before consulting peers.`
+          )
+        }
+      } catch {
+        // Status check failed — proceed anyway (best-effort, don't block on status)
       }
 
       // D6: per-turn consultation rate cap (profile-gated).
