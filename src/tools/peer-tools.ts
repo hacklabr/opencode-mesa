@@ -1,7 +1,10 @@
 import { tool } from "@opencode-ai/plugin"
+import { Database } from "bun:sqlite"
+import { join } from "node:path"
 import { successResponse, errorResponse } from "../utils/responses"
-import { loadState } from "../state"
 import { peerConsultationCap, type RigorProfile } from "../workflow/profiles"
+import { loadState } from "../state"
+import { PLUGIN_STATE_DIR } from "../config"
 
 // Module-level SDK client reference (set from index.ts)
 let sdkClient: unknown = null
@@ -31,6 +34,35 @@ export function getAgentSession(agentId: string): string | undefined {
 export function clearAgentSessions(): void {
   agentSessions.clear()
   peerConsultations.clear()
+}
+
+// Find the peer's session ID from SQLite (survives restarts).
+// Queries mesa_session_analyses for the most recent session_id that has
+// analyses from the given agent_id in this workspace.
+function findSessionFromDb(directory: string, agentId: string): string | null {
+  try {
+    const dbPath = join(directory, PLUGIN_STATE_DIR, "state.db")
+    const db = new Database(dbPath, { readonly: true })
+    try {
+      // Try exact match first
+      let row = db
+        .query("SELECT session_id FROM mesa_session_analyses WHERE workspace_id = ? AND agent_id = ? ORDER BY id DESC LIMIT 1")
+        .get(directory, agentId) as { session_id: string } | null
+
+      // Try suffix match (e.g., "backend-architect" matches "software-development-backend-architect")
+      if (!row) {
+        row = db
+          .query("SELECT session_id FROM mesa_session_analyses WHERE workspace_id = ? AND agent_id LIKE ? ORDER BY id DESC LIMIT 1")
+          .get(directory, `%${agentId}`) as { session_id: string } | null
+      }
+
+      return row?.session_id ?? null
+    } finally {
+      db.close()
+    }
+  } catch {
+    return null
+  }
 }
 
 /** Reset the per-turn consultation counters (used on new analysis round). */
@@ -86,8 +118,19 @@ export const askPeerTool = tool({
         }
       }
 
-      // Look up the peer's REAL session ID from the mapping.
-      const peerSessionId = getAgentSession(peer_id)
+      // Look up the peer's session ID.
+      // First try the in-memory Map (fast). If empty (e.g., after restart),
+      // fall back to SQLite query (survives restarts).
+      let peerSessionId = getAgentSession(peer_id)
+
+      if (!peerSessionId) {
+        // Fallback: query SQLite for the session that has analyses from this peer
+        peerSessionId = findSessionFromDb(context.directory, peer_id) ?? undefined
+        if (peerSessionId) {
+          // Cache in Map for future lookups in this process
+          recordAgentSession(peer_id, peerSessionId)
+        }
+      }
 
       if (!peerSessionId) {
         return errorResponse(
