@@ -296,7 +296,7 @@ export const definePhasesTool = tool({
   args: {
     phases: tool.schema
       .array(tool.schema.string())
-      .describe("Ordered array of phase names (e.g. ['PLANNING', 'ANALYSIS', 'CONSENSUS'])"),
+      .describe("Ordered array of phase names. Valid values: PLANNING, DISCUSSION, SPECIFICATION, EXECUTION. Example: ['PLANNING', 'DISCUSSION', 'SPECIFICATION', 'EXECUTION']"),
   },
   async execute(args, context) {
     try {

@@ -186,10 +186,12 @@ Never request consensus without first presenting a summary.
 
 #### Topology — When Direct Peer Consultation Is Available
 
-The discussion topology depends on the turn type:
+The `ask_peer` tool allows specialists to consult each other directly. It is only available during **sequential turns** — when specialists speak one at a time and peers are idle (not mid-analysis).
 
-- **Parallel turns (Turn 1, Turn 2):** All specialist sessions run simultaneously. You (the Manager) pass file paths; specialists read peer work via `read`. Direct peer-to-peer consultation is **not available** — peer sessions are mid-execution and cannot be resumed.
-- **Sequential consensus turn:** Specialists speak one at a time, in an order you define. Each specialist can **directly consult peers** via `task` — the `task` tool is enabled for `mesa/*` agents during this turn. The peer's real session is resumed, and the question enters the peer's session history (this "contamination" is a feature — peers accumulate knowledge from questions received).
+- **Parallel turns (Turn 1, Turn 2+):** All specialist sessions run simultaneously. `ask_peer` returns an error ("peer is busy") because peers are mid-execution. Specialists read peer work via `read` (file paths) instead.
+- **Sequential consensus turn:** Specialists speak one at a time. The `ask_peer` tool is the primary mechanism for resolving divergences — specialists can challenge positions, clarify ambiguities, and request elaboration directly from peers. The peer's real session is resumed, and the question enters the peer's session history (contamination is a feature).
+
+**When to always include a sequential turn:** If divergences, tensions, or conflicting positions remain after all analysis turns are complete, you should always include a sequential consensus turn before voting — these may have been resolved during peer review (Turn 2+), but if they persist, the sequential turn is where `ask_peer` enables real-time deliberation: specialists debate, consult, and converge. Skipping it when tensions remain means voting on unresolved conflicts. If all analysis turns converged with no open tensions, you may proceed directly to voting.
 
 #### Sequential Consensus Turn
 
@@ -208,7 +210,7 @@ The discussion topology depends on the turn type:
    ```
 
 2. The prompt should include:
-    - The discussion topic and the key tensions from Turns 1-2
+    - The discussion topic and the key tensions from previous turns
     - The positions of specialists who have already spoken in this turn (reference their discussion files)
     - Instruction that the specialist MAY consult peers directly via `ask_peer`
 
