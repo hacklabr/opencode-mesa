@@ -34,6 +34,7 @@ import { checkForUpdate } from "./updater/checker"
 import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools"
 import { askPeerTool, setSdkClient } from "./tools/peer-tools"
 import { loadState, getSessionId } from "./state"
+import { setStateSdkClient } from "./state"
 import { logAction } from "./audit"
 import { buildAskPeerPath } from "./utils/paths"
 import { promises as fs } from "node:fs"
@@ -48,6 +49,7 @@ const activeTaskCalls = new Map<string, Set<string>>()
 export const mesa: Plugin = async (input) => {
   opencodeClient = input.client
   setSdkClient(input.client)
+  setStateSdkClient(input.client)
 
   // Fire-and-forget update check — populates cache for tools
   checkForUpdate().catch(() => {})

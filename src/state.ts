@@ -10,6 +10,57 @@ import { z, ZodError } from "zod"
 import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType } from "./types"
 import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config"
 
+// SDK client for parent session lookup (set from index.ts)
+type SessionGetter = (sessionId: string) => Promise<{ parentID?: string } | null>
+let sessionGetter: SessionGetter | null = null
+
+export function setStateSdkClient(client: unknown): void {
+  const c = client as {
+    session?: {
+      get?: (opts: { path: { id: string } }) => Promise<{ data?: { parentID?: string } | null }>
+    }
+  } | null
+  if (c?.session?.get) {
+    sessionGetter = async (sessionId: string) => {
+      try {
+        const result = await c.session!.get!({ path: { id: sessionId } })
+        return result?.data ?? null
+      } catch {
+        return null
+      }
+    }
+  }
+}
+
+// Walk up the parent chain to find a session that has discussion state
+async function findRootSessionId(db: Database, directory: string, sessionId: string): Promise<string | null> {
+  let currentId = sessionId
+  const visited = new Set<string>([sessionId]) // prevent cycles
+
+  for (let i = 0; i < 10; i++) { // max depth 10
+    if (!sessionGetter) break
+
+    const sessionInfo = await sessionGetter(currentId)
+    if (!sessionInfo?.parentID) break
+
+    const parentId = sessionInfo.parentID
+    if (visited.has(parentId)) break // cycle detected
+    visited.add(parentId)
+
+    // Check if parent has discussion state
+    const hasState = db
+      .query("SELECT session_id FROM mesa_session_state WHERE workspace_id = ? AND session_id = ?")
+      .get(directory, parentId)
+
+    if (hasState) return parentId
+
+    // Keep walking up
+    currentId = parentId
+  }
+
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Zod schemas (kept for JSON migration validation + future granular writers)
 // ---------------------------------------------------------------------------
@@ -819,21 +870,13 @@ export async function loadState(directory: string, opencodeSessionId?: string): 
       if (sessionState) return sessionState
     }
 
-    // 2. ROOT SESSION FALLBACK: If this session has no state (e.g., a specialist
-    //    subagent whose session was created by the Manager via task()), look for
-    //    an active discussion session in the same workspace. This allows subagents
-    //    to inherit the discussion state (ANALYSIS phase, participants, etc.)
-    //    from the Manager session that started the analysis round.
+    // 2. ROOT SESSION via parentID: If this session has no state (e.g., a
+    //    specialist subagent), walk up the parent chain via SDK to find the
+    //    Manager session that owns the discussion state.
     if (sessionId) {
-      const rootRow = db
-        .query(`SELECT session_id FROM mesa_session_state
-                WHERE workspace_id = ? AND session_id != ?
-                AND current_phase IN ('ANALYSIS', 'CONSENSUS')
-                ORDER BY updated_at DESC LIMIT 1`)
-        .get(directory, sessionId) as { session_id: string } | null
-
-      if (rootRow) {
-        const rootState = loadSessionState(db, directory, rootRow.session_id)
+      const rootSessionId = await findRootSessionId(db, directory, sessionId)
+      if (rootSessionId) {
+        const rootState = loadSessionState(db, directory, rootSessionId)
         if (rootState) return rootState
       }
     }
@@ -856,8 +899,8 @@ export async function saveState(directory: string, state: DiscussionState, openc
   }
 
   // ROOT SESSION RESOLUTION: If this session has no state of its own,
-  // it's likely a subagent. Write to the root discussion session instead
-  // so that all participants share the same discussion state.
+  // walk up the parent chain to find the Manager session that owns the
+  // discussion state. Write there so all participants share state.
   if (opencodeSessionId) {
     const db0 = getDb(directory)
     try {
@@ -866,16 +909,9 @@ export async function saveState(directory: string, state: DiscussionState, openc
         .get(directory, opencodeSessionId)
 
       if (!hasOwnState) {
-        // Look for root discussion session
-        const rootRow = db0
-          .query(`SELECT session_id FROM mesa_session_state
-                  WHERE workspace_id = ? AND session_id != ?
-                  AND current_phase IN ('ANALYSIS', 'CONSENSUS')
-                  ORDER BY updated_at DESC LIMIT 1`)
-          .get(directory, opencodeSessionId) as { session_id: string } | null
-
-        if (rootRow) {
-          sessionId = rootRow.session_id
+        const rootSessionId = await findRootSessionId(db0, directory, opencodeSessionId)
+        if (rootSessionId) {
+          sessionId = rootSessionId
         }
       }
     } finally {
