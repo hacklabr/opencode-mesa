@@ -34,7 +34,7 @@ export const PLUGIN_STATE_DIR = ".mesa"
 
 export const DEFAULT_MAX_TURNS = 2
 
-export const CURRENT_STATE_VERSION = 5
+export const CURRENT_STATE_VERSION = 6
 
 import type { DiscussionState } from "./types"
 

@@ -228,7 +228,7 @@ export const registerAnalysisTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
-      const phaseError = requirePhase(state, "DISCUSSION")
+      const phaseError = requirePhase(state, "DISCUSSION", "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
       // BUG-13: Agent ID suffix matching
@@ -586,7 +586,7 @@ export const requestConsensusTool = tool({
   async execute(args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
-      const phaseError = requirePhase(state, "DISCUSSION")
+      const phaseError = requirePhase(state, "DISCUSSION", "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
       // P1-3: Enforce maxConsensusRounds circuit breaker

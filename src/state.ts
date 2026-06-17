@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS mesa_analyses (
   content TEXT,
   turn INTEGER,
   timestamp TEXT,
-  UNIQUE(workspace_id, agent_id, turn)
+  UNIQUE(workspace_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_analyses_turn ON mesa_analyses(workspace_id, turn);
 
@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS mesa_session_analyses (
   content TEXT,
   turn INTEGER,
   timestamp TEXT,
-  UNIQUE(workspace_id, session_id, agent_id, turn)
+  UNIQUE(workspace_id, session_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_session_analyses_turn ON mesa_session_analyses(workspace_id, session_id, turn);
 
@@ -711,6 +711,81 @@ function migrate_v4_to_v5(db: Database): void {
   tx()
 }
 
+function migrate_v5_to_v6(db: Database): void {
+  // Recreate analyses tables with turn_type in UNIQUE constraint.
+  // SQLite cannot ALTER constraints — must use table recreation pattern.
+  const tx = db.transaction(() => {
+    for (const table of ["mesa_analyses", "mesa_session_analyses"]) {
+      // Check if the table exists and has the old constraint
+      const tableInfo = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+      if (tableInfo.length === 0) continue
+
+      const isScoped = table === "mesa_session_analyses"
+      const cols = isScoped
+        ? "id, workspace_id, session_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed"
+        : "id, workspace_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed"
+
+      // Fill NULL turn_type for existing rows
+      db.run(`UPDATE ${table} SET turn_type = 'analysis' WHERE turn_type IS NULL`)
+
+      const tempName = `${table}__v6_new`
+      db.exec(`DROP TABLE IF EXISTS ${tempName}`)
+
+      if (isScoped) {
+        db.exec(`CREATE TABLE ${tempName} (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          agent_name TEXT,
+          content TEXT,
+          turn INTEGER,
+          timestamp TEXT,
+          file_path TEXT,
+          kind TEXT DEFAULT 'full',
+          turn_type TEXT DEFAULT 'analysis',
+          round INTEGER,
+          position_in_turn INTEGER,
+          responds_to TEXT,
+          tensions_raised TEXT,
+          session_resumed INTEGER,
+          UNIQUE(workspace_id, session_id, agent_id, turn, turn_type)
+        )`)
+      } else {
+        db.exec(`CREATE TABLE ${tempName} (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          agent_name TEXT,
+          content TEXT,
+          turn INTEGER,
+          timestamp TEXT,
+          file_path TEXT,
+          kind TEXT DEFAULT 'full',
+          turn_type TEXT DEFAULT 'analysis',
+          round INTEGER,
+          position_in_turn INTEGER,
+          responds_to TEXT,
+          tensions_raised TEXT,
+          session_resumed INTEGER,
+          UNIQUE(workspace_id, agent_id, turn, turn_type)
+        )`)
+      }
+
+      db.run(`INSERT INTO ${tempName} (${cols}) SELECT ${cols} FROM ${table}`)
+      db.exec(`DROP TABLE ${table}`)
+      db.exec(`ALTER TABLE ${tempName} RENAME TO ${table}`)
+
+      // Recreate index
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_turn ON ${table}(workspace_id, turn)`)
+    }
+
+    db.run("UPDATE mesa_state SET state_version = 6 WHERE state_version = 5")
+    db.run("UPDATE mesa_session_state SET state_version = 6 WHERE state_version = 5")
+  })
+  tx()
+}
+
 // ---------------------------------------------------------------------------
 // Database helpers
 // ---------------------------------------------------------------------------
@@ -734,6 +809,7 @@ function getDb(directory: string): Database {
   migrate_v2_to_v3(db)
   migrate_v3_to_v4(db)
   migrate_v4_to_v5(db)
+  migrate_v5_to_v6(db)
   migrateFromJson(directory, db)
 
   return db
@@ -1074,7 +1150,7 @@ export async function saveState(directory: string, state: DiscussionState, openc
           phases, appendices,
           rigor, analysis_mode, deviations,
           state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, sessionId, state.currentPhase, state.previousPhase, state.status ?? "active",
           state.briefing.path, state.briefing.status, state.briefing.slug,
