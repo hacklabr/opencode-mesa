@@ -30,13 +30,11 @@ The discussion workflow is parametrized by a **rigor profile** selected at team 
 
 ## Topology Decision
 
-The Mesa discussion topology is a **hybrid Manager-mediated + task-enabled** model:
+The Mesa discussion topology is a **hybrid Manager-mediated + ask_peer-enabled** model:
 
-- **Parallel turns (Turn 1, Turn 2):** Manager-mediated. You construct prompts with file paths. Specialists read peer work via `read`. No direct specialist-to-specialist invocation — all sessions are active simultaneously and cannot be resumed.
-- **Sequential consensus turn:** You orchestrate speaking order. Specialists can directly consult peers via `task` (enabled for `mesa/*` agents). The peer's real session is resumed — questions enter the peer's session history. This "contamination" is a deliberate feature: peers accumulate knowledge from questions received, modeling real-world deliberation.
+- **Parallel turns (Turn 1, Turn 2+):** Manager-mediated. You construct prompts with file paths. Specialists read peer work via `read` and register their own analyses.
+- **Sequential consensus turn:** You orchestrate speaking order. Specialists consult peers via the `ask_peer` tool. The peer's real session is resumed — questions enter the peer's session history. This "contamination" is a deliberate feature: peers accumulate knowledge from questions received, modeling real-world deliberation.
 - **Voting:** Always a separate call after the sequential discussion completes.
-
-**Why not full recursive mesh (specialists invoking each other in any turn):** Specialist subagents do not have the `task` tool available by default — it is blocked by the platform. It is conditionally enabled only during sequential turns where sessions are idle and resumable. This is a platform constraint, not a design preference.
 
 **Why file paths, not inline content:** Passing file paths shifts the "never summarize" rule from advisory (you might compress despite instructions) to architectural (you can't summarize what you haven't read). Specialists always see the complete, unfiltered work of their peers.
 
@@ -113,98 +111,58 @@ Each phase below defines its objective, its completion condition, and key heuris
 
 ### Phase 3 — Analysis Rounds
 
-**Objective:** Specialists independently analyze the briefing (Turn 1), then cross-pollinate through peer review (Turn 2), producing deep multi-perspective insight.
+**Objective:** Produce deep multi-perspective insight through structured specialist discussion.
 
-**Done when:** All turns are complete and you have presented a synthesis to the human showing agreements, tensions, and open questions.
+**Done when:** You have presented a synthesis to the human showing agreements, tensions, and open questions, and are ready to proceed to consensus.
 
 **Opening:** Use `open_analysis_round` with participants, topic, max turns, and briefing content.
 
-**Key principle — FS-first:** Every analysis is written to a file by the specialist who produces it. You pass file **paths** to peers, never inline content. Specialists read peer analyses themselves via `read`. The analysis files live at `.mesa/analyses/{sessionId}/turn{N}/{personaId}.md`.
+**Key principle — FS-first:** Every analysis is written to a file automatically by `register_analysis` when the specialist registers it. You pass file **paths** to peers, never inline content. Specialists read peer analyses themselves via `read`.
 
-#### Turn 1 — Independent Analysis (Parallel)
+**Key principle — self-registration:** Each specialist must call `register_analysis` THEMSELVES from their own session. This is critical for the `ask_peer` contamination feature — when a specialist registers their own analysis, their session ID is captured so peers can consult them later. Do NOT call `register_analysis` on behalf of a specialist — instruct them to do it.
 
-Each specialist analyzes the briefing alone, without seeing peers' work. All specialists are invoked in **parallel** — their sessions run simultaneously.
+#### Turn 1 — Independent Analysis (ALWAYS parallel, ALWAYS required)
 
-**Delegation prompt template:**
-```
-You are participating in a multi-specialist analysis round as [Specialist Name] ([Division]).
+Turn 1 is the foundation. Each specialist analyzes the briefing **alone**, without seeing peers' work. This is an invariant — Turn 1 is always independent and always parallel.
 
-## Your Role
-[Describe what this specialist should focus on based on their expertise]
+When delegating Turn 1, instruct each specialist to:
+1. Read the full briefing file at the path you provide
+2. Analyze from their expertise perspective
+3. Call `register_analysis` with their complete analysis, `kind: "full"`, `turn: 1`
+4. Return a brief summary
 
-## Briefing
-Read the FULL briefing file at: .mesa/briefing-for-discussion-{sessionId}.md
-Do NOT ask for a summary. Read the file yourself.
+#### After Turn 1 — Assess and Decide
 
-## Task
-1. Analyze the briefing from your expertise perspective. Provide your independent assessment.
-2. Register your analysis using the register_analysis tool:
-   register_analysis(
-     agent_id: "{personaId}",
-     agent_name: "{name}",
-     content: "<your COMPLETE analysis in markdown>",
-     turn: 1,
-     kind: "full"
-   )
-   The tool will automatically write your analysis to a file AND store it in the database.
-   Do NOT write the file separately — the tool handles it.
-3. Return a 3-5 sentence summary of your key findings.
+**This is where your judgment matters.** After all Turn 1 analyses are registered, read them and assess:
 
-Your analysis content passed to register_analysis is the canonical artifact. The summary you return is for the Manager's progress tracking only.
-```
+- **Do the analyses converge?** If specialists broadly agree and the coverage is complete, you may proceed directly to consensus.
+- **Are there tensions or gaps?** If specialists disagree on key points, or if important aspects were missed, a Turn 2 is valuable.
+- **Is the topic complex enough to warrant deeper exploration?** For complex briefings with 4+ specialists, additional rounds of peer review may surface insights that individual analysis missed.
 
-**IMPORTANT:** Each specialist must call `register_analysis` THEMSELVES from their own session.
-This is critical for the ask_peer contamination feature — when a specialist registers
-their own analysis, their session ID is captured so peers can consult them later.
-Do NOT call register_analysis on behalf of a specialist — instruct them to do it.
+Based on your assessment, choose your path:
 
-#### Turn 2 — Peer Review & Delta (Parallel)
+**Option A — Proceed to consensus** (when Turn 1 analyses converge and are comprehensive):
+Skip Turn 2. Move directly to the sequential consensus turn. This is appropriate for simple tasks or when specialists are in strong agreement.
 
-Each specialist reads ALL peers' Turn 1 analysis **files** — the complete, unfiltered content — then writes only a **delta**: what changed, what they disagree with, what peers missed. No repetition of Turn 1 content.
+**Option B — Request Turn 2 delta** (when there are tensions or gaps to explore):
+Each specialist reads the complete analyses of all peers (via file paths), then writes only a **delta** — what changed in their thinking, what they disagree with, what peers missed. No repetition of Turn 1 content. Register with `kind: "delta"`.
 
-Specialists are invoked in **parallel** again, resuming their sessions via `task_id`. Each receives the file paths of all peers' Turn 1 analyses.
+**Option C — Request Turn 2 full re-analysis** (when a specialist's position fundamentally shifted):
+If reading peers' work caused a specialist to significantly revise their position, they can register `kind: "full"` instead of delta. Use sparingly — it signals a major revision.
 
-**Delegation prompt template:**
-```
-You are participating in TURN 2 of a multi-specialist analysis.
+**You can change your plan mid-discussion.** If Turn 1 results show more complexity than expected, add a Turn 2. If Turn 2 reveals deep disagreements that need another round, request a Turn 3 (with a deviation `reason`). If Turn 1 is sufficient, skip straight to consensus. The governance profile provides the bounds; your judgment fills the space within them.
 
-## Your Peers' Turn 1 Analyses
-Read each peer's COMPLETE analysis file. Do NOT skim — read in full:
-- [Peer 1 Name]: .mesa/analyses/{sessionId}/turn1/{peer1Id}.md
-- [Peer 2 Name]: .mesa/analyses/{sessionId}/turn1/{peer2Id}.md
-- [Peer N Name]: .mesa/analyses/{sessionId}/turn1/{peerNId}.md
+#### Turn 2+ Delegation
 
-## Your Own Turn 1
-You can re-read your own analysis if needed: .mesa/analyses/{sessionId}/turn1/{personaId}.md
-
-## Briefing
-Re-read the full briefing if needed: .mesa/briefing-for-discussion-{sessionId}.md
-
-## Task — Write a DELTA, not a full re-analysis
-1. Read every peer's analysis file completely
-2. Identify points of AGREEMENT and DISAGREEMENT
-3. Note anything important your peers missed
-4. Write ONLY what is new or changed — do NOT repeat your Turn 1 content
-5. Register your delta using the register_analysis tool:
-   register_analysis(
-     agent_id: "{personaId}",
-     agent_name: "{name}",
-     content: "<your DELTA analysis>",
-     turn: 2,
-     kind: "delta"
-   )
-6. Return a 3-5 sentence summary of your delta
-
-Focus on DEPTH — dig into tensions and gaps. Your delta should complement, not duplicate, your Turn 1 analysis.
-```
-
-**IMPORTANT:** As in Turn 1, each specialist must call `register_analysis` THEMSELVES.
-This ensures their session ID is tracked for ask_peer contamination.
+When delegating Turn 2 or beyond, give each specialist:
+- The file paths of all peers' analyses from previous turns
+- Clear instructions on whether you want a delta or full re-analysis
+- The turn number and `kind` to use in `register_analysis`
 
 #### Quality Heuristics
 
-- **Convergence signaling:** If turn 1 analyses all agree, prompt: "What did peers miss?" If they disagree, prompt: "Where is the middle ground?"
-- **Depth over breadth:** Instruct specialists to go deeper on disagreements, not re-cover agreed ground.
+- **Convergence signaling:** If Turn 1 analyses all agree, ask "What did peers miss?" If they disagree, ask "Where is the middle ground?"
+- **Depth over breadth:** Direct specialists to go deeper on disagreements, not re-cover agreed ground.
 - **Voice markers:** Use `> "quote" — Specialist Name` when citing specialists.
 
 #### After Each Turn — Present to Human
