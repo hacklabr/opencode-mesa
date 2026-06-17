@@ -139,13 +139,16 @@ export const askPeerTool = tool({
         peerConsultations.set(callerKey, turnCounts)
       }
 
+      // Identify the caller via reverse-lookup in agentSessions
+      const callerId = findCallerAgentId(context.sessionID) || "a peer specialist"
+
       // Send the question to the peer's REAL session — contamination path.
       // The question enters the peer's session history alongside their Turn 1, Turn 2, etc.
       // When the Manager resumes the peer, they remember everything INCLUDING this question.
       const promptResult = await client.session.prompt({
         path: { id: peerSessionId },
         body: {
-          parts: [{ type: "text", text: `[Peer consultation]\n\n${question}` }],
+          parts: [{ type: "text", text: `[Peer consultation from ${callerId}]\n\n${question}` }],
           tools: {
             task: false,
             delegate_task: false,
