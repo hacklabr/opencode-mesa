@@ -1,18 +1,18 @@
-import { Database } from "bun:sqlite"
+import { openDatabase, type IDatabase } from "../db/driver.js"
 import { join } from "node:path"
 import { mkdirSync } from "node:fs"
-import { PLUGIN_STATE_DIR } from "../config"
-import type { PhaseContextRecord, StateRepository } from "./state-repository"
-import { PhaseContextSchema } from "./state-repository"
+import { PLUGIN_STATE_DIR } from "../config.js"
+import type { PhaseContextRecord, StateRepository } from "./state-repository.js"
+import { PhaseContextSchema } from "./state-repository.js"
 
 export class SqliteStateRepository implements StateRepository {
-  private db: Database
+  private db: IDatabase
 
   constructor(directory: string) {
     const stateDir = join(directory, PLUGIN_STATE_DIR)
     mkdirSync(stateDir, { recursive: true })
     const dbPath = join(stateDir, "state.db")
-    this.db = new Database(dbPath, { create: true })
+    this.db = openDatabase(dbPath, { create: true })
     this.db.run("PRAGMA foreign_keys = ON")
     this.db.run("PRAGMA journal_mode = WAL")
     this.db.run("PRAGMA busy_timeout = 5000")

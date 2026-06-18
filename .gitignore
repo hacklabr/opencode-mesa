@@ -3,3 +3,5 @@ node_modules/
 dist/
 .opencode/agents/
 .mesa/
+.cache/
+mesa-desktop-nodejs-compatibility.md

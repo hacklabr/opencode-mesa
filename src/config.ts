@@ -15,7 +15,7 @@ export type {
   SpecialistEntry,
   DiscussionProgress,
   DiscussionState,
-} from "./types"
+} from "./types.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -36,7 +36,7 @@ export const DEFAULT_MAX_TURNS = 2
 
 export const CURRENT_STATE_VERSION = 7
 
-import type { DiscussionState } from "./types"
+import type { DiscussionState } from "./types.js"
 
 export function createInitialState(workspaceId: string): DiscussionState {
   const now = new Date().toISOString()

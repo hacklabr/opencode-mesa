@@ -1,4 +1,4 @@
-import type { SemVer } from "./types"
+import type { SemVer } from "./types.js"
 
 export const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)$/
 

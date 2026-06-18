@@ -1,14 +1,14 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage, getSessionId } from "../state"
-import { createInitialState } from "../config"
+import { loadState, saveState, closeStorage, getSessionId } from "../state.js"
+import { createInitialState } from "../config.js"
 import {
   createBriefingTool,
   approveBriefingTool,
   deliverBriefingTool,
   importBriefingTool,
-} from "../tools/briefing-tools"
+} from "../tools/briefing-tools.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "briefing-tools")
 
@@ -45,7 +45,7 @@ describe("create_briefing tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("briefing-my-project.md")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     expect(state.briefing.slug).toBe("my-project")
     expect(state.briefing.status).toBe("draft")
 
@@ -140,7 +140,7 @@ describe("approve_briefing tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("test-approve")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     expect(state.briefing.status).toBe("approved")
 
     const file = await fs.readFile(
@@ -196,8 +196,8 @@ describe("deliver_briefing tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("briefing-current-")
 
-    const state = await loadState(TEST_DIR)
-    const sessionId = getSessionId(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
+    const sessionId = getSessionId(TEST_DIR, "test-session")
     expect(state.briefing.status).toBe("delivered")
     expect(state.currentPhase).toBe("PLANNING")
 
@@ -249,7 +249,7 @@ describe("import_briefing tool", () => {
     expect(output).toContain("approved (pre-approved)")
     expect(output).toContain("PLANNING")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     expect(state.briefing.status).toBe("approved")
     expect(state.briefing.slug).toBe("imported")
     expect(state.currentPhase).toBe("PLANNING")
@@ -326,7 +326,7 @@ describe("import_briefing tool", () => {
     state.discussion.votes = [
       { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const importsDir = join(TEST_DIR, "imports")
     await fs.mkdir(importsDir, { recursive: true })
@@ -338,7 +338,7 @@ describe("import_briefing tool", () => {
       makeContext()
     )
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("PLANNING")
     expect(loaded.discussion.analyses).toEqual([])
     expect(loaded.discussion.votes).toEqual([])

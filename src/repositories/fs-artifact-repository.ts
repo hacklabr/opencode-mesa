@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs"
 import { dirname } from "node:path"
-import type { ArtifactRepository } from "./artifact-repository"
+import type { ArtifactRepository } from "./artifact-repository.js"
 
 export class FsArtifactRepository implements ArtifactRepository {
   async readFile(filePath: string): Promise<string> {

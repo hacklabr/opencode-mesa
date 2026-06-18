@@ -1,9 +1,9 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { saveState } from "../state"
-import { createInitialState, PLUGIN_VERSION } from "../config"
-import { mesaStatusTool } from "../tools/mesa-tools"
+import { saveState } from "../state.js"
+import { createInitialState, PLUGIN_VERSION } from "../config.js"
+import { mesaStatusTool } from "../tools/mesa-tools.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "mesa-tools")
 
@@ -37,7 +37,7 @@ describe("mesa_status tool", () => {
     state.discussion.analyses = [
       { agentId: "a", agentName: "A", content: "c", turn: 1, timestamp: new Date().toISOString() },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await mesaStatusTool.execute({}, makeContext())
 
@@ -74,7 +74,7 @@ describe("mesa_status tool", () => {
       { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
       { agentId: "b", agentName: "B", vote: 0, reason: "no", round: 1 },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await mesaStatusTool.execute({}, makeContext())
     const output = (result as { output: string }).output

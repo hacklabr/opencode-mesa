@@ -1,11 +1,11 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
-import { loadState, saveState } from "../state"
-import { createInitialState } from "../config"
-import type { DiscussionState } from "../types"
-import { canTransition } from "../workflow/transitions"
+import { loadState, saveState } from "../state.js"
+import { createInitialState } from "../config.js"
+import type { DiscussionState } from "../types.js"
+import { canTransition } from "../workflow/transitions.js"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { PLUGIN_STATE_DIR } from "../config"
+import { PLUGIN_STATE_DIR } from "../config.js"
 
 const TEST_DIR = join(import.meta.dirname, "__e2e_fixtures__")
 
@@ -97,7 +97,8 @@ describe("full workflow integration", () => {
     expect(loaded.discussion.analyses.length).toBe(2)
 
     // Step 9: Request consensus
-    expect(canTransition("DISCUSSION", "DISCUSSION")).toBe(true)
+    // Consensus now lives WITHIN the DISCUSSION phase (spec-4dcc492f, Decision 3)
+    // via discussion.mode → "voting"; there is no DISCUSSION→DISCUSSION phase transition.
     state.currentPhase = "DISCUSSION"
     state.discussion.consensusRound = 1
     state.discussion.votes = [
@@ -117,8 +118,8 @@ describe("full workflow integration", () => {
     state.specification.status = "draft"
     await saveState(TEST_DIR, state)
 
-    // Step 11: Move to APPROVAL
-    expect(canTransition("SPECIFICATION", "SPECIFICATION")).toBe(true)
+    // Step 11: Specification stays in SPECIFICATION (draft→approval is a status
+    // change, not a phase self-transition, per the collapsed 8→4 phase model).
     state.currentPhase = "SPECIFICATION"
     await saveState(TEST_DIR, state)
 
@@ -143,7 +144,8 @@ describe("full workflow integration", () => {
     state.specification.status = "draft"
     await saveState(TEST_DIR, state)
 
-    expect(canTransition("SPECIFICATION", "SPECIFICATION")).toBe(true)
+    // Rejection is a status change within SPECIFICATION (DOCUMENTATION/APPROVAL were
+    // merged into SPECIFICATION). The SPECIFICATION→DISCUSSION back-edge remains for re-work.
     state.currentPhase = "SPECIFICATION"
     state.specification.status = "rejected"
     await saveState(TEST_DIR, state)
@@ -161,19 +163,23 @@ describe("full workflow integration", () => {
     ]
     await saveState(TEST_DIR, state)
 
-    expect(canTransition("DISCUSSION", "PAUSED" as any)).toBe(true)
-    state.currentPhase = "PAUSED" as any
+    // Pause sets the orthogonal `status` field; the phase is preserved for resume.
+    state.status = "paused"
+    state.previousPhase = state.currentPhase
     await saveState(TEST_DIR, state)
 
     let loaded = await loadState(TEST_DIR)
-    expect(loaded.currentPhase).toBe("PAUSED" as any)
+    expect(loaded.status).toBe("paused")
+    expect(loaded.currentPhase).toBe("DISCUSSION")
     expect(loaded.discussion.analyses.length).toBe(1)
 
-    expect(canTransition("PAUSED" as any, "DISCUSSION")).toBe(true)
-    loaded.currentPhase = "DISCUSSION"
+    // Resume restores active status; the phase is unchanged.
+    loaded.status = "active"
+    loaded.previousPhase = null
     await saveState(TEST_DIR, loaded)
 
     loaded = await loadState(TEST_DIR)
+    expect(loaded.status).toBe("active")
     expect(loaded.currentPhase).toBe("DISCUSSION")
     expect(loaded.discussion.analyses.length).toBe(1)
   })
@@ -189,15 +195,17 @@ describe("full workflow integration", () => {
     ]
     await saveState(TEST_DIR, state)
 
-    expect(canTransition("DISCUSSION", "CANCELLED" as any)).toBe(true)
-    state.currentPhase = "CANCELLED" as any
+    // Cancel sets the orthogonal `status` field and clears discussion data; the
+    // phase is kept for audit (CANCELLED is no longer a phase).
+    state.status = "cancelled"
     state.discussion.analyses = []
     state.discussion.votes = []
     state.discussion.currentTurn = 0
     await saveState(TEST_DIR, state)
 
     const loaded = await loadState(TEST_DIR)
-    expect(loaded.currentPhase).toBe("CANCELLED" as any)
+    expect(loaded.status).toBe("cancelled")
+    expect(loaded.currentPhase).toBe("DISCUSSION")
     expect(loaded.discussion.analyses.length).toBe(0)
   })
 

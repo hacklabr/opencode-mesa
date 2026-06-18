@@ -1,4 +1,4 @@
-import { isValidSlug } from "./slug"
+import { isValidSlug } from "./slug.js"
 
 export interface ExecutionPhase {
   index: number

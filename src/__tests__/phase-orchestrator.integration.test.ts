@@ -1,19 +1,19 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage } from "../state"
-import { createInitialState } from "../config"
+import { loadState, saveState, closeStorage } from "../state.js"
+import { createInitialState } from "../config.js"
 import {
   checkExecutionPhasesTool,
   selectPhasesForAnalysisTool,
   configurePhaseObservationTool,
-} from "../tools/manager-tools"
+} from "../tools/manager-tools.js"
 import {
   detectPhasesTool,
   openPhaseAnalysisRoundTool,
   generatePhaseAppendixTool,
-} from "../tools/phase-analysis-tools"
-import { SqliteStateRepository } from "../repositories/sqlite-state-repository"
+} from "../tools/phase-analysis-tools.js"
+import { SqliteStateRepository } from "../repositories/sqlite-state-repository.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "phase-orchestrator")
 
@@ -44,11 +44,11 @@ async function setupApprovedSpec(content: string, fileName = "spec-test.md") {
   const specPath = join(specsDir, fileName)
   await fs.writeFile(specPath, content, "utf-8")
 
-  const state = await loadState(TEST_DIR)
+  const state = await loadState(TEST_DIR, "test-session")
   state.currentPhase = "EXECUTION"
   state.specification.path = specPath
   state.specification.status = "approved"
-  await saveState(TEST_DIR, state)
+  await saveState(TEST_DIR, state, "test-session")
   return specPath
 }
 
@@ -231,9 +231,9 @@ No implementation is planned.
 2. Frontend UI
 `)
 
-      const state = await loadState(TEST_DIR)
+      const state = await loadState(TEST_DIR, "test-session")
       state.currentPhase = "EXECUTION"
-      await saveState(TEST_DIR, state)
+      await saveState(TEST_DIR, state, "test-session")
 
       // Open phase analysis round
       const openResult = await openPhaseAnalysisRoundTool.execute(
@@ -266,7 +266,7 @@ No implementation is planned.
       expect(appendixResult).toHaveProperty("title", "Phase Appendix Generated")
 
       // Verify state has appendix reference
-      const loadedState = await loadState(TEST_DIR)
+      const loadedState = await loadState(TEST_DIR, "test-session")
       expect(loadedState.appendices.length).toBeGreaterThan(0)
 
       // Verify appendix file was created
@@ -279,7 +279,7 @@ No implementation is planned.
       expect(appendixContent).toContain("appendix_id")
 
       // Verify phase context was updated
-      const sessionId = (await import("../state")).getSessionId(TEST_DIR)
+      const sessionId = (await import("../state.js")).getSessionId(TEST_DIR, "test-session")
       if (sessionId) {
         const repo = new SqliteStateRepository(TEST_DIR)
         const contextRecord = await repo.getPhaseContext(TEST_DIR, sessionId, "phase-1-backend-api")
@@ -309,11 +309,11 @@ No implementation is planned.
         "utf-8"
       )
 
-      const state = await loadState(TEST_DIR)
+      const state = await loadState(TEST_DIR, "test-session")
       state.currentPhase = "EXECUTION"
       state.specification.path = null
       state.specification.status = "approved"
-      await saveState(TEST_DIR, state)
+      await saveState(TEST_DIR, state, "test-session")
 
       const result = await detectPhasesTool.execute(
         { spec_path: ".mesa/specifications/custom-spec.md" },

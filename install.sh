@@ -59,6 +59,14 @@ fi
 command -v node >/dev/null 2>&1 || error "node is required"
 command -v npm >/dev/null 2>&1  || error "npm is required"
 
+# Mesa requires node:sqlite (Node >= 22.5.0) for the runtime-agnostic SQLite driver.
+NODE_VERSION="$(node -e "process.stdout.write(process.versions.node)" 2>/dev/null || echo 0)"
+NODE_MAJOR_MINOR="$(printf '%s.%s' $(echo "$NODE_VERSION" | cut -d. -f1) $(echo "$NODE_VERSION" | cut -d. -f2))"
+# Compare via sort -V; bail if older than 22.5
+if [ "$(printf '%s\n22.5' "$NODE_MAJOR_MINOR" | sort -V | head -n1)" != "22.5" ]; then
+  error "Node >= 22.5.0 is required (have $NODE_VERSION). node:sqlite is needed by the Mesa SQLite driver."
+fi
+
 info "Installing dependencies"
 rm -rf "$INSTALL_DIR/node_modules"
 npm ci --prefix "$INSTALL_DIR" 2>/dev/null || npm install --prefix "$INSTALL_DIR"

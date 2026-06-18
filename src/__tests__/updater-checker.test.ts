@@ -2,15 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { mkdirSync, rmSync, existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-
-// We must mock config before importing checker, since config is read at module load
-vi.mock("../config", () => ({
-  get PLUGIN_VERSION() { return "1.2.0" },
-  PLUGIN_STATE_DIR: ".mesa",
-  DEFAULT_MAX_TURNS: 2,
-  CURRENT_STATE_VERSION: 1,
-  createInitialState: vi.fn(),
-}))
+import { PLUGIN_VERSION } from "../config.js"
 
 // Use a temp dir for cache — mock only getCachePath
 const TEST_CACHE_DIR = join(tmpdir(), `mesa-checker-test-${process.pid}`)
@@ -25,7 +17,7 @@ import {
   writeCache,
   fetchLatestTag,
   checkForUpdate,
-} from "../updater/checker"
+} from "../updater/checker.js"
 
 // Override getCachePath by importing the module and patching it dynamically
 // Since getCachePath is used internally, we need a different approach.
@@ -249,14 +241,14 @@ describe("updater/checker", () => {
         status: 200,
         headers: new Headers({ etag: '"fresh-etag"' }),
         json: async () => [
-          { name: "v3.0.0", commit: { sha: "new-sha-333" } },
+          { name: "v99.0.0", commit: { sha: "new-sha-333" } },
         ],
       }))
 
       const result = await checkForUpdate()
-      // Current version is 1.2.0 (from mock config)
-      expect(result.currentVersion).toBe("1.2.0")
-      expect(result.latestVersion).toBe("3.0.0")
+      // Current version is PLUGIN_VERSION (real config)
+      expect(result.currentVersion).toBe(PLUGIN_VERSION)
+      expect(result.latestVersion).toBe("99.0.0")
       expect(result.hasUpdate).toBe(true)
     })
 
@@ -273,7 +265,7 @@ describe("updater/checker", () => {
 
       const result = await checkForUpdate()
       expect(result.hasUpdate).toBe(false)
-      expect(result.currentVersion).toBe("1.2.0")
+      expect(result.currentVersion).toBe(PLUGIN_VERSION)
     })
 
     it("skips non-semver tags from API response", async () => {
@@ -299,7 +291,7 @@ describe("updater/checker", () => {
 
       const result = await checkForUpdate()
       // No valid semver in API → falls back to stale cache (cacheHit: true)
-      // with latestVersion "0.0.0" which is NOT newer than "1.2.0"
+      // with latestVersion "0.0.0" which is NOT newer than PLUGIN_VERSION
       expect(result.hasUpdate).toBe(false)
       expect(result.cacheHit).toBe(true) // stale cache fallback
     })
@@ -317,12 +309,12 @@ describe("updater/checker", () => {
         status: 200,
         headers: new Headers(),
         json: async () => [
-          { name: "v2.0.0", commit: { sha: "sha222" } },
+          { name: "v99.0.0", commit: { sha: "sha222" } },
         ],
       }))
 
       const result = await checkForUpdate()
-      expect(result.latestVersion).toBe("2.0.0")
+      expect(result.latestVersion).toBe("99.0.0")
       expect(result.hasUpdate).toBe(true)
     })
 
@@ -389,7 +381,7 @@ describe("updater/checker", () => {
       // Expired cache (48h ago)
       const twoDaysAgo = new Date(Date.now() - 172_800_000).toISOString()
       await writeCache({
-        latestVersion: "2.5.0",
+        latestVersion: "99.0.0",
         latestSha: "stale-sha",
         checkedAt: twoDaysAgo,
         etag: null,
@@ -399,7 +391,7 @@ describe("updater/checker", () => {
 
       const result = await checkForUpdate()
       expect(result.cacheHit).toBe(true)
-      expect(result.latestVersion).toBe("2.5.0")
+      expect(result.latestVersion).toBe("99.0.0")
       expect(result.hasUpdate).toBe(true)
     })
 

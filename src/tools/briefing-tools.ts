@@ -1,13 +1,13 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState, getSessionId } from "../state"
+import { loadState, saveState, getSessionId } from "../state.js"
 import { join, resolve } from "node:path"
 import { promises as fs } from "node:fs"
-import { PLUGIN_STATE_DIR } from "../config"
-import { logAction } from "../audit"
-import { formatPhaseHeader } from "../workflow/transitions"
-import { isValidSlug } from "../utils/slug"
-import { successResponse, errorResponse } from "../utils/responses"
-import { ValidationError } from "../errors"
+import { PLUGIN_STATE_DIR } from "../config.js"
+import { logAction } from "../audit.js"
+import { formatPhaseHeader } from "../workflow/transitions.js"
+import { isValidSlug } from "../utils/slug.js"
+import { successResponse, errorResponse } from "../utils/responses.js"
+import { ValidationError } from "../errors.js"
 
 export const createBriefingTool = tool({
   description:

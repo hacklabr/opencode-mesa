@@ -1,7 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
-import { PLUGIN_STATE_DIR } from "./config"
-import { getSessionId } from "./state"
+import { PLUGIN_STATE_DIR } from "./config.js"
+import { getSessionId } from "./state.js"
 
 export interface AuditEntry {
   timestamp: string

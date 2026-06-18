@@ -9,9 +9,9 @@ import {
 } from "node:fs/promises"
 import { constants } from "node:fs"
 
-import type { UpdateCache, UpdateCheckResult, GitHubTag } from "./types"
-import { parseSemver, isNewerVersion, assertSemver, SEMVER_RE } from "./semver"
-import { PLUGIN_VERSION } from "../config"
+import type { UpdateCache, UpdateCheckResult, GitHubTag } from "./types.js"
+import { parseSemver, isNewerVersion, assertSemver, SEMVER_RE } from "./semver.js"
+import { PLUGIN_VERSION } from "../config.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 

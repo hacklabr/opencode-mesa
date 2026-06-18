@@ -2,22 +2,22 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { promises as fs } from "node:fs"
-import { loadState, saveState, getSessionId } from "../state"
-import { clearAgentSessions } from "./peer-tools"
-import { SqliteStateRepository } from "../repositories/sqlite-state-repository"
-import { FsArtifactRepository } from "../repositories/fs-artifact-repository"
-import type { StateRepository } from "../repositories/state-repository"
-import type { ArtifactRepository } from "../repositories/artifact-repository"
+import { loadState, saveState, getSessionId } from "../state.js"
+import { clearAgentSessions } from "./peer-tools.js"
+import { SqliteStateRepository } from "../repositories/sqlite-state-repository.js"
+import { FsArtifactRepository } from "../repositories/fs-artifact-repository.js"
+import type { StateRepository } from "../repositories/state-repository.js"
+import type { ArtifactRepository } from "../repositories/artifact-repository.js"
 import {
   detect_execution_phases,
   is_phase_analysis_applicable,
   slugify,
   type ExecutionPhase,
-} from "../utils/phase-detection"
-import { getAppendixPath, getPhaseAnalysisDraftPath } from "../utils/paths"
-import { successResponse, errorResponse } from "../utils/responses"
-import { logAction } from "../audit"
-import { MesaError } from "../errors"
+} from "../utils/phase-detection.js"
+import { getAppendixPath, getPhaseAnalysisDraftPath } from "../utils/paths.js"
+import { successResponse, errorResponse } from "../utils/responses.js"
+import { logAction } from "../audit.js"
+import { MesaError } from "../errors.js"
 
 // ---------------------------------------------------------------------------
 // Internal helpers

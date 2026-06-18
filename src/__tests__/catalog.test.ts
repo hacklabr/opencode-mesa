@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest"
-import { parsePersonaFile, loadCatalogFromDirectory } from "../catalog/loader"
+import { parsePersonaFile, loadCatalogFromDirectory } from "../catalog/loader.js"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const CATALOG_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "dist", "catalog", "agency-agents")
+// Tests run from source (vitest transpiles TS), so the embedded catalog lives
+// under src/, not the built dist/ tree. dist/catalog/agency-agents is an empty
+// leftover from a prior build and would yield 0 personas here.
+const CATALOG_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "catalog", "agency-agents")
 
 describe("catalog parser", () => {
   test("parses a persona file with full frontmatter", () => {
