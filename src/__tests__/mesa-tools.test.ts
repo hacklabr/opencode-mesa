@@ -37,7 +37,7 @@ describe("mesa_status tool", () => {
     state.discussion.analyses = [
       { agentId: "a", agentName: "A", content: "c", turn: 1, timestamp: new Date().toISOString() },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await mesaStatusTool.execute({}, makeContext())
 
@@ -74,7 +74,7 @@ describe("mesa_status tool", () => {
       { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
       { agentId: "b", agentName: "B", vote: 0, reason: "no", round: 1 },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await mesaStatusTool.execute({}, makeContext())
     const output = (result as { output: string }).output

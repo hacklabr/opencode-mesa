@@ -29,7 +29,9 @@ function make_human_context(responses: string[] = []) {
 }
 
 function getSid(): string {
-  const sid = getSessionId(TEST_DIR)
+  // Tools operate on the session ID passed via the tool context (make_human_context
+  // uses "test-session"). getSessionId with that ID returns it directly.
+  const sid = getSessionId(TEST_DIR, "test-session")
   if (!sid) throw new Error("No active session")
   return sid
 }
@@ -42,7 +44,7 @@ describe("verify_implementation", () => {
     state.currentPhase = "EXECUTION"
     state.specification.status = "approved"
     state.specification.path = join(TEST_DIR, ".mesa", "spec-test.md")
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
     await fs.writeFile(state.specification.path, "# Test Spec")
   })
 
@@ -68,7 +70,7 @@ describe("verify_implementation", () => {
     expect(output.title).toContain("Verification Passed")
     expect(output.output).toContain("Foundation")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     const repo = new SqliteStateRepository(TEST_DIR)
     const ctx = await repo.getPhaseContext(state.workspaceId, getSid(), "verification-foundation")
     expect(ctx).not.toBeNull()
@@ -131,7 +133,7 @@ describe("verify_implementation", () => {
     expect(output.output).toContain("[A] Accept")
     expect(output.output).toContain("[C] Correct")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     const repo = new SqliteStateRepository(TEST_DIR)
     const ctx = await repo.getPhaseContext(state.workspaceId, getSid(), "verification-core-tools")
     expect(ctx!.context).toHaveProperty("status", "pending_human_decision")
@@ -169,7 +171,7 @@ describe("verify_implementation", () => {
     expect(output.title).toContain("Tech Debt")
     expect(output.output).toContain("Missing tool X")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     const repo = new SqliteStateRepository(TEST_DIR)
     const ctx = await repo.getPhaseContext(state.workspaceId, getSid(), "verification-core-tools")
     expect(ctx!.context).toHaveProperty("status", "accepted_as_debt")
@@ -208,7 +210,7 @@ describe("verify_implementation", () => {
     expect(output.output).toContain("Missing src/ dir")
     expect(output.output).toContain("delegate_task")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     const repo = new SqliteStateRepository(TEST_DIR)
     const ctx = await repo.getPhaseContext(state.workspaceId, getSid(), "verification-foundation")
     expect(ctx!.context).toHaveProperty("status", "correction_pending")
@@ -216,9 +218,9 @@ describe("verify_implementation", () => {
   })
 
   test("rejects when not in EXECUTION phase", async () => {
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await verifyImplementationTool.execute(
       {
@@ -261,7 +263,7 @@ describe("verify_implementation", () => {
       make_human_context()
     )
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     const repo = new SqliteStateRepository(TEST_DIR)
     const all = await repo.listPhaseContexts(state.workspaceId, getSid())
     const phaseA = all.find((c) => c.phase === "verification-phase-a")
@@ -314,7 +316,7 @@ describe("verify_implementation", () => {
     const output = result as { title: string; output: string }
     expect(output.title).toContain("Verification Passed")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     const repo = new SqliteStateRepository(TEST_DIR)
     const ctx = await repo.getPhaseContext(state.workspaceId, getSid(), "verification-testing")
     expect(ctx!.context).toHaveProperty("status", "verified")
@@ -350,7 +352,7 @@ describe("verify_implementation", () => {
     const output = result as { title: string; output: string }
     expect(output.title).toContain("Tech Debt")
 
-    const state = await loadState(TEST_DIR)
+    const state = await loadState(TEST_DIR, "test-session")
     const repo = new SqliteStateRepository(TEST_DIR)
     const ctx = await repo.getPhaseContext(state.workspaceId, getSid(), "verification-cleanup")
     expect(ctx!.context).toHaveProperty("acceptedGaps")

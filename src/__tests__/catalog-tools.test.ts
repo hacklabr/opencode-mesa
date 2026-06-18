@@ -31,7 +31,7 @@ describe("list_specialists tool", () => {
 
   test("filters by division", async () => {
     const result = await listSpecialistsTool.execute(
-      { division: "engineering" },
+      { division: "software-development" },
       makeContext()
     )
 
@@ -77,7 +77,7 @@ describe("list_specialists tool", () => {
 describe("get_specialist tool", () => {
   test("returns full specialist details for valid ID", async () => {
     const result = await getSpecialistTool.execute(
-      { id: "engineering-backend-architect" },
+      { id: "software-development-backend-architect" },
       makeContext()
     )
 
@@ -85,7 +85,7 @@ describe("get_specialist tool", () => {
     expect((result as { title: string }).title).toContain("Backend Architect")
     const output = (result as { output: string }).output
     const parsed = JSON.parse(output.split("\n\n").slice(1).join("\n"))
-    expect(parsed.id).toBe("engineering-backend-architect")
+    expect(parsed.id).toBe("software-development-backend-architect")
     expect(parsed.name).toBeTruthy()
     expect(parsed.division).toBeTruthy()
     expect(parsed.systemPrompt).toBeTruthy()

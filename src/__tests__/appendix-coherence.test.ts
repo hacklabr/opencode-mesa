@@ -22,11 +22,11 @@ function makeContext() {
 }
 
 async function setupExecutionState() {
-  const state = await loadState(TEST_DIR)
+  const state = await loadState(TEST_DIR, "test-session")
   state.currentPhase = "EXECUTION"
   state.specification.path = join(TEST_DIR, ".mesa", "specifications", "spec-master.md")
   state.specification.status = "approved"
-  await saveState(TEST_DIR, state)
+  await saveState(TEST_DIR, state, "test-session")
   return state
 }
 
@@ -94,7 +94,7 @@ describe("appendix coherence", () => {
         "utf-8"
       )
 
-      const state = await loadState(TEST_DIR)
+      const state = await loadState(TEST_DIR, "test-session")
       const appendicesDir = join(TEST_DIR, ".mesa", "specifications", "appendices")
 
       // List all appendix files
@@ -115,7 +115,7 @@ describe("appendix coherence", () => {
       await setupExecutionState()
       await generateAppendix("Backend", 1)
 
-      const state = await loadState(TEST_DIR)
+      const state = await loadState(TEST_DIR, "test-session")
       const appendicesDir = join(TEST_DIR, ".mesa", "specifications", "appendices")
       const files = await fs.readdir(appendicesDir)
       const appendixFiles = files.filter((f) => f.startsWith("appendix-") && f.endsWith(".md"))
@@ -134,7 +134,7 @@ describe("appendix coherence", () => {
       await setupExecutionState()
       const result = await generateAppendix("Frontend", 1)
 
-      const state = await loadState(TEST_DIR)
+      const state = await loadState(TEST_DIR, "test-session")
       expect(state.appendices.length).toBeGreaterThan(0)
 
       // Verify state references the appendix
@@ -165,7 +165,7 @@ describe("appendix coherence", () => {
       const appendixId = metadata?.appendixId as string
 
       // Load phase context from SQLite
-      const sessionId = (await import("../state.js")).getSessionId(TEST_DIR)
+      const sessionId = (await import("../state.js")).getSessionId(TEST_DIR, "test-session")
       if (sessionId) {
         const repo = new SqliteStateRepository(TEST_DIR)
         const contextRecord = await repo.getPhaseContext(TEST_DIR, sessionId, "phase-1-database")
@@ -192,22 +192,22 @@ describe("appendix coherence", () => {
       await generateAppendix("API Design", 1)
 
       // Load state and mutate appendices
-      const state1 = await loadState(TEST_DIR)
+      const state1 = await loadState(TEST_DIR, "test-session")
       const originalLength = state1.appendices.length
       expect(originalLength).toBeGreaterThan(0)
 
       state1.appendices.push("fake-appendix.md")
 
       // Reload without saving - should not have the fake appendix
-      const state2 = await loadState(TEST_DIR)
+      const state2 = await loadState(TEST_DIR, "test-session")
       expect(state2.appendices).toHaveLength(originalLength)
       expect(state2.appendices).not.toContain("fake-appendix.md")
 
       // Now save the mutated state
-      await saveState(TEST_DIR, state1)
+      await saveState(TEST_DIR, state1, "test-session")
 
       // Reload - should now have the fake appendix
-      const state3 = await loadState(TEST_DIR)
+      const state3 = await loadState(TEST_DIR, "test-session")
       expect(state3.appendices).toContain("fake-appendix.md")
     })
 
@@ -238,12 +238,12 @@ describe("appendix coherence", () => {
 
       // Generate first appendix
       await generateAppendix("Core Module", 1)
-      const state1 = await loadState(TEST_DIR)
+      const state1 = await loadState(TEST_DIR, "test-session")
       const count1 = state1.appendices.length
 
       // Generate second appendix for same phase
       await generateAppendix("Core Module", 1)
-      const state2 = await loadState(TEST_DIR)
+      const state2 = await loadState(TEST_DIR, "test-session")
       const count2 = state2.appendices.length
 
       // Should have 2 entries (different appendix files)

@@ -45,7 +45,7 @@ describe("open_analysis_round tool", () => {
     state.team = [
       { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await openAnalysisRoundTool.execute(
       {
@@ -62,7 +62,7 @@ describe("open_analysis_round tool", () => {
     expect(output).toContain("Engineer")
     expect(output).toContain("DISCUSSION")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("DISCUSSION")
     expect(loaded.discussion.topic).toBe("System Architecture")
     expect(loaded.discussion.maxTurns).toBe(3)
@@ -80,7 +80,7 @@ describe("open_analysis_round tool", () => {
     state.discussion.votes = [
       { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     await openAnalysisRoundTool.execute(
       {
@@ -91,7 +91,7 @@ describe("open_analysis_round tool", () => {
       makeContext()
     )
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.specification.path).toBeNull()
     expect(loaded.specification.status).toBe("pending")
     expect(loaded.discussion.votes).toEqual([])
@@ -101,7 +101,7 @@ describe("open_analysis_round tool", () => {
   test("returns error when not in PLANNING phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await openAnalysisRoundTool.execute(
       { topic: "Test", participants: ["eng-1"] },
@@ -118,7 +118,7 @@ describe("open_analysis_round tool", () => {
     state.discussion.analyses = [
       { agentId: "a", agentName: "A", content: "c", turn: 1, timestamp: new Date().toISOString() },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await openAnalysisRoundTool.execute(
       { topic: "Test", participants: ["eng-1"] },
@@ -135,7 +135,7 @@ describe("open_analysis_round tool", () => {
     state.team = [
       { personaId: "eng-1", name: "Eng", division: "eng", status: "summoned" },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     await openAnalysisRoundTool.execute(
       {
@@ -146,7 +146,7 @@ describe("open_analysis_round tool", () => {
       makeContext()
     )
 
-    const sessionId = getSessionId(TEST_DIR)
+    const sessionId = getSessionId(TEST_DIR, "test-session")
     const file = await fs.readFile(
       join(TEST_DIR, ".mesa", `briefing-for-discussion-${sessionId}.md`),
       "utf-8"
@@ -160,7 +160,7 @@ describe("open_analysis_round tool", () => {
     state.team = [
       { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await openAnalysisRoundTool.execute(
       {
@@ -181,7 +181,7 @@ describe("open_analysis_round tool", () => {
       { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
       { personaId: "design-1", name: "Designer", division: "design", status: "summoned" },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     await openAnalysisRoundTool.execute(
       {
@@ -191,7 +191,7 @@ describe("open_analysis_round tool", () => {
       makeContext()
     )
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.discussion.participants).toEqual(["eng-1", "design-1"])
   })
 })
@@ -212,7 +212,7 @@ describe("register_analysis tool", () => {
     state.team = [
       { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await registerAnalysisTool.execute(
       {
@@ -228,7 +228,7 @@ describe("register_analysis tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("turn 1")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.discussion.analyses.length).toBe(1)
     expect(loaded.discussion.analyses[0].agentId).toBe("eng-1")
     expect(loaded.discussion.analyses[0].content).toBe("I recommend microservices.")
@@ -240,7 +240,7 @@ describe("register_analysis tool", () => {
     state.discussion.analyses = [
       { agentId: "eng-1", agentName: "Engineer", content: "First", turn: 1, timestamp: new Date().toISOString() },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await registerAnalysisTool.execute(
       { agent_id: "eng-1", agent_name: "Engineer", content: "Duplicate", turn: 1 },
@@ -254,7 +254,7 @@ describe("register_analysis tool", () => {
   test("returns error when not in ANALYSIS phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await registerAnalysisTool.execute(
       { agent_id: "eng-1", agent_name: "Engineer", content: "Analysis", turn: 1 },
@@ -279,7 +279,7 @@ describe("request_consensus tool", () => {
   test("reaches consensus with all AGREE votes", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await requestConsensusTool.execute(
       {
@@ -296,7 +296,7 @@ describe("request_consensus tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("All specialists agree")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("DISCUSSION")
     expect(loaded.discussion.consensusRound).toBe(1)
     expect(loaded.discussion.votes.length).toBe(2)
@@ -305,7 +305,7 @@ describe("request_consensus tool", () => {
   test("detects disagreement and returns debate message", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await requestConsensusTool.execute(
       {
@@ -330,7 +330,7 @@ describe("request_consensus tool", () => {
     state.discussion.votes = [
       { agentId: "a", agentName: "Alice", vote: 1, reason: "ok", round: 1 },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await requestConsensusTool.execute(
       {
@@ -347,7 +347,7 @@ describe("request_consensus tool", () => {
   test("returns error when not in ANALYSIS phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await requestConsensusTool.execute(
       {
@@ -385,7 +385,7 @@ describe("generate_specification tool", () => {
     state.discussion.analyses = [
       { agentId: "a", agentName: "Alice", content: "Analysis content", turn: 1, timestamp: new Date().toISOString() },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await generateSpecificationTool.execute(
       {
@@ -407,7 +407,7 @@ describe("generate_specification tool", () => {
     expect(specFile).toContain("microservices")
     expect(specFile).toContain("Executive Summary")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("SPECIFICATION")
     expect(loaded.specification.status).toBe("draft")
 
@@ -423,7 +423,7 @@ describe("generate_specification tool", () => {
   test("returns error from invalid phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await generateSpecificationTool.execute(
       {
@@ -452,7 +452,7 @@ describe("approve_specification tool", () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "SPECIFICATION"
     state.specification = { path: "/spec.md", status: "draft" }
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await approveSpecificationTool.execute(
       { approved: true },
@@ -463,7 +463,7 @@ describe("approve_specification tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("EXECUTION")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("EXECUTION")
     expect(loaded.specification.status).toBe("approved")
   })
@@ -472,7 +472,7 @@ describe("approve_specification tool", () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "SPECIFICATION"
     state.specification = { path: "/spec.md", status: "draft" }
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await approveSpecificationTool.execute(
       { approved: false, feedback: "Needs more detail" },
@@ -484,7 +484,7 @@ describe("approve_specification tool", () => {
     expect(output).toContain("SPECIFICATION")
     expect(output).toContain("Needs more detail")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("SPECIFICATION")
     expect(loaded.specification.status).toBe("rejected")
   })
@@ -492,7 +492,7 @@ describe("approve_specification tool", () => {
   test("returns error when not in APPROVAL phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await approveSpecificationTool.execute(
       { approved: true },
@@ -517,7 +517,7 @@ describe("pause_discussion tool", () => {
   test("successfully pauses from ANALYSIS", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await pauseDiscussionTool.execute({}, makeContext())
 
@@ -525,20 +525,27 @@ describe("pause_discussion tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("DISCUSSION")
 
-    const loaded = await loadState(TEST_DIR)
-    expect(loaded.currentPhase).toBe("PAUSED" as any)
+    const loaded = await loadState(TEST_DIR, "test-session")
+    // Pause sets the orthogonal `status` field; the phase is preserved for resume.
+    expect(loaded.status).toBe("paused")
+    expect(loaded.currentPhase).toBe("DISCUSSION")
     expect(loaded.previousPhase).toBe("DISCUSSION")
   })
 
-  test("returns error when already PAUSED", async () => {
+  test("pausing when already paused is idempotent (status-based, not phase-transition)", async () => {
     const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PAUSED" as any
-    await saveState(TEST_DIR, state)
+    state.status = "paused"
+    state.currentPhase = "DISCUSSION"
+    state.previousPhase = "DISCUSSION"
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await pauseDiscussionTool.execute({}, makeContext())
 
-    expect(typeof result).toBe("string")
-    expect(result).toContain("Invalid transition")
+    // The status-based model has no invalid PAUSED→PAUSED transition; pause is idempotent.
+    expect(result).toHaveProperty("title", "Discussion Paused")
+    const loaded = await loadState(TEST_DIR, "test-session")
+    expect(loaded.status).toBe("paused")
+    expect(loaded.currentPhase).toBe("DISCUSSION")
   })
 })
 
@@ -556,7 +563,7 @@ describe("resume_discussion tool", () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PAUSED" as any
     state.previousPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await resumeDiscussionTool.execute(
       { target_phase: "DISCUSSION" },
@@ -567,32 +574,39 @@ describe("resume_discussion tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("DISCUSSION")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("DISCUSSION")
     expect(loaded.previousPhase).toBeNull()
   })
 
-  test("warns when resuming to different phase than paused from", async () => {
+  test("resumes to an explicitly requested phase different from the paused one", async () => {
     const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PAUSED" as any
+    state.status = "paused"
+    state.currentPhase = "DISCUSSION"
     state.previousPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
+    // Request a different valid phase than the one we paused from.
     const result = await resumeDiscussionTool.execute(
-      { target_phase: "DISCUSSION" },
+      { target_phase: "SPECIFICATION" },
       makeContext()
     )
 
+    // The status-based resume has no "different phase" warning; it honours the request.
+    expect(result).toHaveProperty("title", "Discussion Resumed")
     const output = (result as { output: string }).output
-    expect(output).toContain("Warning")
-    expect(output).toContain("DISCUSSION")
-    expect(output).toContain("DISCUSSION")
+    expect(output).toContain("SPECIFICATION")
+
+    const loaded = await loadState(TEST_DIR, "test-session")
+    expect(loaded.status).toBe("active")
+    expect(loaded.currentPhase).toBe("SPECIFICATION")
+    expect(loaded.previousPhase).toBeNull()
   })
 
   test("returns error when not PAUSED", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await resumeDiscussionTool.execute(
       { target_phase: "DISCUSSION" },
@@ -606,7 +620,7 @@ describe("resume_discussion tool", () => {
   test("returns error for invalid target phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PAUSED" as any
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await resumeDiscussionTool.execute(
       { target_phase: "INVALID_PHASE" },
@@ -638,38 +652,42 @@ describe("cancel_discussion tool", () => {
       { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
     ]
     state.discussion.currentTurn = 2
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await cancelDiscussionTool.execute({}, makeContext())
 
     expect(result).toHaveProperty("title", "Discussion Cancelled")
     const output = (result as { output: string }).output
-    expect(output).toContain("CANCELLED" as any)
+    expect(output).toContain("cancelled")
     expect(output).toContain("analysis data cleared")
 
-    const loaded = await loadState(TEST_DIR)
-    expect(loaded.currentPhase).toBe("CANCELLED" as any)
+    const loaded = await loadState(TEST_DIR, "test-session")
+    // Cancel sets the orthogonal `status` field; the phase is kept for audit.
+    expect(loaded.status).toBe("cancelled")
+    expect(loaded.currentPhase).toBe("DISCUSSION")
     expect(loaded.discussion.analyses).toEqual([])
     expect(loaded.discussion.votes).toEqual([])
     expect(loaded.discussion.currentTurn).toBe(0)
   })
 
-  test("returns error when already CANCELLED", async () => {
+  test("cancelling when already cancelled is idempotent (status-based, not phase-transition)", async () => {
     const state = createInitialState(TEST_DIR)
-    state.currentPhase = "CANCELLED" as any
-    await saveState(TEST_DIR, state)
+    state.status = "cancelled"
+    state.currentPhase = "DISCUSSION"
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await cancelDiscussionTool.execute({}, makeContext())
 
-    expect(typeof result).toBe("string")
-    expect(result).toContain("Invalid transition")
-    expect(result).toContain("CANCELLED" as any)
+    // The status-based model has no invalid CANCELLED→CANCELLED transition; cancel is idempotent.
+    expect(result).toHaveProperty("title", "Discussion Cancelled")
+    const loaded = await loadState(TEST_DIR, "test-session")
+    expect(loaded.status).toBe("cancelled")
   })
 
   test("can cancel from PLANNING phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await cancelDiscussionTool.execute({}, makeContext())
 
@@ -933,11 +951,12 @@ describe("request_consensus validation gates", () => {
     state.discussion.participants = ["eng-1", "design-1"]
     state.discussion.analyses = [
       { agentId: "eng-1", agentName: "Engineer", content: "Analysis 1", turn: 1, timestamp: new Date().toISOString() },
-      { agentId: "design-1", agentName: "Designer", content: "Analysis 2", turn: 1, timestamp: new Date().toISOString() },
-      // Only eng-1 has turn 2 — design-1 is missing
       { agentId: "eng-1", agentName: "Engineer", content: "Analysis 1 turn 2", turn: 2, timestamp: new Date().toISOString() },
+      // design-1 has registered NO analysis at all — the relaxed completeness gate
+      // (spec-4dcc492f) only requires each participant to have ≥1 analysis, so this
+      // is the condition that now triggers the BUG-04 block.
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await requestConsensusTool.execute(
       {
@@ -950,7 +969,7 @@ describe("request_consensus validation gates", () => {
       makeContext()
     )
 
-    expect(result).toContain("Not all analyses complete")
+    expect(result).toContain("Not all participants have registered analyses")
     expect(result).toContain("Designer")
   })
 
@@ -966,7 +985,7 @@ describe("request_consensus validation gates", () => {
     state.discussion.analyses = [
       { agentId: "eng-1", agentName: "Engineer", content: "Analysis", turn: 1, timestamp: new Date().toISOString() },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await requestConsensusTool.execute(
       {
@@ -999,7 +1018,7 @@ describe("request_consensus validation gates", () => {
       { agentId: "eng-1", agentName: "Engineer", content: "T2", turn: 2, timestamp: new Date().toISOString() },
       { agentId: "design-1", agentName: "Designer", content: "T2", turn: 2, timestamp: new Date().toISOString() },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await requestConsensusTool.execute(
       {
@@ -1042,7 +1061,7 @@ describe("generate_specification budget enforcement", () => {
       { agentId: "eng-1", agentName: "Engineer", vote: 1, reason: "OK", round: 1 },
     ]
     state.discussion.consensusRound = 1
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const longContent = "x".repeat(400001)
     const result = await generateSpecificationTool.execute(
@@ -1056,7 +1075,7 @@ describe("generate_specification budget enforcement", () => {
     expect(result).toContain("exceeds total budget")
 
     // Verify phase reverted to CONSENSUS
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("DISCUSSION")
   })
 
@@ -1069,7 +1088,7 @@ describe("generate_specification budget enforcement", () => {
     state.discussion.topic = "Test"
     state.discussion.participants = ["eng-1"]
     state.discussion.consensusRound = 1
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const bigContent = "x".repeat(400001)
     const result = await generateSpecificationTool.execute(
@@ -1082,7 +1101,7 @@ describe("generate_specification budget enforcement", () => {
 
     expect(result).toContain("exceeds total budget")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("DISCUSSION")
   })
 
@@ -1095,7 +1114,7 @@ describe("generate_specification budget enforcement", () => {
     state.discussion.topic = "Test"
     state.discussion.participants = ["eng-1"]
     state.discussion.consensusRound = 1
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await generateSpecificationTool.execute(
       {
@@ -1108,7 +1127,7 @@ describe("generate_specification budget enforcement", () => {
     const output = (result as { title: string }).title
     expect(output).toContain("Specification Generated")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("SPECIFICATION")
   })
 })

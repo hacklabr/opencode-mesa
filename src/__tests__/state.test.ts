@@ -27,9 +27,10 @@ describe("config", () => {
     expect(state.updatedAt).toBeDefined()
   })
 
+  // Phase enum collapsed 8→4 (spec-4dcc492f, Decision 3). PAUSED/CANCELLED are no
+  // longer phases — they live on the orthogonal `status` field (see transitions.ts).
   const VALID_PHASES: DiscussionPhase[] = [
-    "PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION",
-    "SPECIFICATION", "EXECUTION", "PAUSED" as any, "CANCELLED" as any,
+    "PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION",
   ]
 
   test("all phases are covered", () => {

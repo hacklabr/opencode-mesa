@@ -44,7 +44,7 @@ describe("analyze_briefing tool", () => {
     state.briefing.status = "approved"
     await fs.mkdir(join(TEST_DIR, ".mesa", "briefings"), { recursive: true })
     await fs.writeFile(state.briefing.path, "# Test Briefing\n\nContent here.", "utf-8")
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await analyzeBriefingTool.execute({}, makeContext())
 
@@ -58,7 +58,7 @@ describe("analyze_briefing tool", () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
     state.briefing.path = null
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await analyzeBriefingTool.execute({}, makeContext())
 
@@ -69,7 +69,7 @@ describe("analyze_briefing tool", () => {
   test("returns error when not in PLANNING phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await analyzeBriefingTool.execute({}, makeContext())
 
@@ -91,15 +91,15 @@ describe("propose_team tool", () => {
   test("proposes valid specialists in PLANNING phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await proposeTeamTool.execute(
       {
         specialists: [
           {
-            personaId: "engineering-backend-architect",
+            personaId: "software-development-backend-architect",
             name: "Backend Architect",
-            division: "engineering",
+            division: "software-development",
             justification: "Need architecture review",
           },
         ],
@@ -112,16 +112,16 @@ describe("propose_team tool", () => {
     expect(output).toContain("Backend Architect")
     expect(output).toContain("Need architecture review")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.team.length).toBe(1)
     expect(loaded.team[0].status).toBe("proposed")
-    expect(loaded.team[0].personaId).toBe("engineering-backend-architect")
+    expect(loaded.team[0].personaId).toBe("software-development-backend-architect")
   })
 
   test("returns error for invalid persona ID", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await proposeTeamTool.execute(
       {
@@ -144,7 +144,7 @@ describe("propose_team tool", () => {
   test("returns error when not in PLANNING phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await proposeTeamTool.execute(
       {
@@ -183,7 +183,7 @@ describe("summon_team tool", () => {
       { personaId: "eng-1", name: "Eng One", division: "engineering", status: "proposed" },
       { personaId: "prod-1", name: "Prod One", division: "product", status: "proposed" },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await summonTeamTool.execute({}, makeContext())
 
@@ -193,7 +193,7 @@ describe("summon_team tool", () => {
     expect(output).toContain("Eng One")
     expect(output).toContain("Prod One")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.team.every((t) => t.status === "summoned")).toBe(true)
   })
 
@@ -202,7 +202,7 @@ describe("summon_team tool", () => {
     state.currentPhase = "PLANNING"
     state.briefing.status = "delivered"
     state.team = []
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await summonTeamTool.execute({}, makeContext())
 
@@ -217,7 +217,7 @@ describe("summon_team tool", () => {
     state.team = [
       { personaId: "eng-1", name: "Eng", division: "engineering", status: "proposed" },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await summonTeamTool.execute({}, makeContext())
 
@@ -242,7 +242,7 @@ describe("delegate_task tool", () => {
     state.team = [
       { personaId: "engineering-backend-architect", name: "Backend Architect", division: "engineering", status: "summoned" },
     ]
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await delegateTaskTool.execute(
       {
@@ -264,11 +264,11 @@ describe("delegate_task tool", () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "EXECUTION"
     state.team = []
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await delegateTaskTool.execute(
       {
-        personaId: "engineering-backend-architect",
+        personaId: "software-development-backend-architect",
         task: "Do something",
       },
       makeContext()
@@ -278,9 +278,9 @@ describe("delegate_task tool", () => {
     const output = (result as { output: string }).output
     expect(output).toContain("Do something")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.team.length).toBe(1)
-    expect(loaded.team[0].personaId).toBe("engineering-backend-architect")
+    expect(loaded.team[0].personaId).toBe("software-development-backend-architect")
     expect(loaded.team[0].status).toBe("delegated")
   })
 
@@ -288,7 +288,7 @@ describe("delegate_task tool", () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "EXECUTION"
     state.team = []
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await delegateTaskTool.execute(
       {
@@ -305,7 +305,7 @@ describe("delegate_task tool", () => {
   test("returns error when not in EXECUTION phase", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await delegateTaskTool.execute(
       { personaId: "eng-1", task: "task" },
@@ -329,7 +329,7 @@ describe("define_phases tool", () => {
 
   test("defines valid phases", async () => {
     const state = createInitialState(TEST_DIR)
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await definePhasesTool.execute(
       { phases: ["PLANNING", "DISCUSSION", "DISCUSSION"] },
@@ -338,15 +338,15 @@ describe("define_phases tool", () => {
 
     expect(result).toHaveProperty("title", "Workflow Phases Defined")
     const output = (result as { output: string }).output
-    expect(output).toContain("PLANNING → ANALYSIS → CONSENSUS")
+    expect(output).toContain("PLANNING → DISCUSSION → DISCUSSION")
 
-    const loaded = await loadState(TEST_DIR)
+    const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.phases).toEqual(["PLANNING", "DISCUSSION", "DISCUSSION"])
   })
 
   test("returns error for invalid phase names", async () => {
     const state = createInitialState(TEST_DIR)
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await definePhasesTool.execute(
       { phases: ["PLANNING", "INVALID_PHASE", "ANOTHER_BAD"] },
@@ -360,7 +360,7 @@ describe("define_phases tool", () => {
 
   test("accepts all six valid active phases", async () => {
     const state = createInitialState(TEST_DIR)
-    await saveState(TEST_DIR, state)
+    await saveState(TEST_DIR, state, "test-session")
 
     const result = await definePhasesTool.execute(
       { phases: ["PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION", "SPECIFICATION", "EXECUTION"] },
