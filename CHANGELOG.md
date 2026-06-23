@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-06-23
+
+### Fixed
+- Resolved merge conflicts from dual-runtime DB adapter integration.
+- `node-adapter.test.ts` now skips under Bun runtime (`node:sqlite` unavailable).
+- `updater-checker.test.ts` no longer leaks `vi.mock("../config")` into other tests, fixing `verification.test.ts` failures.
+- Updated updater test fixtures to use versions greater than current `PLUGIN_VERSION`.
+- Production build verified.
+
 ## [3.1.0] - 2026-06-17
 
 ### Added
