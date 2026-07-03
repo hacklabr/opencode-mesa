@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-07-03
+
+### Added
+- **Adaptive scope calibration** — briefing-writer classifies scope magnitude (`simple`/`composite`) via Phase 0 before discovery questions.
+  - Simple scopes use lean mode (≤5 questions with anti-bias gate).
+  - Composite scopes include a Coverage Map with depth markers and a deepening menu.
+- **Non-technical dimension discovery** — both briefing-writer and manager scan for non-technical dimensions (gamification, community, politics, culture, trust) using a two-layer trigger table.
+  - Detected dimensions flow as structured metadata from briefing-writer to manager.
+  - Manager proposes matching non-technical specialists (psychologists, anthropologists, political scientists) in the team proposal.
+  - Structured metadata is dual-written to state and markdown briefing.
+- New types in `src/types.ts`: `BriefingMetadata`, `ScopeMagnitude`, `ScopeDimension`.
+- State schema migrated to version 8 with `briefing_metadata` column.
+- New test suite `src/__tests__/briefing-metadata.test.ts` with 19 cases covering schema, tools, migration, and dual-write persistence.
+
+### Changed
+- `briefing-writer.md` agent prompt updated to v2 with Phase 0 classifier, lean mode, Coverage Map, and non-tech dimension scan.
+- `manager.md` agent prompt updated to v2 with mandatory non-tech scan and composite-scope team proposals.
+- `create_briefing`, `deliver_briefing`, and `import_briefing` tools now handle briefing metadata.
+
 ## [3.1.1] - 2026-06-23
 
 ### Fixed
