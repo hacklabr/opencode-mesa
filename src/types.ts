@@ -24,6 +24,37 @@ export type ConsensusVote = 0 | 1 | 2
 
 export type BriefingStatus = "draft" | "approved" | "delivered"
 
+/**
+ * Two-bucket scope classification (spec-fb0ba2d7, Decision 1).
+ * Binary classifier with composite-default on ambiguity (asymmetric cost).
+ */
+export type ScopeMagnitude = "simple" | "composite"
+
+/**
+ * Non-technical dimension taxonomy (spec-fb0ba2d7, Decision 4).
+ * Used for specialist division matching in team assembly.
+ */
+export type ScopeDimension =
+  | "technical"
+  | "human-social"
+  | "cultural"
+  | "political"
+  | "economic"
+  | "educational"
+  | "behavioral"
+
+/**
+ * Adaptive scope metadata produced by the briefing-writer (spec-fb0ba2d7, Decision 5).
+ * Null for legacy/imported briefings before the classifier runs.
+ */
+export interface BriefingMetadata {
+  scopeMagnitude: ScopeMagnitude
+  classificationReason: string
+  subAreas?: string[]
+  nonTechnicalDimensions: ScopeDimension[]
+  nonTechnicalFlag: boolean
+}
+
 export type SpecialistStatus = "proposed" | "summoned" | "active" | "dismissed" | "delegated"
 
 export type SpecificationStatus = "pending" | "draft" | "approved" | "rejected"
@@ -90,6 +121,7 @@ export interface DiscussionState {
     path: string | null
     status: BriefingStatus
     slug: string | null
+    metadata: BriefingMetadata | null
   }
   team: SpecialistEntry[]
   discussion: {

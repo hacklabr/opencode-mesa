@@ -8,6 +8,23 @@ import { formatPhaseHeader } from "../workflow/transitions.js"
 import { isValidSlug } from "../utils/slug.js"
 import { successResponse, errorResponse } from "../utils/responses.js"
 import { ValidationError } from "../errors.js"
+import type { BriefingMetadata, ScopeDimension, ScopeMagnitude } from "../types.js"
+
+/**
+ * Builds the human/LLM-readable metadata projection block prepended to the
+ * briefing markdown body (spec-fb0ba2d7, Decision 5). State is authoritative;
+ * this block is derived display only.
+ */
+function buildMetadataProjection(metadata: BriefingMetadata): string {
+  const dimensionsText = metadata.nonTechnicalDimensions.length > 0
+    ? metadata.nonTechnicalDimensions.join(", ")
+    : "none detected"
+  return [
+    `> **Scope:** ${metadata.scopeMagnitude.toUpperCase()} — ${metadata.classificationReason}`,
+    `> **Non-technical dimensions:** ${dimensionsText}`,
+    "",
+  ].join("\n")
+}
 
 export const createBriefingTool = tool({
   description:
@@ -20,6 +37,43 @@ export const createBriefingTool = tool({
       ),
     title: tool.schema.string().describe("The briefing title"),
     content: tool.schema.string().describe("The full briefing content in Markdown"),
+    scope_magnitude: tool.schema
+      .enum(["simple", "composite"])
+      .optional()
+      .describe(
+        "Adaptive scope classification (spec-fb0ba2d7, Decision 1). " +
+        "Provide when the briefing-writer has classified the scope during discovery."
+      ),
+    classification_reason: tool.schema
+      .string()
+      .optional()
+      .describe(
+        "Human-readable evidence for the classification " +
+        "(e.g. 'domains: gamification, docs; users: admins, end-users; novel: real-time collaboration')."
+      ),
+    sub_areas: tool.schema
+      .array(tool.schema.string())
+      .optional()
+      .describe("Composite scope decomposition (e.g. ['gamification', 'document collaboration'])."),
+    non_technical_dimensions: tool.schema
+      .array(
+        tool.schema.enum([
+          "technical", "human-social", "cultural",
+          "political", "economic", "educational", "behavioral",
+        ])
+      )
+      .optional()
+      .describe(
+        "Detected non-technical dimensions (spec-fb0ba2d7, Decision 4). " +
+        "Empty array if scope is technical-only."
+      ),
+    non_technical_flag: tool.schema
+      .boolean()
+      .optional()
+      .describe(
+        "Derived flag: true when non_technical_dimensions is non-empty. " +
+        "May be passed explicitly; otherwise derived from the dimensions array."
+      ),
   },
   async execute(args, context) {
     try {
@@ -40,6 +94,27 @@ export const createBriefingTool = tool({
       }
       const now = new Date().toISOString()
 
+      // Construct metadata when classification args are provided (spec-fb0ba2d7, Decision 5).
+      // All-or-nothing on the required trio: scopeMagnitude, classificationReason, nonTechnicalDimensions.
+      let metadata: BriefingMetadata | null = null
+      const hasClassification = args.scope_magnitude !== undefined
+      if (hasClassification) {
+        if (!args.classification_reason) {
+          throw new ValidationError(
+            "classification_reason is required when scope_magnitude is provided."
+          )
+        }
+        const dimensions: ScopeDimension[] = args.non_technical_dimensions ?? []
+        const flag = args.non_technical_flag ?? dimensions.length > 0
+        metadata = {
+          scopeMagnitude: args.scope_magnitude as ScopeMagnitude,
+          classificationReason: args.classification_reason,
+          subAreas: args.sub_areas,
+          nonTechnicalDimensions: dimensions,
+          nonTechnicalFlag: flag,
+        }
+      }
+
       const frontmatter = [
         "---",
         `title: "${args.title.replace(/"/g, '\\"')}"`,
@@ -50,12 +125,16 @@ export const createBriefingTool = tool({
         "",
       ].join("\n")
 
-      await fs.writeFile(filePath, frontmatter + args.content, "utf-8")
+      // Dual-write: prepend the metadata projection block when metadata is present
+      // so the manager LLM sees it via analyze_briefing (which reads the markdown file).
+      const projectionBlock = metadata ? buildMetadataProjection(metadata) : ""
+      await fs.writeFile(filePath, frontmatter + projectionBlock + args.content, "utf-8")
 
       const state = await loadState(context.directory, context.sessionID)
       state.briefing.path = filePath
       state.briefing.slug = args.slug
       state.briefing.status = "draft"
+      state.briefing.metadata = metadata
       await saveState(context.directory, state, context.sessionID)
 
       return successResponse(
@@ -153,6 +232,14 @@ export const importBriefingTool = tool({
         path: destPath,
         status: "approved",
         slug: args.slug,
+        // Imported briefings bypass discovery — default to composite so the
+        // manager doesn't under-treat the scope (spec-fb0ba2d7, Decision 6).
+        metadata: {
+          scopeMagnitude: "composite",
+          classificationReason: "imported — human-provided briefing",
+          nonTechnicalDimensions: [],
+          nonTechnicalFlag: false,
+        },
       }
 
       state.currentPhase = "PLANNING"
@@ -208,6 +295,17 @@ export const deliverBriefingTool = tool({
 
       state.currentPhase = "PLANNING"
       state.briefing.status = "delivered"
+      // Composite-default-on-unknown: if the briefing-writer never classified
+      // the scope, default to composite so the manager doesn't under-treat it
+      // (spec-fb0ba2d7, Decision 6).
+      if (state.briefing.metadata === null) {
+        state.briefing.metadata = {
+          scopeMagnitude: "composite",
+          classificationReason: "default — no explicit classification during discovery",
+          nonTechnicalDimensions: [],
+          nonTechnicalFlag: false,
+        }
+      }
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "briefing_delivered", state.currentPhase, { slug: state.briefing.slug })
 

@@ -34,6 +34,7 @@ describe("v1 state migration", () => {
         path: join(mesaDir, "briefings", "test.md"),
         status: "approved",
         slug: "test-project",
+        metadata: null,
       },
       team: [
         {

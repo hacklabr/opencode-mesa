@@ -72,6 +72,24 @@ const DiscussionStatusEnum = z.enum(["active", "paused", "cancelled"])
 const DiscussionModeEnum = z.enum(["analysis", "debate", "voting"])
 
 const BriefingStatusEnum = z.enum(["draft", "approved", "delivered"])
+const ScopeMagnitudeEnum = z.enum(["simple", "composite"])
+const ScopeDimensionEnum = z.enum([
+  "technical",
+  "human-social",
+  "cultural",
+  "political",
+  "economic",
+  "educational",
+  "behavioral",
+])
+
+const BriefingMetadataSchema = z.object({
+  scopeMagnitude: ScopeMagnitudeEnum,
+  classificationReason: z.string(),
+  subAreas: z.array(z.string()).optional(),
+  nonTechnicalDimensions: z.array(ScopeDimensionEnum),
+  nonTechnicalFlag: z.boolean(),
+})
 const SpecialistStatusEnum = z.enum(["proposed", "summoned", "active", "dismissed", "delegated"])
 const SpecificationStatusEnum = z.enum(["pending", "draft", "approved", "rejected"])
 const ConsensusVoteEnum = z.union([z.literal(0), z.literal(1), z.literal(2)])
@@ -126,6 +144,7 @@ export const DiscussionStateSchema = z.object({
     path: z.string().nullable(),
     status: BriefingStatusEnum,
     slug: z.string().nullable(),
+    metadata: BriefingMetadataSchema.nullable().default(null),
   }),
   team: z.array(SpecialistEntrySchema),
   discussion: z.object({
@@ -177,6 +196,7 @@ CREATE TABLE IF NOT EXISTS mesa_state (
   briefing_path TEXT,
   briefing_status TEXT NOT NULL DEFAULT 'draft',
   briefing_slug TEXT,
+  briefing_metadata TEXT,
   discussion_topic TEXT DEFAULT '',
   discussion_current_turn INTEGER DEFAULT 0,
   discussion_max_turns INTEGER DEFAULT 2,
@@ -266,6 +286,7 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   briefing_path TEXT,
   briefing_status TEXT NOT NULL DEFAULT 'draft',
   briefing_slug TEXT,
+  briefing_metadata TEXT,
   discussion_topic TEXT DEFAULT '',
   discussion_current_turn INTEGER DEFAULT 0,
   discussion_max_turns INTEGER DEFAULT 2,
@@ -495,7 +516,7 @@ function migrateFromJson(directory: string, db: IDatabase): void {
   db.run(
     `INSERT OR REPLACE INTO mesa_state (
       workspace_id, current_phase, previous_phase, status,
-      briefing_path, briefing_status, briefing_slug,
+      briefing_path, briefing_status, briefing_slug, briefing_metadata,
       discussion_topic, discussion_current_turn, discussion_max_turns,
       discussion_consensus_round, discussion_debate_needed, discussion_progress,
       discussion_mode, discussion_max_consensus_rounds,
@@ -503,10 +524,11 @@ function migrateFromJson(directory: string, db: IDatabase): void {
       phases, appendices,
       rigor, analysis_mode, deviations,
       state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       wsId, state.currentPhase, state.previousPhase, state.status ?? "active",
       state.briefing.path, state.briefing.status, state.briefing.slug,
+      JSON.stringify(state.briefing.metadata ?? null),
       state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
       state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
       JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
@@ -822,6 +844,31 @@ function migrate_v6_to_v7(db: IDatabase): void {
   tx()
 }
 
+/**
+ * v7 → v8: Briefing metadata for adaptive scope calibration (spec-fb0ba2d7, Decision 5).
+ *
+ * Adds `briefing_metadata` as a JSON-encoded TEXT column to both state tables,
+ * mirroring the `discussion_progress` pattern. Existing rows get NULL (no metadata)
+ * — legacy briefings load with `metadata: null`, treated as composite-default by
+ * downstream consumers.
+ */
+function migrate_v7_to_v8(db: IDatabase): void {
+  const tx = db.transaction(() => {
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      try {
+        db.run(`ALTER TABLE ${table} ADD COLUMN briefing_metadata TEXT`)
+      } catch (e: unknown) {
+        const err = e as Error
+        if (!err.message.includes("duplicate column name")) throw e
+      }
+    }
+
+    db.run("UPDATE mesa_state SET state_version = 8 WHERE state_version = 7")
+    db.run("UPDATE mesa_session_state SET state_version = 8 WHERE state_version = 7")
+  })
+  tx()
+}
+
 function getDb(directory: string): IDatabase {
   const stateDir = join(directory, PLUGIN_STATE_DIR)
   mkdirSync(stateDir, { recursive: true })
@@ -843,6 +890,7 @@ function getDb(directory: string): IDatabase {
   migrate_v4_to_v5(db)
   migrate_v5_to_v6(db)
   migrate_v6_to_v7(db)
+  migrate_v7_to_v8(db)
   migrateFromJson(directory, db)
 
   return db
@@ -1002,6 +1050,17 @@ function rowToState(
     }
   }
 
+  // briefing.metadata may be absent on legacy rows; parse defensively.
+  let metadata: DiscussionState["briefing"]["metadata"] = null
+  const rawMetadata = row.briefing_metadata as string | undefined
+  if (rawMetadata) {
+    try {
+      metadata = JSON.parse(rawMetadata) as DiscussionState["briefing"]["metadata"]
+    } catch {
+      // keep null on malformed JSON
+    }
+  }
+
   return {
     workspaceId: row.workspace_id as string,
     currentPhase: row.current_phase as string as DiscussionState["currentPhase"],
@@ -1011,6 +1070,7 @@ function rowToState(
       path: row.briefing_path as string | null,
       status: row.briefing_status as DiscussionState["briefing"]["status"],
       slug: row.briefing_slug as string | null,
+      metadata,
     },
     team: team.map((t) => ({
       personaId: t.persona_id,
@@ -1176,7 +1236,7 @@ export async function saveState(directory: string, state: DiscussionState, openc
       db.run(
         `INSERT OR REPLACE INTO mesa_session_state (
           workspace_id, session_id, current_phase, previous_phase, status,
-          briefing_path, briefing_status, briefing_slug,
+          briefing_path, briefing_status, briefing_slug, briefing_metadata,
           discussion_topic, discussion_current_turn, discussion_max_turns,
           discussion_consensus_round, discussion_debate_needed, discussion_progress,
           discussion_mode, discussion_max_consensus_rounds,
@@ -1184,10 +1244,11 @@ export async function saveState(directory: string, state: DiscussionState, openc
           phases, appendices,
           rigor, analysis_mode, deviations,
           state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, sessionId, state.currentPhase, state.previousPhase, state.status ?? "active",
           state.briefing.path, state.briefing.status, state.briefing.slug,
+          JSON.stringify(state.briefing.metadata ?? null),
           state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
           state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
           JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
