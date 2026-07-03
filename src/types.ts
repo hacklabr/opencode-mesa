@@ -154,3 +154,26 @@ export interface DiscussionState {
   stateVersion: number
   previousPhase: DiscussionPhase | null
 }
+
+// Memory system types
+export type MemoryCategory = 'lesson' | 'observation' | 'preference' | 'architecture' | 'pitfall' | 'convention'
+export type MemoryScope = 'project' | 'global'
+export type MemoryStatus = 'active' | 'deleted'
+
+export interface MemoryEntry {
+  id: number
+  workspace_id: string
+  scope: MemoryScope
+  category: MemoryCategory
+  content: string
+  source_agent: string
+  source_session: string | null
+  access_count: number
+  last_accessed: string | null
+  relevance_score: number
+  expires_at: string | null
+  status: MemoryStatus
+  content_hash: string
+  created_at: string
+  updated_at: string
+}

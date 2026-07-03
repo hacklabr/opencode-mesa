@@ -869,6 +869,63 @@ function migrate_v7_to_v8(db: IDatabase): void {
   tx()
 }
 
+/**
+ * v8 → v9: Memory system table (spec-7ba9841f, D2).
+ *
+ * Creates the `mesa_memory` table for cross-session knowledge persistence.
+ * Follows the established pattern: idempotent CREATE TABLE, indexes, and
+ * state_version bump on both state tables.
+ */
+function migrate_v8_to_v9(db: IDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mesa_memory (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id    TEXT NOT NULL,
+      scope           TEXT NOT NULL DEFAULT 'project'
+                       CHECK(scope IN ('project', 'global')),
+      category        TEXT NOT NULL DEFAULT 'observation'
+                       CHECK(category IN (
+                         'lesson', 'observation', 'preference',
+                         'architecture', 'pitfall', 'convention'
+                       )),
+      content         TEXT NOT NULL,
+      source_agent    TEXT NOT NULL,
+      source_session  TEXT,
+      access_count    INTEGER NOT NULL DEFAULT 0,
+      last_accessed   TEXT,
+      relevance_score REAL DEFAULT 1.0,
+      expires_at      TEXT,
+      status          TEXT NOT NULL DEFAULT 'active'
+                       CHECK(status IN ('active', 'deleted')),
+      content_hash    TEXT,
+      created_at      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL,
+      UNIQUE(workspace_id, scope, category, source_agent, content_hash)
+    )
+  `)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_workspace_active ON mesa_memory(workspace_id, status, category, relevance_score DESC)`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_access_rank ON mesa_memory(workspace_id, access_count DESC, updated_at DESC)`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_source_agent ON mesa_memory(source_agent, workspace_id)`)
+}
+
+/**
+ * Maintenance sweep for the memory system (spec-7ba9841f, D6 + D7).
+ *
+ * Runs at DB open (session init). Two operations:
+ * 1. Hard-purge soft-deleted entries older than 7 days.
+ * 2. Mark TTL-expired entries as deleted (they get purged next sweep).
+ *
+ * Non-critical — failures are silently swallowed.
+ */
+function maintenanceSweep(db: IDatabase): void {
+  try {
+    db.run("DELETE FROM mesa_memory WHERE status = 'deleted' AND updated_at < datetime('now', '-7 days')")
+    db.run("UPDATE mesa_memory SET status = 'deleted', updated_at = datetime('now') WHERE expires_at IS NOT NULL AND expires_at < datetime('now') AND status = 'active'")
+  } catch {
+    // Non-critical — skip on failure
+  }
+}
+
 function getDb(directory: string): IDatabase {
   const stateDir = join(directory, PLUGIN_STATE_DIR)
   mkdirSync(stateDir, { recursive: true })
@@ -891,7 +948,10 @@ function getDb(directory: string): IDatabase {
   migrate_v5_to_v6(db)
   migrate_v6_to_v7(db)
   migrate_v7_to_v8(db)
+  migrate_v8_to_v9(db)
   migrateFromJson(directory, db)
+
+  maintenanceSweep(db)
 
   return db
 }

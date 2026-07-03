@@ -34,7 +34,10 @@ import {
 import { checkForUpdate } from "./updater/checker.js"
 import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools.js"
 import { askPeerTool, setSdkClient } from "./tools/peer-tools.js"
+import { memoryStoreTool, memoryRecallTool, memoryForgetTool } from "./tools/memory-tools.js"
 import { loadState, getSessionId } from "./state.js"
+import { openDatabase } from "./db/driver.js"
+import { PLUGIN_STATE_DIR } from "./config.js"
 import { setStateSdkClient } from "./state.js"
 import { logAction } from "./audit.js"
 import { buildAskPeerPath } from "./utils/paths.js"
@@ -90,6 +93,9 @@ export const mesa: Plugin = async (input) => {
       mesa_check_update: mesaCheckUpdateTool,
       mesa_update: mesaUpdateTool,
       ask_peer: askPeerTool,
+      memory_store: memoryStoreTool,
+      memory_recall: memoryRecallTool,
+      memory_forget: memoryForgetTool,
     },
 
     "permission.ask": async (permissionInput, output) => {
@@ -246,6 +252,26 @@ export const mesa: Plugin = async (input) => {
       ].join("\n")
 
       output.system.push(mesaContext)
+
+      // Memory hint — inject count of project memories (non-critical, skip on failure)
+      try {
+        const dbPath = join(input.directory, PLUGIN_STATE_DIR, "state.db")
+        const memDb = openDatabase(dbPath, { readonly: true })
+        try {
+          const row = memDb
+            .query("SELECT COUNT(*) as count FROM mesa_memory WHERE workspace_id = ? AND status = 'active'")
+            .get(input.directory) as { count: number } | null
+          if (row && row.count > 0) {
+            output.system.push(
+              `<mesa-memory-hint>${row.count} project memories stored. Use memory_recall to retrieve relevant ones.</mesa-memory-hint>`
+            )
+          }
+        } finally {
+          memDb.close()
+        }
+      } catch {
+        // Silently skip — memory hint is non-critical
+      }
     },
 
     "tool.definition": async (toolDefInput, output) => {
@@ -260,6 +286,7 @@ export const mesa: Plugin = async (input) => {
       "generate_specification", "generate_specification_overview", "approve_specification",
       "pause_discussion", "resume_discussion", "cancel_discussion",
       "mesa_check_update", "mesa_update", "ask_peer",
+      "memory_store", "memory_recall", "memory_forget",
       ]
 
       if (mesaTools.includes(toolDefInput.toolID)) {
