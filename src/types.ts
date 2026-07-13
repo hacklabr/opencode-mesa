@@ -24,6 +24,28 @@ export type ConsensusVote = 0 | 1 | 2
 
 export type BriefingStatus = "draft" | "approved" | "delivered"
 
+export type JourneyWorkshopStatus =
+  | "not_started"
+  | "pending_human_decision"
+  | "needed"
+  | "in_progress"
+  | "completed"
+  | "skipped"
+
+export type JourneyWorkshopMode = "guided" | "automatic"
+
+export interface JourneyWorkshop {
+  status: JourneyWorkshopStatus
+  mode?: JourneyWorkshopMode | null
+  detectedAt: string
+  signals: string[]
+  suggestedJourneys: string[]
+  confidence: "high" | "medium" | "low"
+  briefingPath?: string | null
+  journeysFilePath?: string | null
+  observations?: string
+}
+
 /**
  * Two-bucket scope classification (spec-fb0ba2d7, Decision 1).
  * Binary classifier with composite-default on ambiguity (asymmetric cost).
@@ -123,6 +145,7 @@ export interface DiscussionState {
     slug: string | null
     metadata: BriefingMetadata | null
   }
+  journeyWorkshop: JourneyWorkshop
   team: SpecialistEntry[]
   discussion: {
     topic: string

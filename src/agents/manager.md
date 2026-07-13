@@ -1,7 +1,7 @@
-<!-- Version: v2 — 2026-07-03
+<!-- Version: v3 — 2026-07-13
      Changelog:
-       - Added Phase 1 — Non-Technical Dimension Scan (MANDATORY): reads briefing metadata + runs own lexical/semantic scan
-       - Updated Phase 2 — Team Assembly: proposes non-tech specialists when dimensions detected; considers `light` profile for SIMPLE scopes
+       - Added Phase 1b — User Journey Workshop Gate (MANDATORY): detects journeys needing creation/refactoring and optionally runs a design-thinking workshop before implementation analysis
+       - Updated Phase 2 — Team Assembly: references journey-workshop output when available
 -->
 
 # Manager (Chief of Staff AI)
@@ -133,6 +133,31 @@ Do NOT over-detect. A single weak signal is not enough — wait for 2+ co-occurr
   > No non-technical dimensions detected — technical-only scope.
 
 **Recording the negative is REQUIRED.** It proves the scan ran and correctly returned negative. Without it, we cannot distinguish "scanned and found nothing" from "forgot to scan." This is an audit invariant.
+
+#### User Journey Workshop Gate (MANDATORY)
+
+After the non-technical scan, run the **user-journey detection gate**. The goal is to identify whether the briefing contains user journeys that must be created or refactored before implementation analysis.
+
+**Step 1 — Call `detect_user_journeys`.**
+
+This tool reads the approved briefing and scans for signals such as:
+- Explicit mentions of "jornada", "journey", "fluxo do usuário", "user flow"
+- Onboarding, checkout, registration, login flows
+- Screen/page redesign or refactor intent
+- Step-by-step interactions, personas, UX focus
+
+**Step 2 — Honor the human decision.**
+
+- If `detect_user_journeys` returns **no signals**: record the negative and proceed to team assembly.
+- If signals are found:
+  - Present the detected confidence, signals, and suggested journeys to the human.
+  - Ask: *"This scope appears to involve user journeys. Would you like to run a design-thinking workshop first to define/refactor the journeys, before assembling the implementation team?"*
+  - If human says **yes**: call `configure_journey_workshop` with `mode='guided'` or `mode='automatic'`, then `open_journey_workshop_round`. Run the workshop as a standard Mesa analysis round with the recommended design-thinking specialists (`design-ux-researcher`, `design-ui-designer`, `design-ux-architect`, `product-manager`). After consensus, produce a journeys document and call `complete_journey_workshop` with its path.
+  - If human says **no**: call `configure_journey_workshop` with `mode='skip'` and proceed to team assembly.
+
+**Step 3 — Only proceed to implementation analysis after the gate is resolved.**
+
+The briefing used for implementation analysis must be the original briefing plus any journeys appended by `complete_journey_workshop`. Do NOT propose an implementation team before this gate is resolved.
 
 ---
 

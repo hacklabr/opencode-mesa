@@ -14,6 +14,12 @@ import {
   verifyImplementationTool,
 } from "./tools/manager-tools.js"
 import {
+  detectUserJourneysTool,
+  configureJourneyWorkshopTool,
+  openJourneyWorkshopRoundTool,
+  completeJourneyWorkshopTool,
+} from "./tools/journey-workshop-tools.js"
+import {
   openAnalysisRoundTool,
   registerAnalysisTool,
   getPeerAnalysesTool,
@@ -68,6 +74,10 @@ export const mesa: Plugin = async (input) => {
       deliver_briefing: deliverBriefingTool,
       import_briefing: importBriefingTool,
       analyze_briefing: analyzeBriefingTool,
+      detect_user_journeys: detectUserJourneysTool,
+      configure_journey_workshop: configureJourneyWorkshopTool,
+      open_journey_workshop_round: openJourneyWorkshopRoundTool,
+      complete_journey_workshop: completeJourneyWorkshopTool,
       propose_team: proposeTeamTool,
       summon_team: summonTeamTool,
       delegate_task: delegateTaskTool,
@@ -278,7 +288,9 @@ export const mesa: Plugin = async (input) => {
       const mesaTools = [
       "mesa_status", "list_specialists", "get_specialist",
       "create_briefing", "approve_briefing", "deliver_briefing", "import_briefing",
-      "analyze_briefing", "propose_team", "summon_team",
+      "analyze_briefing", "detect_user_journeys", "configure_journey_workshop",
+      "open_journey_workshop_round", "complete_journey_workshop",
+      "propose_team", "summon_team",
       "delegate_task", "define_phases",
       "check_execution_phases", "select_phases_for_analysis", "configure_phase_observation",
       "verify_implementation",

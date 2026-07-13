@@ -1,4 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
+import { tool } from "@opencode-ai/plugin/tool"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { loadState, closeStorage } from "../state.js"
@@ -8,11 +9,11 @@ import {
   memoryRecallTool,
   memoryForgetTool,
 } from "../tools/memory-tools.js"
-import { tool as toolHelper } from "@opencode-ai/plugin/tool"
 import type { ToolResult } from "@opencode-ai/plugin/tool"
 
-// Use the same Zod instance as the tools (tool.schema) to avoid cross-instance incompatibility
-const z = toolHelper.schema
+// The plugin's tool.schema is backed by Zod v4, while this project depends on Zod v3.
+// Use tool.schema.object(...) so the test schema is compatible with the tool's own
+// Zod instance and is not affected by mocks in other test files.
 
 // Type-safe metadata accessor for ToolResult
 function getMeta<T = Record<string, unknown>>(result: ToolResult): T {
@@ -144,7 +145,7 @@ describe("memory_store tool", () => {
   })
 
   test("content below 20 chars fails schema validation", () => {
-    const schema = z.object(memoryStoreTool.args)
+    const schema = tool.schema.object(memoryStoreTool.args)
     const result = schema.safeParse({ content: "way too short", category: "lesson" })
     expect(result.success).toBe(false)
     if (!result.success) {
@@ -153,7 +154,7 @@ describe("memory_store tool", () => {
   })
 
   test("content above 500 chars fails schema validation", () => {
-    const schema = z.object(memoryStoreTool.args)
+    const schema = tool.schema.object(memoryStoreTool.args)
     const result = schema.safeParse({ content: "x".repeat(501), category: "lesson" })
     expect(result.success).toBe(false)
     if (!result.success) {
@@ -162,7 +163,7 @@ describe("memory_store tool", () => {
   })
 
   test("invalid category fails schema validation", () => {
-    const schema = z.object(memoryStoreTool.args)
+    const schema = tool.schema.object(memoryStoreTool.args)
     const result = schema.safeParse({
       content: "Valid content that is at least twenty characters",
       category: "invalid_category",
@@ -171,13 +172,13 @@ describe("memory_store tool", () => {
   })
 
   test("schema accepts content at exactly 20 characters", () => {
-    const schema = z.object(memoryStoreTool.args)
+    const schema = tool.schema.object(memoryStoreTool.args)
     const result = schema.safeParse({ content: "a".repeat(20), category: "lesson" })
     expect(result.success).toBe(true)
   })
 
   test("schema accepts content at exactly 500 characters", () => {
-    const schema = z.object(memoryStoreTool.args)
+    const schema = tool.schema.object(memoryStoreTool.args)
     const result = schema.safeParse({ content: "a".repeat(500), category: "lesson" })
     expect(result.success).toBe(true)
   })

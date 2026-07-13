@@ -73,6 +73,13 @@ describe("v1 state migration", () => {
         overviewPath: null,
         status: "approved",
       },
+      journeyWorkshop: {
+        status: "not_started",
+        detectedAt: new Date().toISOString(),
+        signals: [],
+        suggestedJourneys: [],
+        confidence: "low",
+      },
       phases: ["PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION", "SPECIFICATION", "EXECUTION"],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

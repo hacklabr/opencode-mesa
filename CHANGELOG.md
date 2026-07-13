@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-07-13
+
+### Added
+- **User-journey design-thinking workshop gate** — the Manager now detects when a briefing involves user journeys that should be defined or refactored before implementation analysis.
+  - New `detect_user_journeys` tool scans the approved briefing for lexical and phrase-pattern signals (jornada/journey, user flow, onboarding, checkout, screen/page, UX focus, redesign/refactor intent).
+  - When signals are found, the Manager asks the human whether to run a design-thinking workshop first.
+  - New `configure_journey_workshop` tool records the human decision (`guided`, `automatic`, or `skip`).
+  - New `open_journey_workshop_round` tool generates a focused workshop briefing and recommends design-thinking specialists (`design-ux-researcher`, `design-ui-designer`, `design-ux-architect`, `product-manager`).
+  - New `complete_journey_workshop` tool appends the defined journeys to the original briefing and marks the workshop as completed.
+  - New `JourneyWorkshop` state shape with `not_started`, `pending_human_decision`, `needed`, `in_progress`, `completed`, and `skipped` statuses.
+  - State schema migrated to version 10 with `journey_workshop` JSON column.
+
 ## [3.2.1] - 2026-07-10
 
 ### Changed

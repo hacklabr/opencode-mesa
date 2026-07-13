@@ -91,6 +91,10 @@ const BriefingMetadataSchema = z.object({
   nonTechnicalFlag: z.boolean(),
 })
 const SpecialistStatusEnum = z.enum(["proposed", "summoned", "active", "dismissed", "delegated"])
+const JourneyWorkshopStatusEnum = z.enum([
+  "not_started", "pending_human_decision", "needed", "in_progress", "completed", "skipped",
+])
+const JourneyWorkshopModeEnum = z.enum(["guided", "automatic"])
 const SpecificationStatusEnum = z.enum(["pending", "draft", "approved", "rejected"])
 const ConsensusVoteEnum = z.union([z.literal(0), z.literal(1), z.literal(2)])
 
@@ -136,6 +140,18 @@ const SpecialistEntrySchema = z.object({
   status: SpecialistStatusEnum,
 })
 
+const JourneyWorkshopSchema = z.object({
+  status: JourneyWorkshopStatusEnum,
+  mode: JourneyWorkshopModeEnum.nullable().optional(),
+  detectedAt: z.string(),
+  signals: z.array(z.string()).default([]),
+  suggestedJourneys: z.array(z.string()).default([]),
+  confidence: z.enum(["high", "medium", "low"]).default("low"),
+  briefingPath: z.string().nullable().optional(),
+  journeysFilePath: z.string().nullable().optional(),
+  observations: z.string().optional(),
+})
+
 export const DiscussionStateSchema = z.object({
   workspaceId: z.string(),
   currentPhase: DiscussionPhaseEnum,
@@ -145,6 +161,13 @@ export const DiscussionStateSchema = z.object({
     status: BriefingStatusEnum,
     slug: z.string().nullable(),
     metadata: BriefingMetadataSchema.nullable().default(null),
+  }),
+  journeyWorkshop: JourneyWorkshopSchema.default({
+    status: "not_started",
+    detectedAt: new Date().toISOString(),
+    signals: [],
+    suggestedJourneys: [],
+    confidence: "low",
   }),
   team: z.array(SpecialistEntrySchema),
   discussion: z.object({
@@ -208,6 +231,7 @@ CREATE TABLE IF NOT EXISTS mesa_state (
   specification_status TEXT DEFAULT 'pending',
   phases TEXT DEFAULT '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]',
   appendices TEXT DEFAULT '[]',
+  journey_workshop TEXT DEFAULT '{"status":"not_started","detectedAt":"","signals":[],"suggestedJourneys":[],"confidence":"low"}',
   rigor TEXT DEFAULT 'standard',
   analysis_mode TEXT DEFAULT 'parallel',
   deviations INTEGER DEFAULT 0,
@@ -298,6 +322,7 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   specification_status TEXT DEFAULT 'pending',
   phases TEXT DEFAULT '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]',
   appendices TEXT DEFAULT '[]',
+  journey_workshop TEXT DEFAULT '{"status":"not_started","detectedAt":"","signals":[],"suggestedJourneys":[],"confidence":"low"}',
   rigor TEXT DEFAULT 'standard',
   analysis_mode TEXT DEFAULT 'parallel',
   deviations INTEGER DEFAULT 0,
@@ -517,6 +542,7 @@ function migrateFromJson(directory: string, db: IDatabase): void {
     `INSERT OR REPLACE INTO mesa_state (
       workspace_id, current_phase, previous_phase, status,
       briefing_path, briefing_status, briefing_slug, briefing_metadata,
+      journey_workshop,
       discussion_topic, discussion_current_turn, discussion_max_turns,
       discussion_consensus_round, discussion_debate_needed, discussion_progress,
       discussion_mode, discussion_max_consensus_rounds,
@@ -524,11 +550,18 @@ function migrateFromJson(directory: string, db: IDatabase): void {
       phases, appendices,
       rigor, analysis_mode, deviations,
       state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       wsId, state.currentPhase, state.previousPhase, state.status ?? "active",
       state.briefing.path, state.briefing.status, state.briefing.slug,
       JSON.stringify(state.briefing.metadata ?? null),
+      JSON.stringify(state.journeyWorkshop ?? {
+        status: "not_started",
+        detectedAt: new Date().toISOString(),
+        signals: [],
+        suggestedJourneys: [],
+        confidence: "low",
+      }),
       state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
       state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
       JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
@@ -909,6 +942,38 @@ function migrate_v8_to_v9(db: IDatabase): void {
 }
 
 /**
+ * v9 → v10: User journey design-thinking workshop gate.
+ *
+ * Adds `journey_workshop` as a JSON-encoded TEXT column to both state tables.
+ * Existing rows get a default "not_started" workshop so the Manager can run
+ * the detection gate on legacy discussions.
+ */
+function migrate_v9_to_v10(db: IDatabase): void {
+  const tx = db.transaction(() => {
+    const defaultWorkshop = JSON.stringify({
+      status: "not_started",
+      detectedAt: new Date().toISOString(),
+      signals: [],
+      suggestedJourneys: [],
+      confidence: "low",
+    })
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      try {
+        db.run(`ALTER TABLE ${table} ADD COLUMN journey_workshop TEXT DEFAULT '${defaultWorkshop.replace(/'/g, "''")}'`)
+      } catch (e: unknown) {
+        const err = e as Error
+        if (!err.message.includes("duplicate column name")) throw e
+      }
+      db.run(`UPDATE ${table} SET journey_workshop = COALESCE(journey_workshop, '${defaultWorkshop.replace(/'/g, "''")}') WHERE journey_workshop IS NULL`)
+    }
+
+    db.run("UPDATE mesa_state SET state_version = 10 WHERE state_version = 9")
+    db.run("UPDATE mesa_session_state SET state_version = 10 WHERE state_version = 9")
+  })
+  tx()
+}
+
+/**
  * Maintenance sweep for the memory system (spec-7ba9841f, D6 + D7).
  *
  * Runs at DB open (session init). Two operations:
@@ -949,6 +1014,7 @@ function getDb(directory: string): IDatabase {
   migrate_v6_to_v7(db)
   migrate_v7_to_v8(db)
   migrate_v8_to_v9(db)
+  migrate_v9_to_v10(db)
   migrateFromJson(directory, db)
 
   maintenanceSweep(db)
@@ -1121,6 +1187,34 @@ function rowToState(
     }
   }
 
+  // journeyWorkshop may be absent on legacy rows; parse defensively.
+  let journeyWorkshop: DiscussionState["journeyWorkshop"] = {
+    status: "not_started",
+    detectedAt: new Date().toISOString(),
+    signals: [],
+    suggestedJourneys: [],
+    confidence: "low",
+  }
+  const rawJourneyWorkshop = row.journey_workshop as string | undefined
+  if (rawJourneyWorkshop) {
+    try {
+      const parsed = JSON.parse(rawJourneyWorkshop) as Partial<DiscussionState["journeyWorkshop"]>
+      journeyWorkshop = {
+        status: (parsed.status as DiscussionState["journeyWorkshop"]["status"]) ?? "not_started",
+        mode: parsed.mode as DiscussionState["journeyWorkshop"]["mode"] ?? null,
+        detectedAt: typeof parsed.detectedAt === "string" ? parsed.detectedAt : new Date().toISOString(),
+        signals: Array.isArray(parsed.signals) ? parsed.signals : [],
+        suggestedJourneys: Array.isArray(parsed.suggestedJourneys) ? parsed.suggestedJourneys : [],
+        confidence: (parsed.confidence as DiscussionState["journeyWorkshop"]["confidence"]) ?? "low",
+        briefingPath: (parsed.briefingPath as string | null | undefined) ?? null,
+        journeysFilePath: (parsed.journeysFilePath as string | null | undefined) ?? null,
+        observations: typeof parsed.observations === "string" ? parsed.observations : undefined,
+      }
+    } catch {
+      // keep defaults on malformed JSON
+    }
+  }
+
   return {
     workspaceId: row.workspace_id as string,
     currentPhase: row.current_phase as string as DiscussionState["currentPhase"],
@@ -1132,6 +1226,7 @@ function rowToState(
       slug: row.briefing_slug as string | null,
       metadata,
     },
+    journeyWorkshop,
     team: team.map((t) => ({
       personaId: t.persona_id,
       name: t.name,
@@ -1297,6 +1392,7 @@ export async function saveState(directory: string, state: DiscussionState, openc
         `INSERT OR REPLACE INTO mesa_session_state (
           workspace_id, session_id, current_phase, previous_phase, status,
           briefing_path, briefing_status, briefing_slug, briefing_metadata,
+          journey_workshop,
           discussion_topic, discussion_current_turn, discussion_max_turns,
           discussion_consensus_round, discussion_debate_needed, discussion_progress,
           discussion_mode, discussion_max_consensus_rounds,
@@ -1304,11 +1400,12 @@ export async function saveState(directory: string, state: DiscussionState, openc
           phases, appendices,
           rigor, analysis_mode, deviations,
           state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, sessionId, state.currentPhase, state.previousPhase, state.status ?? "active",
           state.briefing.path, state.briefing.status, state.briefing.slug,
           JSON.stringify(state.briefing.metadata ?? null),
+          JSON.stringify(state.journeyWorkshop),
           state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
           state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
           JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),

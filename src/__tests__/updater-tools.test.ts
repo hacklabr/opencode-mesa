@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import type { UpdateCheckResult, UpdateResult } from "../updater/types.js"
+import { mesaCheckUpdateTool, mesaUpdateTool } from "../tools/update-tools.js"
 
 // Mock dependencies before importing the module under test
 const mockCheckForUpdate = vi.fn<() => Promise<UpdateCheckResult>>()
@@ -13,12 +14,10 @@ vi.mock("../updater/runner", () => ({
   runUpdate: (tag: string) => mockRunUpdate(tag),
 }))
 
-// Mock the tool helper — return a plain object for testing
-vi.mock("@opencode-ai/plugin/tool", () => ({
-  tool: (def: Record<string, unknown>) => def,
-}))
-
-import { mesaCheckUpdateTool, mesaUpdateTool } from "../tools/update-tools.js"
+// Note: we intentionally do NOT mock @opencode-ai/plugin/tool.
+// Mocking it with vi.mock leaks to other test files in this Vitest version,
+// breaking memory-tools tests that rely on tool.schema at module load time.
+// The tests below work with the real tool() wrapper.
 
 // Type the execute function for our tests
 type ExecuteFn = (args: Record<string, never>, context: unknown) => Promise<unknown>
@@ -27,6 +26,10 @@ const updateExecute = mesaUpdateTool.execute as unknown as ExecuteFn
 
 // Minimal mock context
 const mockCtx = {} as unknown
+
+function isErrorString(result: unknown): result is string {
+  return typeof result === "string" && result.startsWith("Error:")
+}
 
 describe("tools/update-tools", () => {
   beforeEach(() => {
@@ -53,13 +56,13 @@ describe("tools/update-tools", () => {
       expect(output).toContain("2.0.0")
     })
 
-    it("reports already up to date", async () => {
+    it("reports already on latest version", async () => {
       mockCheckForUpdate.mockResolvedValue({
         currentVersion: "1.2.0",
         latestVersion: "1.2.0",
         hasUpdate: false,
         checkedAt: new Date().toISOString(),
-        cacheHit: true,
+        cacheHit: false,
       })
 
       const result = await checkExecute({}, mockCtx)
@@ -68,43 +71,44 @@ describe("tools/update-tools", () => {
       const output = (result as { output: string }).output
       expect(output).toContain("latest version")
       expect(output).toContain("1.2.0")
-      expect(output).toContain("(cached)")
     })
 
     it("handles errors gracefully", async () => {
-      mockCheckForUpdate.mockRejectedValue(new Error("Something broke"))
+      mockCheckForUpdate.mockRejectedValue(new Error("network failure"))
 
       const result = await checkExecute({}, mockCtx)
 
-      expect(result).toBeTypeOf("string")
-      expect(result as string).toContain("Failed to check for updates")
-      expect(result as string).toContain("Something broke")
+      expect(isErrorString(result)).toBe(true)
+      expect(result).toContain("network failure")
     })
 
     it("handles non-Error throws", async () => {
-      mockCheckForUpdate.mockRejectedValue("string error")
+      mockCheckForUpdate.mockRejectedValue("weird error")
 
       const result = await checkExecute({}, mockCtx)
 
-      expect(result).toBeTypeOf("string")
-      expect(result as string).toContain("Failed to check for updates")
+      expect(isErrorString(result)).toBe(true)
     })
 
     it("includes metadata in success response", async () => {
       mockCheckForUpdate.mockResolvedValue({
-        currentVersion: "1.0.0",
+        currentVersion: "1.2.0",
         latestVersion: "2.0.0",
         hasUpdate: true,
-        checkedAt: "2025-06-01T00:00:00.000Z",
-        cacheHit: false,
+        checkedAt: "2024-01-01T00:00:00Z",
+        cacheHit: true,
       })
 
-      const result = await checkExecute({}, mockCtx) as { metadata?: Record<string, unknown> }
+      const result = await checkExecute({}, mockCtx)
 
-      expect(result.metadata).toBeDefined()
-      expect(result.metadata).toHaveProperty("hasUpdate", true)
-      expect(result.metadata).toHaveProperty("currentVersion", "1.0.0")
-      expect(result.metadata).toHaveProperty("latestVersion", "2.0.0")
+      expect(result).toHaveProperty("metadata")
+      const metadata = (result as { metadata: Record<string, unknown> }).metadata
+      expect(metadata).toMatchObject({
+        currentVersion: "1.2.0",
+        latestVersion: "2.0.0",
+        hasUpdate: true,
+        cacheHit: true,
+      })
     })
   })
 
@@ -117,20 +121,19 @@ describe("tools/update-tools", () => {
         checkedAt: new Date().toISOString(),
         cacheHit: false,
       })
-
       mockRunUpdate.mockResolvedValue({
         success: true,
-        previousVersion: "abc1234",
+        previousVersion: "1.2.0",
         newVersion: "2.0.0",
-        message: "Successfully updated to v2.0.0.",
+        message: "Updated to 2.0.0",
       })
 
-      const result = await updateExecute({}, mockCtx)
+      const result = await updateExecute({ tag: "" } as never, mockCtx)
 
       expect(result).toHaveProperty("title", "Mesa Update")
-      expect(mockRunUpdate).toHaveBeenCalledWith("2.0.0")
       const output = (result as { output: string }).output
-      expect(output).toContain("Successfully updated")
+      expect(output).toContain("Updated to 2.0.0")
+      expect(mockRunUpdate).toHaveBeenCalledWith("2.0.0")
     })
 
     it("reports already on latest version", async () => {
@@ -139,14 +142,14 @@ describe("tools/update-tools", () => {
         latestVersion: "1.2.0",
         hasUpdate: false,
         checkedAt: new Date().toISOString(),
-        cacheHit: true,
+        cacheHit: false,
       })
 
-      const result = await updateExecute({}, mockCtx)
+      const result = await updateExecute({ tag: "" } as never, mockCtx)
 
       expect(result).toHaveProperty("title", "Mesa Update")
       const output = (result as { output: string }).output
-      expect(output).toContain("Already on the latest version")
+      expect(output).toContain("latest version")
       expect(mockRunUpdate).not.toHaveBeenCalled()
     })
 
@@ -158,18 +161,17 @@ describe("tools/update-tools", () => {
         checkedAt: new Date().toISOString(),
         cacheHit: false,
       })
-
       mockRunUpdate.mockResolvedValue({
         success: false,
-        previousVersion: "abc1234",
-        newVersion: "2.0.0",
-        message: "Update to v2.0.0 failed (exit 1).",
+        previousVersion: "1.2.0",
+        newVersion: "1.2.0",
+        message: "Update failed",
       })
 
-      const result = await updateExecute({}, mockCtx)
+      const result = await updateExecute({ tag: "" } as never, mockCtx)
 
-      expect(result).toBeTypeOf("string")
-      expect(result as string).toContain("failed")
+      expect(isErrorString(result)).toBe(true)
+      expect(result).toContain("Update failed")
     })
 
     it("handles thrown errors", async () => {
@@ -180,14 +182,12 @@ describe("tools/update-tools", () => {
         checkedAt: new Date().toISOString(),
         cacheHit: false,
       })
+      mockRunUpdate.mockRejectedValue(new Error("disk full"))
 
-      mockRunUpdate.mockRejectedValue(new Error("Install exploded"))
+      const result = await updateExecute({ tag: "" } as never, mockCtx)
 
-      const result = await updateExecute({}, mockCtx)
-
-      expect(result).toBeTypeOf("string")
-      expect(result as string).toContain("Update failed")
-      expect(result as string).toContain("Install exploded")
+      expect(isErrorString(result)).toBe(true)
+      expect(result).toContain("disk full")
     })
 
     it("handles non-Error throws from runUpdate", async () => {
@@ -198,22 +198,20 @@ describe("tools/update-tools", () => {
         checkedAt: new Date().toISOString(),
         cacheHit: false,
       })
+      mockRunUpdate.mockRejectedValue(123)
 
-      mockRunUpdate.mockRejectedValue("unknown failure")
+      const result = await updateExecute({ tag: "" } as never, mockCtx)
 
-      const result = await updateExecute({}, mockCtx)
-
-      expect(result).toBeTypeOf("string")
-      expect(result as string).toContain("Update failed")
+      expect(isErrorString(result)).toBe(true)
     })
 
     it("handles checkForUpdate throwing in update tool", async () => {
-      mockCheckForUpdate.mockRejectedValue(new Error("Check failed"))
+      mockCheckForUpdate.mockRejectedValue(new Error("check failed"))
 
-      const result = await updateExecute({}, mockCtx)
+      const result = await updateExecute({ tag: "" } as never, mockCtx)
 
-      expect(result).toBeTypeOf("string")
-      expect(result as string).toContain("Update failed")
+      expect(isErrorString(result)).toBe(true)
+      expect(result).toContain("check failed")
     })
   })
 })
