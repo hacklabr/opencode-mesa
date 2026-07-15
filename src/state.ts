@@ -31,6 +31,12 @@ export function setStateSdkClient(client: unknown): void {
 
 // Walk up the parent chain to find a session that has discussion state
 export async function findRootSessionId(db: IDatabase, directory: string, sessionId: string): Promise<string | null> {
+  // Only real OpenCode session IDs (ses_...) can be looked up via the SDK.
+  // Test/placeholder IDs like "dummy" or "test-session" must short-circuit
+  // to avoid SDK validation errors (e.g. "Expected a string starting with 'ses_',
+  // got 'dummy'").
+  if (!sessionId.startsWith("ses_")) return null
+
   let currentId = sessionId
   const visited = new Set<string>([sessionId]) // prevent cycles
 
@@ -1968,7 +1974,20 @@ export async function getStatePath(directory: string): Promise<string> {
 
 // Ensure a session exists in mesa_session table (without full initSession overhead)
 // Used when opencodeSessionId is provided directly to loadState/saveState
+function isValidSessionId(sessionId: string): boolean {
+  // Real OpenCode session IDs start with "ses_". Mesa-initiated sessions use
+  // UUIDs. Placeholder/test IDs (e.g. "dummy", "test-session") should not be
+  // inserted into mesa_session because they can block real session creation
+  // and trigger SDK validation errors.
+  return (
+    sessionId.startsWith("ses_") ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+  )
+}
+
 function ensureSession(directory: string, sessionId: string): void {
+  if (!isValidSessionId(sessionId)) return
+
   const db = getDb(directory)
   try {
     const existing = db

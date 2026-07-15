@@ -316,8 +316,8 @@ describe("register_analysis tool", () => {
   })
 
   test("resolves Manager session automatically from subagent parent chain", async () => {
-    const managerSessionId = "manager-session-auto"
-    const subagentSessionId = "subagent-session-auto"
+    const managerSessionId = "ses_manager_session_auto"
+    const subagentSessionId = "ses_subagent_session_auto"
 
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"

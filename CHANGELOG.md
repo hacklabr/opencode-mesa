@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.3] - 2026-07-15
+
+### Fixed
+- **Crash with placeholder session IDs** (e.g. `"dummy"`) in empty workspaces.
+  - `findRootSessionId` now short-circuits for IDs that do not start with `ses_`, avoiding OpenCode SDK validation errors like `Expected a string starting with "ses_", got "dummy"`.
+  - `ensureSession` skips creating `mesa_session` rows for placeholder/test IDs, preventing them from blocking real session creation.
+  - `loadState` and `saveState` tolerate placeholder `sessionID` values gracefully.
+  - Added test verifying `loadState(directory, "dummy")` returns initial state without error.
+
 ## [3.4.2] - 2026-07-15
 
 ### Fixed

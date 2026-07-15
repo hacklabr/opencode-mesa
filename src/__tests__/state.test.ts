@@ -63,6 +63,14 @@ describe("state persistence", () => {
     expect(state.briefing.status).toBe("draft")
   })
 
+  test("loadState handles placeholder session IDs without SDK error", async () => {
+    // OpenCode may pass placeholder IDs like "dummy" in some contexts.
+    // loadState should return initial state instead of crashing the SDK.
+    const state = await loadState(testDir, "dummy")
+    expect(state.currentPhase).toBe("PLANNING")
+    expect(state.briefing.status).toBe("draft")
+  })
+
   test("saveState and loadState roundtrip", async () => {
     const state = await loadState(testDir)
     state.briefing.status = "approved"
