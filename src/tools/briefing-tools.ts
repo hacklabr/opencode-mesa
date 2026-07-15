@@ -342,7 +342,7 @@ export const deliverBriefingTool = tool({
 
       return successResponse(
         "Briefing Delivered to Manager",
-        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing is ready for the Manager at ${state.briefing.path}. To continue, switch to the Manager agent by typing \`/agent manager\` and ask it to analyze the briefing and propose a team.`,
+        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing is ready for the Manager at ${state.briefing.path}.\n\nNext step: analyze the briefing and propose a team. If you are not already acting as the Manager agent, switch by typing \`/agent manager\`.`,
         { briefingPath: state.briefing.path }
       )
     } catch (err) {

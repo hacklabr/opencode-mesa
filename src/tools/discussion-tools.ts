@@ -929,7 +929,7 @@ export const approveSpecificationTool = tool({
 
         return successResponse(
           "Specification Approved",
-          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification approved. Phase changed to EXECUTION. The Manager may now delegate implementation tasks.\n\n${overviewNote}`
+          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification approved. Phase changed to EXECUTION. The Manager may now delegate implementation tasks.\n\n${overviewNote}\n\n**Tip:** Human approval via chat is not sufficient to advance the workflow — this tool (approve_specification) must be called explicitly to record the decision and transition phases.`
         )
       } else {
         // Rejection: stay in SPECIFICATION (no back-edge needed — spec revision happens in same phase)

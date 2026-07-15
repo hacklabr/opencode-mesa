@@ -66,7 +66,12 @@ export const proposeTeamTool = tool({
     try {
       const state = await loadState(context.directory, context.sessionID)
       const phaseError = requirePhase(state, "PLANNING")
-      if (phaseError) throw new PhaseError(phaseError)
+      if (phaseError) {
+        const extra = state.currentPhase === "EXECUTION"
+          ? " If you need a different implementation team after approving the spec, use replan_implementation_team first."
+          : ""
+        throw new PhaseError(phaseError + extra)
+      }
 
       const invalidIds: string[] = []
       for (const s of args.specialists) {
@@ -225,7 +230,12 @@ export const delegateTaskTool = tool({
       if (phaseError) throw new PhaseError(phaseError)
 
       let specialist = state.team.find((s) => s.personaId === args.personaId)
+      let autoEnrolled = false
 
+      // EXECUTION phase allows specialists who were NOT part of the analysis
+      // team. Analysis and implementation require different skill sets, so we
+      // auto-enroll catalog specialists on first delegation instead of forcing
+      // a round-trip through propose_team + summon_team.
       if (!specialist) {
         const persona = await getPersonaById(args.personaId)
         if (persona) {
@@ -236,17 +246,16 @@ export const delegateTaskTool = tool({
             status: "delegated" as SpecialistStatus,
           }
           state.team.push(specialist)
+          autoEnrolled = true
         }
       }
 
       if (!specialist) {
         const teamMembers = state.team.map((s) => `  - ${s.personaId} (${s.name})`).join("\n")
-        const { listSpecialistsTool } = await import("./catalog-tools.js")
-        const term = args.personaId.toLowerCase()
         return errorResponse(
           `Specialist "${args.personaId}" not found in the current team or catalog.\n\n` +
           `Current team members:\n${teamMembers || "  (none)"}\n\n` +
-          `Use list_specialists to browse available specialists, or check for close matches.`
+          `Use list_specialists to browse available specialists, or check the personaId for typos.`
         )
       }
 
@@ -276,17 +285,29 @@ export const delegateTaskTool = tool({
       ]
 
       if (effectiveContext) {
-        promptParts.push(``, `### Context`, effectiveContext)
+        promptParts.push("", `### Context`, effectiveContext)
       }
 
+      promptParts.push(
+        "",
+        `### Delivery Rules`,
+        `1. Modify the files directly. Do not return analysis unless asked.`,
+        `2. After finishing, confirm explicitly in your response: (a) what files were changed/created, (b) the workspace-relative path of each artifact, and (c) whether any acceptance criteria were met.`,
+        `3. If you write a report or document, save it via the Write tool and include its path in your confirmation. Do not rely solely on returning the content inside <task_result>.`
+      )
+
       await saveState(context.directory, state, context.sessionID)
+
+      const enrollmentNote = autoEnrolled
+        ? `\n\n**Note:** ${specialist.name} was not in the original analysis team and has been auto-enrolled for implementation.`
+        : ""
 
       return successResponse(
         `Task ready for ${specialist.name}`,
         [
           `${formatPhaseHeader(state.currentPhase)}`,
           ``,
-          `Task defined for **${specialist.name}** (${args.personaId}).`,
+          `Task defined for **${specialist.name}** (${args.personaId}).${enrollmentNote}`,
           ``,
           `Now invoke the specialist using the **task** tool:`,
           `\`task(subagent_type="mesa/${args.personaId}", task_id="mesa-${args.personaId}", prompt="...", description="...")\``,
@@ -297,7 +318,7 @@ export const delegateTaskTool = tool({
           `### Prompt content for the specialist:`,
           promptParts.join("\n"),
         ].join("\n"),
-        { personaId: args.personaId }
+        { personaId: args.personaId, autoEnrolled }
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -861,6 +882,74 @@ export const verifyImplementationTool = tool({
       if (err instanceof MesaError) return errorResponse(err.message)
       return errorResponse(
         `Error recording verification: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  },
+})
+
+export const replanImplementationTeamTool = tool({
+  description:
+    "Resets the workflow from EXECUTION back to PLANNING so a new implementation team can be proposed. " +
+    "Useful when the analysis team is different from the implementation team, or when the human wants to change specialists after approving the specification.",
+  args: {
+    reason: tool.schema
+      .string()
+      .describe("Human-facing reason for replanning the implementation team"),
+  },
+  async execute(args, context) {
+    try {
+      const state = await loadState(context.directory, context.sessionID)
+      const phaseError = requirePhase(state, "EXECUTION")
+      if (phaseError) throw new PhaseError(phaseError)
+
+      const transition = canTransition(state.currentPhase, "PLANNING")
+      if (!transition) {
+        return errorResponse(
+          `Cannot replan team: transition ${state.currentPhase} → PLANNING is not allowed.`
+        )
+      }
+
+      // Preserve the approved specification and briefing; reset team/discussion state.
+      state.previousPhase = state.currentPhase
+      state.currentPhase = "PLANNING"
+      state.team = []
+      state.discussion = {
+        ...state.discussion,
+        analyses: [],
+        votes: [],
+        currentTurn: 0,
+        consensusRound: 0,
+        participants: [],
+        mode: "analysis",
+        debateNeeded: false,
+      }
+
+      await saveState(context.directory, state, context.sessionID)
+      await logAction(context.directory, "implementation_team_replanned", state.currentPhase, {
+        reason: args.reason,
+      })
+
+      return successResponse(
+        "Implementation Team Replan — Ready for New Team Proposal",
+        [
+          `${formatPhaseHeader(state.currentPhase)}`,
+          ``,
+          `Phase reset from EXECUTION → PLANNING.`,
+          ``,
+          `**Reason:** ${args.reason}`,
+          ``,
+          `The approved specification and briefing are preserved. Team and discussion state were cleared so you can propose a fresh implementation team.`,
+          ``,
+          `**Next steps:**`,
+          `1. Call propose_team with the implementation specialists (engineers, developers, etc.).`,
+          `2. Call summon_team after human approval.`,
+          `3. Continue with delegate_task to assign implementation work.`,
+        ].join("\n")
+      )
+    } catch (err) {
+      if (err instanceof MesaError) return errorResponse(err.message)
+      return errorResponse(
+        `Error replanning implementation team: ${err instanceof Error ? err.message : String(err)}`
       )
     }
   },

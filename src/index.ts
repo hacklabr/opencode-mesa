@@ -12,6 +12,7 @@ import {
   selectPhasesForAnalysisTool,
   configurePhaseObservationTool,
   verifyImplementationTool,
+  replanImplementationTeamTool,
 } from "./tools/manager-tools.js"
 import {
   detectUserJourneysTool,
@@ -81,6 +82,7 @@ export const mesa: Plugin = async (input) => {
       propose_team: proposeTeamTool,
       summon_team: summonTeamTool,
       delegate_task: delegateTaskTool,
+      replan_implementation_team: replanImplementationTeamTool,
       define_phases: definePhasesTool,
       check_execution_phases: checkExecutionPhasesTool,
       select_phases_for_analysis: selectPhasesForAnalysisTool,

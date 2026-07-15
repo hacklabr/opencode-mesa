@@ -420,9 +420,10 @@ export const completeJourneyWorkshopTool = tool({
           "The design-thinking workshop is complete. The original briefing now includes the defined user journeys.",
           "",
           "**Next steps:**",
-          "1. If you are currently in DISCUSSION phase after the workshop round, call `analyze_briefing` again to see the enriched briefing.",
-          "2. Propose an implementation team with `propose_team`.",
-          "3. Continue the Mesa workflow normally (summon team, define phases, open analysis round for implementation).",
+          "1. If you are in DISCUSSION phase after the workshop round, call `analyze_briefing` again to see the enriched briefing.",
+          "2. If you are already in PLANNING, proceed directly to `propose_team` for the implementation team.",
+          "3. If you approved the spec and are in EXECUTION but need a different implementation team, call `replan_implementation_team` first, then `propose_team`.",
+          "4. Continue the Mesa workflow normally (summon team, define phases, open analysis round for implementation).",
         ].join("\n"),
         { journeysFilePath: args.journeys_file_path, briefingPath: state.briefing.path }
       )

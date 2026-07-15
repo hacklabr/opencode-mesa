@@ -9,6 +9,7 @@ import {
   summonTeamTool,
   delegateTaskTool,
   definePhasesTool,
+  replanImplementationTeamTool,
 } from "../tools/manager-tools.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "manager-tools")
@@ -368,5 +369,72 @@ describe("define_phases tool", () => {
     )
 
     expect(result).toHaveProperty("title", "Workflow Phases Defined")
+  })
+})
+
+describe("replan_implementation_team tool", () => {
+  beforeEach(async () => {
+    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
+  })
+
+  afterEach(async () => {
+    closeStorage(TEST_DIR)
+    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
+  })
+
+  test("resets EXECUTION to PLANNING and clears team/discussion state", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "EXECUTION"
+    state.briefing.status = "approved"
+    state.specification.status = "approved"
+    state.team = [
+      { personaId: "arch-1", name: "Architect", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.analyses = [
+      {
+        agentId: "arch-1",
+        agentName: "Architect",
+        content: "analysis",
+        filePath: null,
+        kind: "full",
+        turn: 1,
+        turnType: "analysis",
+        timestamp: new Date().toISOString(),
+      },
+    ]
+    state.discussion.votes = [
+      { agentId: "arch-1", agentName: "Architect", vote: 1, reason: "agree", round: 1 },
+    ]
+    await saveState(TEST_DIR, state, "test-session")
+
+    const result = await replanImplementationTeamTool.execute(
+      { reason: "Need implementation engineers instead of architects" },
+      makeContext()
+    )
+
+    expect(result).toHaveProperty("title", "Implementation Team Replan — Ready for New Team Proposal")
+
+    const loaded = await loadState(TEST_DIR, "test-session")
+    expect(loaded.currentPhase).toBe("PLANNING")
+    expect(loaded.team).toEqual([])
+    expect(loaded.discussion.analyses).toEqual([])
+    expect(loaded.discussion.votes).toEqual([])
+    expect(loaded.discussion.participants).toEqual([])
+    expect(loaded.specification.status).toBe("approved")
+    expect(loaded.briefing.status).toBe("approved")
+  })
+
+  test("returns error when not in EXECUTION phase", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "PLANNING"
+    await saveState(TEST_DIR, state, "test-session")
+
+    const result = await replanImplementationTeamTool.execute(
+      { reason: "test" },
+      makeContext()
+    )
+
+    expect(typeof result).toBe("string")
+    expect(result).toContain("not allowed in PLANNING")
   })
 })

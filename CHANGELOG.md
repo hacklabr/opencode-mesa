@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-07-15
+
+### Added
+- **Replan implementation team** — new `replan_implementation_team` tool resets the workflow from EXECUTION back to PLANNING so the Manager can propose a fresh implementation team without manual phase gymnastics.
+  - Preserves the approved specification and briefing.
+  - Clears team, analyses, votes, and discussion state.
+  - Logs the human-facing reason for audit.
+
+### Changed
+- **`delegate_task` auto-enrolls implementation specialists** — during EXECUTION, any specialist from the catalog can be delegated to directly, even if they were not part of the analysis team. Analysis and implementation teams often require different skill sets, so this removes the forced `propose_team` + `summon_team` round-trip.
+- **`delegate_task` prompt now requires delivery confirmation** — specialists must explicitly report which files were changed/created and their workspace-relative paths, reducing silent no-op task results.
+- **Clearer workflow messages**:
+  - `deliver_briefing` no longer insists on switching to the Manager agent when the user already is the Manager.
+  - `complete_journey_workshop` explains how to proceed from PLANNING, DISCUSSION, or EXECUTION.
+  - `approve_specification` now notes that explicit tool invocation is required; human chat approval alone does not advance the phase.
+
+### Fixed
+- `propose_team` phase-gate error now points to `replan_implementation_team` when called from EXECUTION.
+
 ## [3.3.1] - 2026-07-15
 
 ### Fixed
