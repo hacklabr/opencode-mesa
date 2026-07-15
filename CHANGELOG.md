@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.2] - 2026-07-15
+
+### Fixed
+- **Automatic root-session resolution for subagent analyses** (spec-6886df4f): `register_analysis` now resolves the Manager session automatically from the subagent's parent session chain, eliminating separate `.mesa/sessions/` folders for each specialist.
+  - `register_analysis` tries `findRootSessionId(context.sessionID)` when no explicit `session_id` is provided.
+  - Root resolution is wrapped in try/catch so invalid/fallback IDs (e.g. `"dummy"`) do not crash the tool.
+  - `session_id` parameter remains as an optional override.
+  - Simplified `open_analysis_round` instructions: specialists no longer need to manually pass `session_id`; Mesa resolves it automatically.
+  - Added test for automatic parent-chain resolution.
+
 ## [3.4.1] - 2026-07-15
 
 ### Fixed

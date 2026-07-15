@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage } from "../state.js"
+import { loadState, saveState, closeStorage, setStateSdkClient } from "../state.js"
 import { createInitialState } from "../config.js"
 import {
   openAnalysisRoundTool,
@@ -268,7 +268,6 @@ describe("register_analysis tool", () => {
   })
 
   test("uses session_id parameter to store analysis in Manager's session folder", async () => {
-    // Setup a Manager session with a briefing and an open analysis round.
     const managerSessionId = "manager-session"
     const subagentSessionId = "subagent-session"
 
@@ -298,7 +297,6 @@ describe("register_analysis tool", () => {
 
     expect(result).toHaveProperty("title", "Analysis Registered: Engineer")
 
-    // The analysis should be in the Manager's session folder, not the subagent's.
     const loaded = await loadState(TEST_DIR, managerSessionId)
     expect(loaded.discussion.analyses.length).toBe(1)
     const filePath = loaded.discussion.analyses[0].filePath
@@ -312,11 +310,63 @@ describe("register_analysis tool", () => {
       .catch(() => false)
     expect(fileExists).toBe(true)
 
-    // The subagent session should NOT have created its own analysis folder.
-    // There should be exactly one session folder (the Manager's).
     const sessionsDir = join(TEST_DIR, ".mesa", "sessions")
     const sessionFolders = await fs.readdir(sessionsDir)
     expect(sessionFolders.length).toBe(1)
+  })
+
+  test("resolves Manager session automatically from subagent parent chain", async () => {
+    const managerSessionId = "manager-session-auto"
+    const subagentSessionId = "subagent-session-auto"
+
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "DISCUSSION"
+    state.briefing.status = "approved"
+    state.briefing.slug = "auto-project"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.participants = ["eng-1"]
+    await saveState(TEST_DIR, state, managerSessionId)
+
+    // Mock the SDK parent-session lookup so the subagent resolves to the Manager.
+    setStateSdkClient({
+      session: {
+        get: async ({ path }: { path: { id: string } }) => {
+          if (path.id === subagentSessionId) {
+            return { data: { parentID: managerSessionId } }
+          }
+          return { data: null }
+        },
+      },
+    })
+
+    // Register analysis as a subagent WITHOUT passing session_id.
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Analysis via automatic root resolution.",
+        turn: 1,
+      },
+      { ...makeContext(), sessionID: subagentSessionId }
+    )
+
+    expect(result).toHaveProperty("title", "Analysis Registered: Engineer")
+
+    // The analysis must be stored in the Manager's session folder.
+    const loaded = await loadState(TEST_DIR, managerSessionId)
+    expect(loaded.discussion.analyses.length).toBe(1)
+    expect(loaded.discussion.analyses[0].filePath).toMatch(
+      /\.mesa\/sessions\/[0-9]{12}_[0-9a-f]{4}_auto-project\/analyses\/turn1\/eng-1\.md$/
+    )
+
+    const sessionsDir = join(TEST_DIR, ".mesa", "sessions")
+    const sessionFolders = await fs.readdir(sessionsDir)
+    expect(sessionFolders.length).toBe(1)
+
+    // Reset SDK client so other tests are not affected.
+    setStateSdkClient(null)
   })
 })
 

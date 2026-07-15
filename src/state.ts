@@ -30,7 +30,7 @@ export function setStateSdkClient(client: unknown): void {
 }
 
 // Walk up the parent chain to find a session that has discussion state
-async function findRootSessionId(db: IDatabase, directory: string, sessionId: string): Promise<string | null> {
+export async function findRootSessionId(db: IDatabase, directory: string, sessionId: string): Promise<string | null> {
   let currentId = sessionId
   const visited = new Set<string>([sessionId]) // prevent cycles
 

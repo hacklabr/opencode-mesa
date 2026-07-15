@@ -1,5 +1,5 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState, getSessionId, getDb } from "../state.js"
+import { loadState, saveState, getSessionId, getDb, findRootSessionId } from "../state.js"
 import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry, AnalysisKind, AnalysisTurnType } from "../types.js"
 import { canTransition, VALID_TRANSITIONS, requirePhase, requireMode, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions.js"
 import { getProfile, DEVIATION_RATE_CAP, type RigorProfile } from "../workflow/profiles.js"
@@ -183,7 +183,7 @@ export const openAnalysisRoundTool = tool({
       const taskInstructions = participantsWithNames
         .map(
           (p, i) =>
-            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", task_id="mesa-${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. When you call register_analysis, pass session_id: '${context.sessionID}' so your analysis is stored in the Manager's session folder. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
+            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", task_id="mesa-${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
         )
         .join("\n\n")
 
@@ -197,11 +197,9 @@ export const openAnalysisRoundTool = tool({
 
       const sessionIdNote = [
         ``,
-        `### IMPORTANT: Store analyses in the Manager's session folder`,
-        `The Manager's OpenCode session ID for this round is: **${context.sessionID}**.`,
-        ``,
-        `When a specialist calls \`register_analysis\`, they MUST pass \`session_id: "${context.sessionID}"\`.`,
-        `If they omit this parameter, their analysis will be written to their own subagent session folder instead of the shared session folder, breaking the layout.`,
+        `### Session folder handling`,
+        `Mesa automatically resolves the Manager's session from a subagent's parent session chain, so analyses are stored in the shared session folder by default.`,
+        `If a specialist explicitly wants to override this, they may pass \`session_id: "${context.sessionID}"\` to \`register_analysis\`.`,
       ].join("\n")
 
       return successResponse(
@@ -254,8 +252,8 @@ export const registerAnalysisTool = tool({
       .string()
       .optional()
       .describe(
-        "Manager session ID — REQUIRED when a specialist subagent calls this tool. " +
-        "Use the session_id provided by the Manager in the delegation prompt so the analysis is stored in the Manager's session folder, not the subagent's own session folder."
+        "Optional Manager session ID override. Specialists can pass this to ensure the analysis is stored in the Manager's session folder. " +
+        "If omitted, Mesa resolves the Manager session automatically from the subagent's parent session chain."
       ),
     reason: tool.schema
       .string()
@@ -267,13 +265,32 @@ export const registerAnalysisTool = tool({
   },
   async execute(args, context) {
     try {
-      // When a specialist subagent calls register_analysis, it must pass the
-      // Manager's session_id. Otherwise it would load/save state against the
-      // subagent's own session and create a separate session folder
-      // (spec-6886df4f regression). The subagent's real context.sessionID is
-      // still used for ask_peer session tracking below.
-      const managerSessionID = args.session_id ?? context.sessionID
-      const state = await loadState(context.directory, managerSessionID)
+      // Determine the session ID that owns the discussion state.
+      // 1. Explicit override from the specialist (Manager-provided session_id).
+      // 2. Root-session resolution: a subagent's context.sessionID has a
+      //    parentID pointing back to the Manager session. Mesa walks that
+      //    chain automatically so analyses land in the shared session folder.
+      // 3. Fallback to the caller's own context.sessionID.
+      const opencodeSessionId = args.session_id ?? context.sessionID
+      const state = await loadState(context.directory, opencodeSessionId)
+
+      // Resolve the Manager/root session ID for path computation. This is the
+      // ID whose session folder will hold the analysis file.
+      let managerSessionID = opencodeSessionId
+      if (!args.session_id && opencodeSessionId) {
+        try {
+          const db = getDb(context.directory)
+          try {
+            const rootId = await findRootSessionId(db, context.directory, opencodeSessionId)
+            if (rootId) managerSessionID = rootId
+          } finally {
+            db.close()
+          }
+        } catch {
+          // Root resolution failed (e.g. OpenCode rejected the subagent ID).
+          // Keep using the caller's own session ID — best-effort behavior.
+        }
+      }
       const phaseError = requirePhase(state, "DISCUSSION", "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
