@@ -172,6 +172,12 @@ export interface DiscussionState {
   }
   appendices: string[]
   phases: string[]
+  /**
+   * Session-scoped folder path (relative to workspace) where all artifacts for
+   * this session live. Populated lazily on first tool invocation that needs it
+   * (spec-6886df4f, TD4). Null until resolveSessionInput() has been called.
+   */
+  sessionFolder: string | null
   createdAt: string
   updatedAt: string
   stateVersion: number

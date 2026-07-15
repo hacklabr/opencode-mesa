@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage, getSessionId } from "../state.js"
+import { loadState, saveState, closeStorage } from "../state.js"
 import { createInitialState } from "../config.js"
 import {
   createBriefingTool,
@@ -43,14 +43,16 @@ describe("create_briefing tool", () => {
 
     expect(result).toHaveProperty("title", "Briefing Created")
     const output = (result as { output: string }).output
-    expect(output).toContain("briefing-my-project.md")
+    expect(output).toContain("briefing.md")
 
     const state = await loadState(TEST_DIR, "test-session")
     expect(state.briefing.slug).toBe("my-project")
     expect(state.briefing.status).toBe("draft")
 
+    // Paths stored in state are workspace-relative (spec-6886df4f, TD3).
+    // Prepend TEST_DIR for filesystem I/O.
     const file = await fs.readFile(
-      join(TEST_DIR, ".mesa", "briefings", "briefing-my-project.md"),
+      join(TEST_DIR, state.briefing.path!),
       "utf-8"
     )
     expect(file).toContain("status: draft")
@@ -103,8 +105,9 @@ describe("create_briefing tool", () => {
       makeContext()
     )
 
+    const state = await loadState(TEST_DIR, "test-session")
     const content = await fs.readFile(
-      join(TEST_DIR, ".mesa", "briefings", "briefing-test-brief.md"),
+      join(TEST_DIR, state.briefing.path!),
       "utf-8"
     )
     expect(content).toMatch(/^---\n/)
@@ -144,7 +147,7 @@ describe("approve_briefing tool", () => {
     expect(state.briefing.status).toBe("approved")
 
     const file = await fs.readFile(
-      join(TEST_DIR, ".mesa", "briefings", "briefing-test-approve.md"),
+      join(TEST_DIR, state.briefing.path!),
       "utf-8"
     )
     expect(file).toContain("status: approved")
@@ -194,15 +197,18 @@ describe("deliver_briefing tool", () => {
 
     expect(result).toHaveProperty("title", "Briefing Delivered to Manager")
     const output = (result as { output: string }).output
-    expect(output).toContain("briefing-current-")
+    // Decision M4 (spec-6886df4f): deliver_briefing no longer creates
+    // briefing-current-{sessionId}.md. The Manager reads briefing.md
+    // directly from the session folder.
+    expect(output).toContain("ready for the Manager")
 
     const state = await loadState(TEST_DIR, "test-session")
-    const sessionId = getSessionId(TEST_DIR, "test-session")
     expect(state.briefing.status).toBe("delivered")
     expect(state.currentPhase).toBe("PLANNING")
 
+    // The briefing content is read directly from the session folder (M4).
     const delivered = await fs.readFile(
-      join(TEST_DIR, ".mesa", `briefing-current-${sessionId}.md`),
+      join(TEST_DIR, state.briefing.path!),
       "utf-8"
     )
     expect(delivered).toContain("# Content")

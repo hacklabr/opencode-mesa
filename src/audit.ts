@@ -1,7 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { PLUGIN_STATE_DIR } from "./config.js"
-import { getSessionId } from "./state.js"
 
 export interface AuditEntry {
   timestamp: string
@@ -11,6 +10,14 @@ export interface AuditEntry {
   details?: Record<string, unknown>
 }
 
+/**
+ * Append an audit entry to the global audit log.
+ *
+ * Decision M8 (spec-6886df4f): the audit log is consolidated to a single
+ * `.mesa/audit.log` file. The previous per-session `audit-{sessionId}.log`
+ * scheme fragmented the audit trail and made it hard to reconstruct
+ * cross-session event sequences. One workspace → one audit log.
+ */
 export async function logAction(
   directory: string,
   action: string,
@@ -27,9 +34,6 @@ export async function logAction(
     ...(details ? { details } : {}),
   }
 
-  const sessionId = getSessionId(directory)
-  const logPath = sessionId
-    ? join(logDir, `audit-${sessionId}.log`)
-    : join(logDir, "audit.log")
+  const logPath = join(logDir, "audit.log")
   await appendFile(logPath, JSON.stringify(entry) + "\n", "utf-8")
 }

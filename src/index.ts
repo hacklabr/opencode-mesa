@@ -41,12 +41,12 @@ import { checkForUpdate } from "./updater/checker.js"
 import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools.js"
 import { askPeerTool, setSdkClient } from "./tools/peer-tools.js"
 import { memoryStoreTool, memoryRecallTool, memoryForgetTool } from "./tools/memory-tools.js"
-import { loadState, getSessionId } from "./state.js"
+import { loadState, getSessionId, getDb } from "./state.js"
 import { openDatabase } from "./db/driver.js"
 import { PLUGIN_STATE_DIR } from "./config.js"
 import { setStateSdkClient } from "./state.js"
 import { logAction } from "./audit.js"
-import { buildAskPeerPath } from "./utils/paths.js"
+import { buildAskPeerPath, ensureSessionInput } from "./utils/paths.js"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -179,9 +179,20 @@ export const mesa: Plugin = async (input) => {
         const mesaSessionId = getSessionId(directory)
         if (!mesaSessionId) return
 
+        // Resolve session folder input for session-scoped ask_peer path
+        // (spec-6886df4f, TD7). The hook has access to state via loadState.
+        // Best-effort: skip audit-logging if the folder can't be resolved.
+        const state = await loadState(directory, mesaSessionId).catch(() => null)
+        if (!state) return
+
+        const sessionInput = await ensureSessionInput(
+          directory, state, mesaSessionId, getDb
+        ).catch(() => null)
+        if (!sessionInput) return
+
         const exchangeId = randomUUID().slice(0, 8)
         const exchangeRelPath = buildAskPeerPath(
-          mesaSessionId,
+          sessionInput,
           toolInput.sessionID.slice(0, 8),
           calleePersonaId,
           exchangeId

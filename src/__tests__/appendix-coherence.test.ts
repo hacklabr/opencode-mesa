@@ -137,17 +137,20 @@ describe("appendix coherence", () => {
       const state = await loadState(TEST_DIR, "test-session")
       expect(state.appendices.length).toBeGreaterThan(0)
 
-      // Verify state references the appendix
+      // Verify appendix file exists — state.appendices[] stores
+      // workspace-relative paths (spec-6886df4f, TD3/M7).
       const appendixRef = state.appendices[0]
       expect(appendixRef).toBeDefined()
 
-      // Verify appendix file exists
-      const appendixPath = join(TEST_DIR, ".mesa", "specifications", "appendices", appendixRef.split("/").pop()!)
+      const appendixPath = join(TEST_DIR, appendixRef)
       const content = await fs.readFile(appendixPath, "utf-8")
 
-      // Verify appendix references the master spec (bidirectional link)
+      // Verify appendix references the master spec (bidirectional link).
+      // The migration relocates spec-master.md → specification.md in the
+      // session folder (spec-6886df4f, TD5), so the frontmatter references
+      // the migrated filename.
       expect(content).toContain("master_spec:")
-      expect(content).toContain("spec-master.md")
+      expect(content).toContain("specification.md")
 
       // Verify appendix has phase metadata linking back
       expect(content).toContain("phase_slug:")

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1] - 2026-07-15
+
+### Fixed
+- **Migration source-not-found handling** (spec-6886df4f): when a legacy artifact referenced by `state.db` no longer exists on disk, the migrator now sets the stored path to `null` instead of preserving a stale path.
+  - Prevents `state.briefing.path` / `state.specification.path` from pointing to non-existent files after migration.
+  - `mesa_session_analyses.file_path` is also nulled when the analysis file is missing.
+  - Removed missing appendices from the migrated `appendices` array.
+  - Warnings downgraded to informational `console.log` messages.
+  - Session is still marked as migrated via `session_folder` so the migrator does not retry on every DB open.
+- **State persistence roundtrip test** updated to use a session-scoped path and `sessionFolder`, avoiding false positives from the migration path cleanup.
+
 ## [3.3.0] - 2026-07-13
 
 ### Added

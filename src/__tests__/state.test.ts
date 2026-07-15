@@ -66,14 +66,17 @@ describe("state persistence", () => {
   test("saveState and loadState roundtrip", async () => {
     const state = await loadState(testDir)
     state.briefing.status = "approved"
-    state.briefing.path = "briefings/test.md"
+    // Use a session-scoped path and mark the session as already migrated so
+    // the file migration does not try to relocate this arbitrary test path.
+    state.sessionFolder = ".mesa/sessions/202607131534_test_test"
+    state.briefing.path = join(state.sessionFolder, "briefing.md")
     state.briefing.slug = "test"
 
     await saveState(testDir, state)
 
     const loaded = await loadState(testDir)
     expect(loaded.briefing.status).toBe("approved")
-    expect(loaded.briefing.path).toBe("briefings/test.md")
+    expect(loaded.briefing.path).toBe(state.briefing.path)
     expect(loaded.briefing.slug).toBe("test")
     expect(loaded.updatedAt).toBeTruthy()
   })

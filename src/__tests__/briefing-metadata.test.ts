@@ -181,8 +181,9 @@ describe("create_briefing with metadata args", () => {
       makeContext()
     )
 
+    const state = await loadState(TEST_DIR, "test-session")
     const file = await fs.readFile(
-      join(TEST_DIR, ".mesa", "briefings", "briefing-with-projection.md"),
+      join(TEST_DIR, state.briefing.path!),
       "utf-8"
     )
     expect(file).toContain("> **Scope:**")
@@ -198,8 +199,9 @@ describe("create_briefing with metadata args", () => {
       makeContext()
     )
 
+    const state = await loadState(TEST_DIR, "test-session")
     const file = await fs.readFile(
-      join(TEST_DIR, ".mesa", "briefings", "briefing-no-projection.md"),
+      join(TEST_DIR, state.briefing.path!),
       "utf-8"
     )
     expect(file).not.toContain("> **Scope:**")
@@ -464,7 +466,7 @@ describe("dual-write consistency (state ↔ markdown body)", () => {
     expect(state.briefing.metadata).not.toBeNull()
 
     const file = await fs.readFile(
-      join(TEST_DIR, ".mesa", "briefings", "briefing-dual-write.md"),
+      join(TEST_DIR, state.briefing.path!),
       "utf-8"
     )
 

@@ -87,7 +87,9 @@ describe("generate_specification_overview tool", () => {
     expect(metadata?.overviewPath).toBeTruthy()
     expect(metadata?.specPath).toBe(specMetadata?.path)
 
-    const overviewFile = await fs.readFile(metadata!.overviewPath, "utf-8")
+    // overviewPath is workspace-relative (spec-6886df4f, TD3).
+    // Prepend TEST_DIR for filesystem I/O.
+    const overviewFile = await fs.readFile(join(TEST_DIR, metadata!.overviewPath), "utf-8")
     expect(overviewFile).toContain("Overview: System Design")
     expect(overviewFile).toContain(specMetadata!.path)
     expect(overviewFile).toContain("```mermaid")

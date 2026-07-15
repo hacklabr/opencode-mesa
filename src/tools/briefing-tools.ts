@@ -1,12 +1,16 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState, getSessionId } from "../state.js"
+import { loadState, saveState, getSessionId, getDb } from "../state.js"
 import { join, resolve } from "node:path"
 import { promises as fs } from "node:fs"
-import { PLUGIN_STATE_DIR } from "../config.js"
 import { logAction } from "../audit.js"
 import { formatPhaseHeader } from "../workflow/transitions.js"
 import { isValidSlug } from "../utils/slug.js"
 import { successResponse, errorResponse } from "../utils/responses.js"
+import {
+  buildBriefingPath,
+  ensureSessionInput,
+  resolveAbsolutePath,
+} from "../utils/paths.js"
 import { ValidationError } from "../errors.js"
 import type { BriefingMetadata, ScopeDimension, ScopeMagnitude } from "../types.js"
 
@@ -85,11 +89,26 @@ export const createBriefingTool = tool({
         throw new ValidationError("Briefing content cannot be empty.")
       }
 
-      const briefingsDir = join(context.directory, PLUGIN_STATE_DIR, "briefings")
-      await fs.mkdir(briefingsDir, { recursive: true })
+      const state = await loadState(context.directory, context.sessionID)
+      state.briefing.slug = args.slug
 
-      const filePath = join(briefingsDir, `briefing-${args.slug}.md`)
-      if (!resolve(filePath).startsWith(resolve(briefingsDir))) {
+      const sessionId = getSessionId(context.directory, context.sessionID)
+      if (!sessionId) {
+        throw new Error("No active session. Ensure loadState() was called.")
+      }
+
+      // Compute session-scoped briefing path (spec-6886df4f, TD2).
+      // Store as RELATIVE to the workspace; prepend context.directory for I/O.
+      const input = await ensureSessionInput(
+        context.directory, state, sessionId, getDb
+      )
+      const briefingRelPath = buildBriefingPath(input)
+      const filePath = join(context.directory, briefingRelPath)
+
+      // Path-traversal guard: slug-derived path must stay inside the workspace.
+      const resolved = resolve(filePath)
+      const wsResolved = resolve(context.directory)
+      if (!resolved.startsWith(wsResolved)) {
         throw new ValidationError("Invalid slug — path traversal detected.")
       }
       const now = new Date().toISOString()
@@ -128,19 +147,18 @@ export const createBriefingTool = tool({
       // Dual-write: prepend the metadata projection block when metadata is present
       // so the manager LLM sees it via analyze_briefing (which reads the markdown file).
       const projectionBlock = metadata ? buildMetadataProjection(metadata) : ""
+      await fs.mkdir(join(filePath, ".."), { recursive: true })
       await fs.writeFile(filePath, frontmatter + projectionBlock + args.content, "utf-8")
 
-      const state = await loadState(context.directory, context.sessionID)
-      state.briefing.path = filePath
-      state.briefing.slug = args.slug
+      state.briefing.path = briefingRelPath
       state.briefing.status = "draft"
       state.briefing.metadata = metadata
       await saveState(context.directory, state, context.sessionID)
 
       return successResponse(
         "Briefing Created",
-        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing saved to ${filePath}`,
-        { slug: args.slug, path: filePath }
+        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing saved to ${briefingRelPath}`,
+        { slug: args.slug, path: briefingRelPath }
       )
     } catch (err) {
       return errorResponse(`Error creating briefing: ${err instanceof Error ? err.message : String(err)}`)
@@ -161,7 +179,9 @@ export const approveBriefingTool = tool({
 
       state.briefing.status = "approved"
 
-      const filePath = state.briefing.path
+      // Paths stored in state are RELATIVE to the workspace (spec-6886df4f, TD3).
+      // Prepend context.directory for all filesystem I/O.
+      const filePath = resolveAbsolutePath(context.directory, state.briefing.path)
       let content = await fs.readFile(filePath, "utf-8")
       const updated = content.replace(/status:\s*['"]?draft['"]?/g, "status: approved")
       if (updated === content) {
@@ -208,28 +228,44 @@ export const importBriefingTool = tool({
         return errorResponse("Briefing file is empty.")
       }
 
-      const briefingsDir = join(context.directory, PLUGIN_STATE_DIR, "briefings")
-      await fs.mkdir(briefingsDir, { recursive: true })
+      const state = await loadState(context.directory, context.sessionID)
+      state.briefing.slug = args.slug
 
-      const destPath = join(briefingsDir, `briefing-${args.slug}.md`)
+      const sessionId = getSessionId(context.directory, context.sessionID)
+      if (!sessionId) {
+        throw new Error("No active session. Ensure loadState() was called.")
+      }
 
-      if (!destPath.startsWith(briefingsDir)) {
+      // Compute session-scoped briefing path (spec-6886df4f, TD2).
+      const input = await ensureSessionInput(
+        context.directory, state, sessionId, getDb
+      )
+      const destRelPath = buildBriefingPath(input)
+      const destPath = join(context.directory, destRelPath)
+
+      // Path-traversal guard
+      if (!resolve(destPath).startsWith(resolve(context.directory))) {
         return errorResponse("Invalid path detected.")
       }
 
+      // Best-effort: if a briefing already exists at the session path, surface
+      // a helpful error. (Session folders are unique per workspace, so a
+      // collision here means the same session already created a briefing.)
       try {
         await fs.access(destPath)
-        return errorResponse(`Briefing with slug "${args.slug}" already exists. Use a different slug or delete the existing one.`)
+        return errorResponse(
+          `A briefing already exists for this session at ${destRelPath}. ` +
+          `Use create_briefing to replace it, or start a new session.`
+        )
       } catch {
         // File doesn't exist, proceed
       }
 
+      await fs.mkdir(join(destPath, ".."), { recursive: true })
       await fs.copyFile(args.file_path, destPath)
 
-      const state = await loadState(context.directory, context.sessionID)
-
       state.briefing = {
-        path: destPath,
+        path: destRelPath,
         status: "approved",
         slug: args.slug,
         // Imported briefings bypass discovery — default to composite so the
@@ -272,7 +308,7 @@ export const importBriefingTool = tool({
 
 export const deliverBriefingTool = tool({
   description:
-    "Delivers the approved briefing to the Manager. Updates the state phase to PLANNING and copies the briefing content.",
+    "Delivers the approved briefing to the Manager. Updates the state phase to PLANNING. The Manager reads briefing.md directly from the session folder — no delivery copy is created.",
   args: {},
   async execute(_args, context) {
     try {
@@ -284,14 +320,9 @@ export const deliverBriefingTool = tool({
         return errorResponse("No briefing path found.")
       }
 
-      const sessionId = getSessionId(context.directory, context.sessionID)
-      if (!sessionId) {
-        throw new Error("No active session. Ensure loadState() was called.")
-      }
-      const briefingsDir = join(context.directory, PLUGIN_STATE_DIR)
-      const deliveryPath = join(briefingsDir, `briefing-current-${sessionId}.md`)
-      const content = await fs.readFile(state.briefing.path, "utf-8")
-      await fs.writeFile(deliveryPath, content, "utf-8")
+      // Decision M4 (spec-6886df4f): ELIMINATE briefing-current-{sessionId}.md.
+      // The Manager reads briefing.md directly from state.briefing.path.
+      // This tool now only updates state — no file copy is created.
 
       state.currentPhase = "PLANNING"
       state.briefing.status = "delivered"
@@ -311,8 +342,8 @@ export const deliverBriefingTool = tool({
 
       return successResponse(
         "Briefing Delivered to Manager",
-        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing delivered to ${deliveryPath}. To continue, switch to the Manager agent by typing \`/agent manager\` and ask it to analyze the briefing and propose a team.`,
-        { deliveryPath }
+        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing is ready for the Manager at ${state.briefing.path}. To continue, switch to the Manager agent by typing \`/agent manager\` and ask it to analyze the briefing and propose a team.`,
+        { briefingPath: state.briefing.path }
       )
     } catch (err) {
       return errorResponse(`Error delivering briefing: ${err instanceof Error ? err.message : String(err)}`)

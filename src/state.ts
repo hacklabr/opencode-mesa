@@ -1,10 +1,11 @@
 import { openDatabase, type IDatabase } from "./db/driver.js"
-import { mkdirSync, existsSync, readFileSync, renameSync } from "node:fs"
-import { join } from "node:path"
+import { mkdirSync, existsSync, readFileSync, renameSync, readdirSync, rmdirSync } from "node:fs"
+import { join, dirname, basename, isAbsolute } from "node:path"
 import { hostname } from "node:os"
 import { z, ZodError } from "zod"
 import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, DiscussionMode } from "./types.js"
 import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config.js"
+import { buildSessionFolderPath } from "./utils/paths.js"
 
 // SDK client for parent session lookup (set from index.ts)
 type SessionGetter = (sessionId: string) => Promise<{ parentID?: string } | null>
@@ -200,6 +201,7 @@ export const DiscussionStateSchema = z.object({
   }),
   appendices: z.array(z.string()).default([]),
   phases: z.array(z.string()).default(["PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION"]),
+  sessionFolder: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
   stateVersion: z.number().default(1),
@@ -326,6 +328,7 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   rigor TEXT DEFAULT 'standard',
   analysis_mode TEXT DEFAULT 'parallel',
   deviations INTEGER DEFAULT 0,
+  session_folder TEXT,
   state_version INTEGER DEFAULT 5,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -974,6 +977,680 @@ function migrate_v9_to_v10(db: IDatabase): void {
 }
 
 /**
+ * v10 → v11: Session-scoped folder layout (spec-6886df4f).
+ *
+ * Adds the `session_folder` TEXT column to `mesa_session_state` so the
+ * computed folder path can be cached after the first resolution. This is
+ * a schema-only step — the accompanying file relocation runs immediately
+ * after in `migrateFiles_v10_to_v11` (TD5).
+ */
+function migrate_v10_to_v11(db: IDatabase): void {
+  const tx = db.transaction(() => {
+    // Only the session-scoped table needs session_folder — mesa_state is
+    // legacy/unscoped and not part of the new layout.
+    try {
+      db.run(`ALTER TABLE mesa_session_state ADD COLUMN session_folder TEXT`)
+    } catch (e: unknown) {
+      const err = e as Error
+      if (!err.message.includes("duplicate column name")) throw e
+    }
+
+    db.run("UPDATE mesa_session_state SET state_version = 11 WHERE state_version = 10")
+  })
+  tx()
+}
+
+/**
+ * v10 → v11 file relocation (spec-6886df4f, TD5).
+ *
+ * Moves session artifacts from the legacy scattered layout into the
+ * session-scoped folder structure (`.mesa/sessions/{folder}/`). Runs
+ * AFTER the `migrate_v10_to_v11` schema migration (which adds the
+ * `session_folder` column) and BEFORE `migrateFromJson`.
+ *
+ * IDEMPOTENCY: the per-session checkpoint skips any session whose
+ * `briefing.md` already exists in the computed target folder. Each
+ * artifact move is also individually idempotent (target-exists check).
+ * Re-running the migrator is a safe no-op.
+ *
+ * Legacy directories (`.mesa/briefings/`, `.mesa/specifications/`,
+ * `.mesa/especificacoes/`, flat `analyses/turn{N}/`, root
+ * `briefing-current-*.md`, etc.) are moved to `.mesa/_archive/` after
+ * all sessions have been migrated.
+ *
+ * All errors are logged to stderr and swallowed — a missing source file
+ * MUST NOT abort the migration. The DB path columns are updated to
+ * workspace-RELATIVE paths (e.g. `.mesa/sessions/{folder}/briefing.md`).
+ */
+function migrateFiles_v10_to_v11(directory: string, db: IDatabase): void {
+  const rows = db
+    .query(
+      "SELECT session_id, briefing_slug, briefing_path, specification_path, " +
+      "specification_overview_path, appendices, session_folder, created_at " +
+      "FROM mesa_session_state WHERE workspace_id = ?"
+    )
+    .all(directory) as Array<{
+      session_id: string
+      briefing_slug: string | null
+      briefing_path: string | null
+      specification_path: string | null
+      specification_overview_path: string | null
+      appendices: string | null
+      session_folder: string | null
+      created_at: string
+    }>
+
+  // If there are no sessions in the DB, skip everything. This prevents
+  // the migrator from archiving files that test fixtures (or the current
+  // session) are still actively writing to legacy locations.
+  if (rows.length === 0) {
+    return
+  }
+
+  // Migrate each session that hasn't been processed yet (session_folder
+  // is null). Sessions with session_folder already set are skipped.
+  let migratedCount = 0
+  for (const row of rows) {
+    if (row.session_folder !== null) continue
+    try {
+      migrateSessionArtifacts(directory, db, row)
+      migratedCount++
+    } catch (e) {
+      console.error(
+        `[Mesa migration] Failed to migrate session ${row.session_id}:`,
+        (e as Error).message
+      )
+    }
+  }
+
+  // Mark this directory as having had migration run in this process.
+  // This prevents archival from running in the same process that did
+  // the initial migration. Archival is deferred to the NEXT process
+  // start (e.g., next time the workspace is opened), ensuring files
+  // the current process is actively using are not archived prematurely.
+  if (migratedCount > 0) {
+    migratedInProcess.add(directory)
+  }
+
+  // Only archive legacy structures when:
+  // 1. No migration was performed in THIS process for this directory
+  //    (initial migration was completed on a previous process start), AND
+  // 2. Archival hasn't already run for this directory in this process.
+  if (
+    !migratedInProcess.has(directory) &&
+    !archivedDirectories.has(directory)
+  ) {
+    archivedDirectories.add(directory)
+    try {
+      archiveLegacyStructures(directory)
+    } catch (e) {
+      console.error(
+        "[Mesa migration] Legacy archival failed:",
+        (e as Error).message
+      )
+    }
+  }
+}
+
+/**
+ * Directories that had at least one session migrated in this process.
+ * Prevents archival from running in the same process — archival is
+ * deferred to the next process start.
+ */
+const migratedInProcess = new Set<string>()
+
+/**
+ * Directories that have already been archived in this process.
+ * Prevents the archival from running on every getDb() call.
+ */
+const archivedDirectories = new Set<string>()
+
+/**
+ * Resolve `mesa_session.started_at` for a session, falling back to the
+ * state row's `created_at` when the session row is missing (e.g. JSON
+ * migration path). Decision M2: started_at is authoritative.
+ */
+function resolveStartedAt(db: IDatabase, sessionId: string, fallback: string): string {
+  const row = db
+    .query("SELECT started_at FROM mesa_session WHERE session_id = ?")
+    .get(sessionId) as { started_at: string } | null
+  return row?.started_at ?? fallback
+}
+
+/**
+ * Extract the 8-hex master spec ID from a legacy specification path
+ * like `.../specifications/spec-1764227a.md`. Returns null when the
+ * path doesn't match the legacy pattern (already migrated, or absent).
+ */
+function extractMasterSpecId(specPath: string | null): string | null {
+  if (!specPath) return null
+  const m = specPath.match(/spec-([a-f0-9]{8})\.md$/)
+  return m ? m[1] : null
+}
+
+/**
+ * Move a single artifact file (briefing/spec/overview) from its legacy
+ * location to `{targetFolder}/{targetName}`. Returns the path that
+ * should be stored in the DB after migration.
+ *
+ * Behavior:
+ *  - sourcePath is null      → return null (nothing to migrate)
+ *  - target already exists   → return relative target (idempotent)
+ *  - source exists           → atomic rename, return relative target
+ *  - neither exists          → return null (file is gone, no path to store)
+ *
+ * Returning null for a missing file keeps the state clean: consumers
+ * read `state.briefing.path === null` as "no briefing file" rather than
+ * trying to open a stale path. The session is still marked as migrated
+ * via `session_folder` so the migrator does not retry on every DB open.
+ *
+ * Source may be stored as ABSOLUTE or RELATIVE — both are resolved
+ * against `directory`.
+ */
+function migrateArtifactFile(
+  directory: string,
+  targetFolder: string,
+  targetName: string,
+  sourcePath: string | null
+): string | null {
+  if (!sourcePath) return null
+
+  const targetRel = join(targetFolder, targetName)
+  const targetAbs = join(directory, targetRel)
+
+  if (existsSync(targetAbs)) {
+    return targetRel
+  }
+
+  const sourceAbs = isAbsolute(sourcePath) ? sourcePath : join(directory, sourcePath)
+
+  if (existsSync(sourceAbs)) {
+    try {
+      renameSync(sourceAbs, targetAbs)
+    } catch (e) {
+      console.error(
+        `[Mesa migration] rename failed for ${targetName}: ${sourceAbs} → ${targetAbs}:`,
+        (e as Error).message
+      )
+      return sourcePath
+    }
+    return targetRel
+  }
+
+  console.log(
+    `[Mesa migration] Source not found for ${targetName}: ${sourceAbs} (setting path to null)`
+  )
+  return null
+}
+
+/**
+ * Move all analysis files for a session into the session folder.
+ *
+ * The legacy layout used inconsistent directory naming:
+ *  - UUID sessions:     `.mesa/analyses/{sessionId}/turn{N}/{personaId}.md`
+ *  - `ses_` sessions:   `.mesa/analyses/ses_{short}_{personaId}/turn{N}/{personaId}.md`
+ *                       (one dir per persona — does NOT match session_id)
+ *
+ * To handle both, we iterate per-row over `mesa_session_analyses`,
+ * extract the subpath after `{analyses}/{dirName}/` (e.g.
+ * `turn1/persona.md`), and relocate the file to
+ * `{targetFolder}/analyses/{subpath}`. The `file_path` column is
+ * rewritten to the new relative path.
+ */
+function migrateAnalyses(
+  directory: string,
+  db: IDatabase,
+  sessionId: string,
+  targetFolder: string
+): void {
+  const rows = db
+    .query(
+      "SELECT id, file_path FROM mesa_session_analyses " +
+      "WHERE workspace_id = ? AND session_id = ? AND file_path IS NOT NULL"
+    )
+    .all(directory, sessionId) as Array<{ id: number; file_path: string }>
+
+  for (const row of rows) {
+    const sourceAbs = isAbsolute(row.file_path)
+      ? row.file_path
+      : join(directory, row.file_path)
+
+    // Extract the subpath after the `analyses/{dirName}/` segment.
+    // We split on the literal "/analyses/" marker — works for both
+    // absolute and relative stored paths regardless of OS separator
+    // because Mesa always writes "/"-delimited relative paths.
+    const marker = "/analyses/"
+    const idx = row.file_path.indexOf(marker)
+    if (idx < 0) {
+      // Path doesn't contain the analyses marker — already migrated
+      // or unknown layout. Skip silently.
+      continue
+    }
+
+    const afterMarker = row.file_path.slice(idx + marker.length)
+    // afterMarker = "{dirName}/{rest}" — drop the first segment.
+    const slashIdx = afterMarker.indexOf("/")
+    if (slashIdx < 0) {
+      // Loose file directly under analyses/ (no dirName). Keep as-is.
+      continue
+    }
+    const subpath = afterMarker.slice(slashIdx + 1) // e.g. "turn1/persona.md"
+
+    const targetRel = join(targetFolder, "analyses", subpath)
+    const targetAbs = join(directory, targetRel)
+
+    if (!existsSync(targetAbs)) {
+      if (existsSync(sourceAbs)) {
+        try {
+          mkdirSync(dirname(targetAbs), { recursive: true })
+          renameSync(sourceAbs, targetAbs)
+        } catch (e) {
+          console.error(
+            `[Mesa migration] analyses rename failed: ${sourceAbs} → ${targetAbs}:`,
+            (e as Error).message
+          )
+          continue
+        }
+      } else {
+        console.log(
+          `[Mesa migration] analyses source not found: ${sourceAbs} (setting path to null)`
+        )
+        // File is gone — clear the reference so consumers don't try to
+        // open a stale path. The analysis content is still recoverable
+        // from the `content` column if it was stored there.
+        db.run(
+          "UPDATE mesa_session_analyses SET file_path = NULL WHERE id = ?",
+          [row.id]
+        )
+        continue
+      }
+    }
+
+    // Rewrite the stored path to the new relative location.
+    db.run(
+      "UPDATE mesa_session_analyses SET file_path = ? WHERE id = ?",
+      [targetRel, row.id]
+    )
+  }
+}
+
+/**
+ * Move appendix files for a session into the session folder and rewrite
+ * the `appendices` JSON array from legacy basenames to workspace-relative
+ * paths.
+ *
+ * Legacy basename format: `appendix-{masterSpecId}-{phaseSlug}-{uuid}.md`
+ * New basename format:    `appendix-{phaseSlug}-{uuid}.md`
+ *
+ * The `masterSpecId` prefix is stripped (TD2: appendices are
+ * session-scoped, not spec-scoped). When `masterSpecId` cannot be
+ * resolved (no spec path), the basename is preserved as-is.
+ */
+function migrateAppendices(
+  directory: string,
+  targetFolder: string,
+  appendicesJson: string | null,
+  masterSpecId: string | null
+): string[] {
+  let entries: string[] = []
+  if (appendicesJson) {
+    try {
+      const parsed = JSON.parse(appendicesJson)
+      if (Array.isArray(parsed)) entries = parsed.filter((e) => typeof e === "string")
+    } catch {
+      // malformed JSON — nothing to migrate
+      return []
+    }
+  }
+
+  if (entries.length === 0) return []
+
+  const legacyDir = join(directory, PLUGIN_STATE_DIR, "specifications", "appendices")
+  const targetRelDir = join(targetFolder, "appendices")
+  const targetAbsDir = join(directory, targetRelDir)
+  const result: string[] = []
+
+  for (const entry of entries) {
+    // Legacy entries are basenames; defensive: take basename of any path.
+    const oldBasename = basename(entry)
+
+    // Compute the new basename by stripping the `{masterSpecId}-` segment.
+    let newBasename = oldBasename
+    if (masterSpecId) {
+      const prefix = `appendix-${masterSpecId}-`
+      if (oldBasename.startsWith(prefix)) {
+        newBasename = `appendix-${oldBasename.slice(prefix.length)}`
+      }
+    }
+
+    const targetRel = join(targetRelDir, newBasename)
+    const targetAbs = join(directory, targetRel)
+    const sourceAbs = join(legacyDir, oldBasename)
+
+    if (!existsSync(targetAbs)) {
+      if (existsSync(sourceAbs)) {
+        try {
+          mkdirSync(targetAbsDir, { recursive: true })
+          renameSync(sourceAbs, targetAbs)
+        } catch (e) {
+          console.error(
+            `[Mesa migration] appendix rename failed: ${sourceAbs} → ${targetAbs}:`,
+            (e as Error).message
+          )
+          // Preserve the original entry so the reference isn't lost.
+          result.push(entry)
+          continue
+        }
+      } else {
+        console.log(
+          `[Mesa migration] appendix source not found: ${sourceAbs} (skipping)`
+        )
+        // File is gone — do not include it in the migrated appendix list.
+        continue
+      }
+    }
+
+    result.push(targetRel)
+  }
+
+  return result
+}
+
+/**
+ * Migrate all artifacts for a single session row.
+ */
+function migrateSessionArtifacts(
+  directory: string,
+  db: IDatabase,
+  row: {
+    session_id: string
+    briefing_slug: string | null
+    briefing_path: string | null
+    specification_path: string | null
+    specification_overview_path: string | null
+    appendices: string | null
+    session_folder: string | null
+    created_at: string
+  }
+): void {
+  const createdAt = resolveStartedAt(db, row.session_id, row.created_at)
+  const input = {
+    createdAt,
+    sessionId: row.session_id,
+    slug: row.briefing_slug ?? "untitled",
+  }
+  const targetFolder = buildSessionFolderPath(input)
+
+  // Idempotency checkpoint 1: session already processed on a previous run.
+  // The session_folder column is set atomically at the end of migration.
+  if (row.session_folder !== null) {
+    return
+  }
+
+  // Idempotency checkpoint 2: target briefing.md exists (partial recovery
+  // from a crash mid-migration). Mark the session as processed and exit.
+  const checkpoint = join(directory, targetFolder, "briefing.md")
+  if (existsSync(checkpoint)) {
+    db.run(
+      "UPDATE mesa_session_state SET session_folder = ? " +
+      "WHERE workspace_id = ? AND session_id = ?",
+      [targetFolder, directory, row.session_id]
+    )
+    return
+  }
+
+  mkdirSync(join(directory, targetFolder), { recursive: true })
+
+  const newBriefingPath = migrateArtifactFile(
+    directory, targetFolder, "briefing.md", row.briefing_path
+  )
+  const newSpecPath = migrateArtifactFile(
+    directory, targetFolder, "specification.md", row.specification_path
+  )
+  const newOverviewPath = migrateArtifactFile(
+    directory, targetFolder, "overview.md", row.specification_overview_path
+  )
+
+  migrateAnalyses(directory, db, row.session_id, targetFolder)
+
+  const masterSpecId = extractMasterSpecId(row.specification_path)
+  const newAppendices = migrateAppendices(
+    directory, targetFolder, row.appendices, masterSpecId
+  )
+
+  db.run(
+    "UPDATE mesa_session_state SET " +
+    "session_folder = ?, briefing_path = ?, specification_path = ?, " +
+    "specification_overview_path = ?, appendices = ? " +
+    "WHERE workspace_id = ? AND session_id = ?",
+    [
+      targetFolder,
+      newBriefingPath,
+      newSpecPath,
+      newOverviewPath,
+      JSON.stringify(newAppendices),
+      directory,
+      row.session_id,
+    ]
+  )
+}
+
+/**
+ * Recursively move the contents of `sourceDir` into `targetDir`,
+ * merging with any existing target. Empty source directories are
+ * removed after their contents are relocated.
+ *
+ * Used for the `_archive/` relocation of legacy structures. Each
+ * individual file move is atomic (rename); a mid-archive crash leaves
+ * the source dir with whatever wasn't moved yet, so re-running is safe.
+ */
+function moveDirContents(sourceDir: string, targetDir: string): void {
+  if (!existsSync(sourceDir)) return
+  mkdirSync(targetDir, { recursive: true })
+
+  let entries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>
+  try {
+    entries = readdirSync(sourceDir, { withFileTypes: true }) as unknown as Array<{
+      name: string
+      isDirectory: () => boolean
+      isFile: () => boolean
+    }>
+  } catch {
+    return
+  }
+
+  for (const entry of entries) {
+    const src = join(sourceDir, entry.name)
+    const dst = join(targetDir, entry.name)
+
+    if (existsSync(dst)) {
+      if (entry.isDirectory()) {
+        moveDirContents(src, dst)
+      }
+      // Files: skip when target exists (idempotent — first-write-wins).
+    } else {
+      try {
+        renameSync(src, dst)
+      } catch (e) {
+        console.error(
+          `[Mesa migration] moveDirContents rename failed: ${src} → ${dst}:`,
+          (e as Error).message
+        )
+      }
+    }
+  }
+
+  // Best-effort rmdir — non-recursive, only succeeds when source is empty.
+  try {
+    rmdirSync(sourceDir)
+  } catch {
+    // Source not empty (some moves failed) — leave in place.
+  }
+}
+
+/**
+ * Move legacy, non-session-scoped structures into `.mesa/_archive/`.
+ *
+ * Runs AFTER all session artifacts have been migrated. Anything left in
+ * the legacy directories at this point is either:
+ *  - orphaned (no matching session in DB)
+ *  - a legacy layout we no longer write to
+ *
+ * All of it goes to `_archive/` so the workspace root stays clean
+ * without losing data.
+ */
+function archiveLegacyStructures(directory: string): void {
+  const mesaDir = join(directory, PLUGIN_STATE_DIR)
+  const archiveDir = join(mesaDir, "_archive")
+  mkdirSync(archiveDir, { recursive: true })
+
+  // 1. `.mesa/especificacoes/` → `_archive/especificacoes/`  (PT legacy)
+  moveDirContents(
+    join(mesaDir, "especificacoes"),
+    join(archiveDir, "especificacoes")
+  )
+
+  // 2. `.mesa/specifications/analyses-*/` → `_archive/specifications-analyses-{short}/`
+  const specsDir = join(mesaDir, "specifications")
+  if (existsSync(specsDir)) {
+    let specEntries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>
+    try {
+      specEntries = readdirSync(specsDir, { withFileTypes: true }) as unknown as Array<{
+        name: string
+        isDirectory: () => boolean
+        isFile: () => boolean
+      }>
+    } catch {
+      specEntries = []
+    }
+
+    for (const entry of specEntries) {
+      if (entry.isDirectory() && entry.name.startsWith("analyses-")) {
+        const shortHash = entry.name.slice("analyses-".length)
+        moveDirContents(
+          join(specsDir, entry.name),
+          join(archiveDir, `specifications-analyses-${shortHash}`)
+        )
+      }
+    }
+  }
+
+  // 3. `.mesa/analyses/{turn1,turn2,turn3,consensus,ask_peer}/` + loose `.md` files
+  //    → `_archive/analyses-flat/`  (flat, non-session-scoped legacy)
+  const analysesDir = join(mesaDir, "analyses")
+  const flatTarget = join(archiveDir, "analyses-flat")
+  if (existsSync(analysesDir)) {
+    const flatNames = ["turn1", "turn2", "turn3", "turn4", "consensus", "ask_peer"]
+    let analysesEntries: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>
+    try {
+      analysesEntries = readdirSync(analysesDir, { withFileTypes: true }) as unknown as Array<{
+        name: string
+        isDirectory: () => boolean
+        isFile: () => boolean
+      }>
+    } catch {
+      analysesEntries = []
+    }
+
+    for (const entry of analysesEntries) {
+      if (entry.isDirectory() && flatNames.includes(entry.name)) {
+        moveDirContents(
+          join(analysesDir, entry.name),
+          join(flatTarget, entry.name)
+        )
+      } else if (entry.isFile() && entry.name.endsWith(".md")) {
+        mkdirSync(flatTarget, { recursive: true })
+        try {
+          renameSync(
+            join(analysesDir, entry.name),
+            join(flatTarget, entry.name)
+          )
+        } catch (e) {
+          console.error(
+            `[Mesa migration] failed to archive loose analyses file ${entry.name}:`,
+            (e as Error).message
+          )
+        }
+      }
+    }
+
+    // Best-effort cleanup of now-empty session directories under analyses/.
+    // Session-scoped dirs that were per-row migrated above may be empty now.
+    let remaining: Array<{ name: string; isDirectory: () => boolean; isFile: () => boolean }>
+    try {
+      remaining = readdirSync(analysesDir, { withFileTypes: true }) as unknown as Array<{
+        name: string
+        isDirectory: () => boolean
+        isFile: () => boolean
+      }>
+    } catch {
+      remaining = []
+    }
+    for (const entry of remaining) {
+      if (entry.isDirectory()) {
+        const subDir = join(analysesDir, entry.name)
+        try {
+          rmdirSync(subDir, { recursive: true })
+        } catch {
+          // Not empty — leave in place. (Orphaned analyses for unknown sessions.)
+        }
+      }
+    }
+
+    // If analyses/ itself is now empty, remove it.
+    try {
+      rmdirSync(analysesDir)
+    } catch {
+      // Not empty — leave in place.
+    }
+  }
+
+  // 4 & 5. Root pollution: `briefing-current-*.md`, `briefing-for-discussion-*.md`
+  //        → `_archive/root-files/`
+  const rootFilesTarget = join(archiveDir, "root-files")
+  let mesaEntries: Array<{ name: string; isFile: () => boolean }>
+  try {
+    mesaEntries = readdirSync(mesaDir, { withFileTypes: true }) as unknown as Array<{
+      name: string
+      isFile: () => boolean
+    }>
+  } catch {
+    mesaEntries = []
+  }
+
+  const rootPrefixes = ["briefing-current-", "briefing-for-discussion-"]
+  const rootFiles = mesaEntries
+    .filter((e) => e.isFile() && rootPrefixes.some((p) => e.name.startsWith(p)))
+    .map((e) => e.name)
+
+  if (rootFiles.length > 0) {
+    mkdirSync(rootFilesTarget, { recursive: true })
+    for (const name of rootFiles) {
+      try {
+        renameSync(join(mesaDir, name), join(rootFilesTarget, name))
+      } catch (e) {
+        console.error(
+          `[Mesa migration] failed to archive root file ${name}:`,
+          (e as Error).message
+        )
+      }
+    }
+  }
+
+  // 6. `.mesa/briefings/` (remaining) → `_archive/briefings/`
+  moveDirContents(
+    join(mesaDir, "briefings"),
+    join(archiveDir, "briefings")
+  )
+
+  // 7. `.mesa/specifications/` (remaining) → `_archive/specifications/`
+  moveDirContents(
+    specsDir,
+    join(archiveDir, "specifications")
+  )
+}
+
+/**
  * Maintenance sweep for the memory system (spec-7ba9841f, D6 + D7).
  *
  * Runs at DB open (session init). Two operations:
@@ -991,7 +1668,7 @@ function maintenanceSweep(db: IDatabase): void {
   }
 }
 
-function getDb(directory: string): IDatabase {
+export function getDb(directory: string): IDatabase {
   const stateDir = join(directory, PLUGIN_STATE_DIR)
   mkdirSync(stateDir, { recursive: true })
 
@@ -1015,6 +1692,11 @@ function getDb(directory: string): IDatabase {
   migrate_v7_to_v8(db)
   migrate_v8_to_v9(db)
   migrate_v9_to_v10(db)
+  migrate_v10_to_v11(db)
+  // File relocation (spec-6886df4f, TD5) — runs after schema migrations
+  // (so the session_folder column exists) but before migrateFromJson
+  // (so JSON-imported rows also get their files relocated on next open).
+  migrateFiles_v10_to_v11(directory, db)
   migrateFromJson(directory, db)
 
   maintenanceSweep(db)
@@ -1262,6 +1944,7 @@ function rowToState(
     },
     appendices: JSON.parse((row.appendices as string) || '[]'),
     phases: JSON.parse((row.phases as string) || '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]'),
+    sessionFolder: (row.session_folder as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     stateVersion: (row.state_version as number) ?? 1,
@@ -1399,8 +2082,9 @@ export async function saveState(directory: string, state: DiscussionState, openc
           specification_path, specification_overview_path, specification_status,
           phases, appendices,
           rigor, analysis_mode, deviations,
+          session_folder,
           state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, sessionId, state.currentPhase, state.previousPhase, state.status ?? "active",
           state.briefing.path, state.briefing.status, state.briefing.slug,
@@ -1415,6 +2099,7 @@ export async function saveState(directory: string, state: DiscussionState, openc
           state.discussion.rigor ?? "standard",
           state.discussion.analysisMode ?? "parallel",
           state.discussion.deviations ?? 0,
+          state.sessionFolder ?? null,
           state.stateVersion, state.createdAt, state.updatedAt,
         ]
       )

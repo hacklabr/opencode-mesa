@@ -81,6 +81,7 @@ describe("v1 state migration", () => {
         confidence: "low",
       },
       phases: ["PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION", "SPECIFICATION", "EXECUTION"],
+      sessionFolder: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       stateVersion: 1,

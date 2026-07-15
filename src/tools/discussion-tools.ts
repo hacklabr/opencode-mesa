@@ -1,15 +1,21 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState, getSessionId } from "../state.js"
+import { loadState, saveState, getSessionId, getDb } from "../state.js"
 import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry, AnalysisKind, AnalysisTurnType } from "../types.js"
 import { canTransition, VALID_TRANSITIONS, requirePhase, requireMode, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions.js"
 import { getProfile, DEVIATION_RATE_CAP, type RigorProfile } from "../workflow/profiles.js"
 import { promises as fs } from "node:fs"
-import { join, resolve, relative, isAbsolute } from "node:path"
-import { randomUUID } from "node:crypto"
-import { PLUGIN_STATE_DIR } from "../config.js"
+import { join } from "node:path"
 import { logAction } from "../audit.js"
 import { successResponse, errorResponse } from "../utils/responses.js"
-import { buildAnalysisPath, validateWorkspacePath } from "../utils/paths.js"
+import {
+  buildAnalysisPath,
+  buildBriefingPath,
+  buildSpecificationPath,
+  buildOverviewPath,
+  ensureSessionInput,
+  resolveAbsolutePath,
+  validateWorkspacePath,
+} from "../utils/paths.js"
 import { recordAgentSession, clearAgentSessions } from "./peer-tools.js"
 import { PhaseError, MesaError } from "../errors.js"
 
@@ -72,8 +78,18 @@ export const openAnalysisRoundTool = tool({
       const phaseError = requirePhase(state, "PLANNING")
       if (phaseError) throw new PhaseError(phaseError)
 
-      // BUG-12: Clean up orphan briefing file from previous round
-      const oldBriefingPath = join(context.directory, PLUGIN_STATE_DIR, `briefing-for-discussion-${sessionId}.md`)
+      // Resolve session folder input for session-scoped paths (spec-6886df4f).
+      const sessionInput = await ensureSessionInput(
+        context.directory, state, sessionId, getDb
+      )
+
+      // BUG-12: Clean up orphan briefing file from previous round.
+      // The enriched briefing lives inside the session folder as
+      // briefing-for-discussion.md (decision M5, spec-6886df4f).
+      const oldBriefingPath = join(
+        context.directory,
+        buildBriefingPath(sessionInput).replace(/briefing\.md$/, "briefing-for-discussion.md")
+      )
       try {
         await fs.unlink(oldBriefingPath)
       } catch {
@@ -126,13 +142,17 @@ export const openAnalysisRoundTool = tool({
       state.specification = { path: null, overviewPath: null, status: "pending" }
 
       if (args.briefing_content) {
-        const briefingFile = join(
-          context.directory,
-          PLUGIN_STATE_DIR,
-          `briefing-for-discussion-${sessionId}.md`
+        // Write the enriched briefing into the session folder (decision M5,
+        // spec-6886df4f). Stored as briefing-for-discussion.md alongside
+        // briefing.md so both are co-located.
+        const briefingForDiscussionRel = buildBriefingPath(sessionInput).replace(
+          /briefing\.md$/,
+          "briefing-for-discussion.md"
         )
+        const briefingFile = join(context.directory, briefingForDiscussionRel)
+        await fs.mkdir(join(briefingFile, ".."), { recursive: true })
         await fs.writeFile(briefingFile, args.briefing_content, "utf-8")
-        await logAction(context.directory, "briefing_for_discussion_written", state.currentPhase, { path: briefingFile })
+        await logAction(context.directory, "briefing_for_discussion_written", state.currentPhase, { path: briefingForDiscussionRel })
       }
 
       await saveState(context.directory, state, context.sessionID)
@@ -146,8 +166,10 @@ export const openAnalysisRoundTool = tool({
         return { id, name }
       })
 
+      // Compute the relative path of the enriched briefing (if written) for
+      // display. The Manager and specialists read this file directly.
       const briefingFilePath = args.briefing_content
-        ? `.mesa/briefing-for-discussion-${sessionId}.md`
+        ? buildBriefingPath(sessionInput).replace(/briefing\.md$/, "briefing-for-discussion.md")
         : null
 
       const participantList = participantsWithNames
@@ -328,10 +350,14 @@ export const registerAnalysisTool = tool({
         }
         validatedFilePath = args.file_path
       } else {
-        // Compute canonical path so get_peer_analyses always has a valid filePath
+        // Compute canonical session-scoped path so get_peer_analyses always
+        // has a valid filePath (spec-6886df4f).
         const mesaSessionId = getSessionId(context.directory, context.sessionID)
         if (mesaSessionId) {
-          validatedFilePath = buildAnalysisPath(mesaSessionId, args.turn, effectiveId)
+          const sessionInput = await ensureSessionInput(
+            context.directory, state, mesaSessionId, getDb
+          )
+          validatedFilePath = buildAnalysisPath(sessionInput, args.turn, effectiveId)
         }
       }
 
@@ -750,10 +776,19 @@ export const generateSpecificationOverviewTool = tool({
         )
       }
 
-      const specsDir = join(context.directory, PLUGIN_STATE_DIR, "specifications")
-      const specIdMatch = state.specification.path.match(/spec-([a-zA-Z0-9]+)\.md$/)
-      const id = specIdMatch ? specIdMatch[1] : randomUUID().slice(0, 8)
-      const overviewPath = join(specsDir, `overview-${id}.md`)
+      // Decision P5 + 3.2 (spec-6886df4f): the spec is now a fixed-name
+      // `specification.md` inside the session folder. There is no spec ID to
+      // extract — overview.md lives alongside it. The previous regex
+      // /spec-([a-zA-Z0-9]+)\.md$/ was dead code once the filename became fixed.
+      const sessionId = getSessionId(context.directory, context.sessionID)
+      if (!sessionId) {
+        throw new Error("No active session. Ensure loadState() was called.")
+      }
+      const sessionInput = await ensureSessionInput(
+        context.directory, state, sessionId, getDb
+      )
+      const overviewRelPath = buildOverviewPath(sessionInput)
+      const overviewPath = join(context.directory, overviewRelPath)
 
       const document = [
         `# Overview: ${args.topic}`,
@@ -764,20 +799,22 @@ export const generateSpecificationOverviewTool = tool({
         args.content,
       ].join("\n")
 
+      await fs.mkdir(join(overviewPath, ".."), { recursive: true })
       await fs.writeFile(overviewPath, document, "utf-8")
 
-      state.specification.overviewPath = overviewPath
+      // Store RELATIVE path in state (spec-6886df4f, TD3).
+      state.specification.overviewPath = overviewRelPath
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "specification_overview_generated", state.currentPhase, {
-        overviewPath,
+        overviewPath: overviewRelPath,
         specPath: state.specification.path,
       })
 
       return successResponse(
         "Specification Overview Generated",
-        `${formatPhaseHeader(state.currentPhase, { topic: args.topic })}\n\nOverview saved to: ${overviewPath}\n\n` +
+        `${formatPhaseHeader(state.currentPhase, { topic: args.topic })}\n\nOverview saved to: ${overviewRelPath}\n\n` +
         `This is the human-readable summary for approval. The full technical specification remains at: ${state.specification.path}`,
-        { overviewPath, specPath: state.specification.path }
+        { overviewPath: overviewRelPath, specPath: state.specification.path }
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -804,11 +841,18 @@ export const generateSpecificationTool = tool({
       if (!toSpec.ok) throw new PhaseError(toSpec.error)
       state.currentPhase = toSpec.phase
 
-      const specsDir = join(context.directory, PLUGIN_STATE_DIR, "specifications")
-      await fs.mkdir(specsDir, { recursive: true })
-
-      const id = randomUUID().slice(0, 8)
-      const specPath = join(specsDir, `spec-${id}.md`)
+      // Decision P5 + 3.2 (spec-6886df4f): fixed filename `specification.md`
+      // inside the session folder. Eliminates the non-deterministic
+      // `spec-{randomUUID().slice(0,8)}.md` naming.
+      const sessionId = getSessionId(context.directory, context.sessionID)
+      if (!sessionId) {
+        throw new Error("No active session. Ensure loadState() was called.")
+      }
+      const sessionInput = await ensureSessionInput(
+        context.directory, state, sessionId, getDb
+      )
+      const specRelPath = buildSpecificationPath(sessionInput)
+      const specPath = join(context.directory, specRelPath)
 
       const document = [
         `# Specification: ${args.topic}`,
@@ -828,40 +872,26 @@ export const generateSpecificationTool = tool({
         )
       }
 
+      await fs.mkdir(join(specPath, ".."), { recursive: true })
       await fs.writeFile(specPath, document, "utf-8")
 
-      // Save analyses separately
-      if (state.discussion.analyses.length > 0) {
-        const analysesDir = join(context.directory, PLUGIN_STATE_DIR, "specifications", `analyses-${id}`)
-        await fs.mkdir(analysesDir, { recursive: true })
-        for (const a of state.discussion.analyses) {
-          const analysisFile = join(analysesDir, `analysis-${a.agentId}-turn${a.turn}.md`)
-          await fs.writeFile(
-            analysisFile,
-            [
-              `# Analysis: ${a.agentName} — Turn ${a.turn}`,
-              ``,
-              `**Agent ID:** ${a.agentId}`,
-              `**Timestamp:** ${a.timestamp}`,
-              ``,
-              a.content,
-            ].join("\n"),
-            "utf-8"
-          )
-        }
-      }
+      // Decision M6 (spec-6886df4f): ELIMINATE the analyses snapshot.
+      // The live `analyses/` directory inside the session folder already has
+      // canonical copies written by register_analysis. Duplicating them under
+      // `specifications/analyses-{id}/` was pure redundancy.
 
-      state.specification.path = specPath
+      // Store RELATIVE path in state (spec-6886df4f, TD3).
+      state.specification.path = specRelPath
       state.specification.status = "draft"
 
       // In SPECIFICATION phase, spec is ready for approval (no phase transition needed)
       await saveState(context.directory, state, context.sessionID)
-      await logAction(context.directory, "specification_generated", state.currentPhase, { path: specPath })
+      await logAction(context.directory, "specification_generated", state.currentPhase, { path: specRelPath })
 
       return successResponse(
         "Specification Generated",
-        `${formatPhaseHeader(state.currentPhase, { topic: args.topic })}\n\nSpecification saved to: ${specPath}\n\nThe specification is now awaiting human approval.`,
-        { path: specPath }
+        `${formatPhaseHeader(state.currentPhase, { topic: args.topic })}\n\nSpecification saved to: ${specRelPath}\n\nThe specification is now awaiting human approval.`,
+        { path: specRelPath }
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)

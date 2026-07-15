@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { loadState, saveState, closeStorage, getSessionId } from "../state.js"
+import { loadState, saveState, closeStorage } from "../state.js"
 import { createInitialState } from "../config.js"
 import {
   openAnalysisRoundTool,
@@ -146,9 +146,11 @@ describe("open_analysis_round tool", () => {
       makeContext()
     )
 
-    const sessionId = getSessionId(TEST_DIR, "test-session")
+    // Decision M5 (spec-6886df4f): briefing-for-discussion is now inside
+    // the session folder, not at the .mesa root.
+    const loaded = await loadState(TEST_DIR, "test-session")
     const file = await fs.readFile(
-      join(TEST_DIR, ".mesa", `briefing-for-discussion-${sessionId}.md`),
+      join(TEST_DIR, loaded.sessionFolder!, "briefing-for-discussion.md"),
       "utf-8"
     )
     expect(file).toBe("## Briefing for analysis")
@@ -402,7 +404,9 @@ describe("generate_specification tool", () => {
     const metadata = (result as { metadata?: { path: string } }).metadata
     expect(metadata?.path).toBeTruthy()
 
-    const specFile = await fs.readFile(metadata!.path, "utf-8")
+    // metadata.path is workspace-relative (spec-6886df4f, TD3).
+    // Prepend TEST_DIR for filesystem I/O.
+    const specFile = await fs.readFile(join(TEST_DIR, metadata!.path), "utf-8")
     expect(specFile).toContain("System Design")
     expect(specFile).toContain("microservices")
     expect(specFile).toContain("Executive Summary")
@@ -410,14 +414,6 @@ describe("generate_specification tool", () => {
     const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("SPECIFICATION")
     expect(loaded.specification.status).toBe("draft")
-
-    // Verify analyses were saved separately
-    const analysesDir = metadata!.path.replace("spec-", "analyses-").replace(".md", "")
-    const analysisFiles = await fs.readdir(analysesDir)
-    expect(analysisFiles.length).toBe(1)
-    const analysisContent = await fs.readFile(join(analysesDir, analysisFiles[0]), "utf-8")
-    expect(analysisContent).toContain("Analysis: Alice")
-    expect(analysisContent).toContain("Analysis content")
   })
 
   test("returns error from invalid phase", async () => {

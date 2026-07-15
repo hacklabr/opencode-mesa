@@ -37,7 +37,7 @@ export const PLUGIN_STATE_DIR = ".mesa"
 
 export const DEFAULT_MAX_TURNS = 2
 
-export const CURRENT_STATE_VERSION = 10
+export const CURRENT_STATE_VERSION = 11
 
 import type { DiscussionState } from "./types.js"
 
@@ -82,6 +82,7 @@ export function createInitialState(workspaceId: string): DiscussionState {
     specification: { path: null, overviewPath: null, status: "pending" },
     appendices: [],
     phases: ["PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION"],
+    sessionFolder: null,
     createdAt: now,
     updatedAt: now,
     stateVersion: CURRENT_STATE_VERSION,

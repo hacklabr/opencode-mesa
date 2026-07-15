@@ -2,7 +2,7 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { promises as fs } from "node:fs"
-import { loadState, saveState, getSessionId } from "../state.js"
+import { loadState, saveState, getSessionId, getDb } from "../state.js"
 import { clearAgentSessions } from "./peer-tools.js"
 import { SqliteStateRepository } from "../repositories/sqlite-state-repository.js"
 import { FsArtifactRepository } from "../repositories/fs-artifact-repository.js"
@@ -14,7 +14,12 @@ import {
   slugify,
   type ExecutionPhase,
 } from "../utils/phase-detection.js"
-import { getAppendixPath, getPhaseAnalysisDraftPath } from "../utils/paths.js"
+import {
+  getAppendixPath,
+  getPhaseAnalysisDraftPath,
+  ensureSessionInput,
+  resolveAbsolutePath,
+} from "../utils/paths.js"
 import { successResponse, errorResponse } from "../utils/responses.js"
 import { logAction } from "../audit.js"
 import { MesaError } from "../errors.js"
@@ -117,6 +122,8 @@ export const detectPhasesTool = tool({
       const specPath = args.spec_path
         ? join(context.directory, args.spec_path)
         : state.specification.path
+            ? resolveAbsolutePath(context.directory, state.specification.path)
+            : null
 
       if (!specPath) {
         return errorResponse(
@@ -202,8 +209,13 @@ export const openPhaseAnalysisRoundTool = tool({
         )
       }
 
+      // Resolve session folder input (spec-6886df4f, TD7).
+      const sessionInput = await ensureSessionInput(
+        context.directory, state, sessionId, getDb
+      )
+
       const phaseId = makePhaseId(args.phase_index, args.phase_name)
-      const draftDirRel = getPhaseAnalysisDraftPath(phaseId)
+      const draftDirRel = getPhaseAnalysisDraftPath(sessionInput, phaseId)
       const draftDirAbs = join(context.directory, draftDirRel)
 
       const artifacts: ArtifactRepository = new FsArtifactRepository()
@@ -444,9 +456,20 @@ export const generatePhaseAppendixTool = tool({
         return errorResponse("No approved master specification found.")
       }
 
+      // Decision 3.3 + M3 (spec-6886df4f): ELIMINATE masterSpecId extraction.
+      // The old regex `.replace(/^spec-/, "").replace(/\.md$/, "")` was
+      // non-deterministic AND broke once the spec filename became the fixed
+      // `specification.md` (it would yield "ification"). Appendices are now
+      // session-scoped, not spec-scoped — the SessionFolderInput is the scope.
+      const sessionInput = await ensureSessionInput(
+        context.directory, state, sessionId, getDb
+      )
+
+      // The master spec filename is still embedded in the appendix frontmatter
+      // for human traceability — derived from the stored path, not used for
+      // constructing the appendix filename.
       const masterSpecFileName =
-        state.specification.path.split("/").pop() ?? "unknown.md"
-      const masterSpecId = masterSpecFileName.replace(/^spec-/, "").replace(/\.md$/, "")
+        state.specification.path.split("/").pop() ?? "specification.md"
 
       const phaseSlug = slugify(args.phase_name)
       const phaseId = makePhaseId(args.phase_index, args.phase_name)
@@ -494,18 +517,20 @@ export const generatePhaseAppendixTool = tool({
         generatedAt: new Date().toISOString(),
       })
 
-      // Atomic write: temp file then rename
-      const canonicalRel = getAppendixPath(masterSpecId, phaseSlug, shortUuid)
+      // Atomic write: temp file then rename.
+      // Decision TD2 (spec-6886df4f): appendix path no longer takes
+      // masterSpecId — it's session-scoped via SessionFolderInput.
+      const canonicalRel = getAppendixPath(sessionInput, phaseSlug, shortUuid)
       const canonicalAbs = join(context.directory, canonicalRel)
       const tempPath = `${canonicalAbs}.tmp`
 
       await artifacts.writeFile(tempPath, appendixContent)
       await fs.rename(tempPath, canonicalAbs)
 
-      // Update state appendices
-      const appendixRef = `appendix-${masterSpecId}-${phaseSlug}-${shortUuid}.md`
-      if (!state.appendices.includes(appendixRef)) {
-        state.appendices.push(appendixRef)
+      // Update state appendices with the FULL relative path (decision M7,
+      // spec-6886df4f — more robust than basenames).
+      if (!state.appendices.includes(canonicalRel)) {
+        state.appendices.push(canonicalRel)
       }
       await saveState(context.directory, state, context.sessionID)
 

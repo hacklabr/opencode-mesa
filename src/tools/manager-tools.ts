@@ -11,7 +11,7 @@ import { build_mini_briefing_questions } from "../utils/mini-briefing.js"
 import { detect_execution_phases, parse_phase_selection, slugify } from "../utils/phase-detection.js"
 import { SqliteStateRepository } from "../repositories/sqlite-state-repository.js"
 import { join } from "node:path"
-import { PLUGIN_STATE_DIR } from "../config.js"
+import { resolveAbsolutePath } from "../utils/paths.js"
 
 export const analyzeBriefingTool = tool({
   description:
@@ -27,7 +27,9 @@ export const analyzeBriefingTool = tool({
         return errorResponse("No briefing found. A briefing must be created and delivered first.")
       }
 
-      const content = await fs.readFile(state.briefing.path, "utf-8")
+      // Paths stored in state are RELATIVE to the workspace (spec-6886df4f, TD3).
+      const absBriefingPath = resolveAbsolutePath(context.directory, state.briefing.path)
+      const content = await fs.readFile(absBriefingPath, "utf-8")
 
       return successResponse(
         "Briefing Analysis",
@@ -150,12 +152,18 @@ export const summonTeamTool = tool({
 
 /**
  * Looks for an approved appendix that matches the given phase name.
- * Checks state.appendices first, then scans the appendices directory.
+ * Checks state.appendices first, then scans the session-scoped appendices
+ * directory (spec-6886df4f, M3 — phase analysis is session-scoped).
+ *
+ * `sessionFolder` is the relative path to the session folder (e.g.
+ * `.mesa/sessions/202607131534_d19d_xxx`). When null, scanning is skipped
+ * (the session folder hasn't been resolved yet — best-effort).
  */
 async function findPhaseAppendix(
   directory: string,
   stateAppendices: string[],
-  phaseName: string
+  phaseName: string,
+  sessionFolder: string | null
 ): Promise<string | null> {
   const phaseSlug = phaseName
     .toLowerCase()
@@ -164,16 +172,23 @@ async function findPhaseAppendix(
 
   if (!phaseSlug) return null
 
-  // Check state appendices first
+  // Check state appendices first. Entries may be full relative paths or
+  // basenames (migration updates them to full paths — decision M7).
   for (const appendixPath of stateAppendices) {
     const basename = appendixPath.split("/").pop() || ""
     if (basename.toLowerCase().includes(phaseSlug)) {
-      return appendixPath
+      // Resolve to a usable path: if it's already a full relative path
+      // (contains "/"), return as-is; otherwise anchor under the session folder.
+      if (appendixPath.includes("/") || !sessionFolder) {
+        return appendixPath
+      }
+      return join(sessionFolder, "appendices", appendixPath)
     }
   }
 
-  // Fall back to scanning the appendices directory
-  const appendicesDir = join(directory, PLUGIN_STATE_DIR, "specifications", "appendices")
+  // Fall back to scanning the session-scoped appendices directory.
+  if (!sessionFolder) return null
+  const appendicesDir = join(directory, sessionFolder, "appendices")
   try {
     const entries = await fs.readdir(appendicesDir)
     for (const entry of entries) {
@@ -242,7 +257,8 @@ export const delegateTaskTool = tool({
         const appendixPath = await findPhaseAppendix(
           context.directory,
           state.appendices,
-          args.phase_name
+          args.phase_name,
+          state.sessionFolder
         )
         if (appendixPath) {
           const appendixNote = `**Phase Appendix (authoritative for "${args.phase_name}"):** ${appendixPath}`
@@ -344,7 +360,9 @@ export const checkExecutionPhasesTool = tool({
         )
       }
 
-      const content = await fs.readFile(state.specification.path, "utf-8")
+      // Paths stored in state are RELATIVE to the workspace (spec-6886df4f, TD3).
+      const absSpecPath = resolveAbsolutePath(context.directory, state.specification.path)
+      const content = await fs.readFile(absSpecPath, "utf-8")
       const phases = detect_execution_phases(content)
 
       if (!phases || phases.length === 0) {

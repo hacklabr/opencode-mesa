@@ -1,12 +1,16 @@
 import { tool } from "@opencode-ai/plugin/tool"
-import { loadState, saveState, getSessionId } from "../state.js"
+import { loadState, saveState, getSessionId, getDb } from "../state.js"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { PLUGIN_STATE_DIR } from "../config.js"
 import { requirePhase, formatPhaseHeader } from "../workflow/transitions.js"
 import { logAction } from "../audit.js"
 import { successResponse, errorResponse } from "../utils/responses.js"
 import { detectUserJourneys } from "../utils/journey-detection.js"
+import {
+  buildSessionFolderPath,
+  ensureSessionInput,
+  resolveAbsolutePath,
+} from "../utils/paths.js"
 import { PhaseError, MesaError } from "../errors.js"
 import type { JourneyWorkshop, JourneyWorkshopMode } from "../types.js"
 
@@ -88,7 +92,9 @@ export const detectUserJourneysTool = tool({
         return errorResponse("No briefing found. A briefing must be created and delivered first.")
       }
 
-      const content = await fs.readFile(state.briefing.path, "utf-8")
+      // Paths stored in state are RELATIVE to the workspace (spec-6886df4f, TD3).
+      const absBriefingPath = resolveAbsolutePath(context.directory, state.briefing.path)
+      const content = await fs.readFile(absBriefingPath, "utf-8")
       const detection = detectUserJourneys(content)
 
       const now = new Date().toISOString()
@@ -272,7 +278,14 @@ export const openJourneyWorkshopRoundTool = tool({
         throw new Error("No active session. Ensure loadState() was called.")
       }
 
-      const originalContent = await fs.readFile(state.briefing.path, "utf-8")
+      // Resolve session folder input for session-scoped paths (spec-6886df4f).
+      const sessionInput = await ensureSessionInput(
+        context.directory, state, sessionId, getDb
+      )
+
+      // Paths stored in state are RELATIVE to the workspace (spec-6886df4f, TD3).
+      const absBriefingPath = resolveAbsolutePath(context.directory, state.briefing.path)
+      const originalContent = await fs.readFile(absBriefingPath, "utf-8")
       const titleMatch = originalContent.match(/^#\s+(.+)$/m)
       const originalTitle = titleMatch?.[1] ?? state.briefing.slug ?? "Project"
 
@@ -283,27 +296,29 @@ export const openJourneyWorkshopRoundTool = tool({
         observations: state.journeyWorkshop.observations,
       })
 
-      const workshopBriefingPath = join(
-        context.directory,
-        PLUGIN_STATE_DIR,
-        "briefings",
-        `journey-workshop-${sessionId}.md`
+      // Decision (spec-6886df4f): workshop briefing lives inside the session
+      // folder alongside briefing.md. Replaces the legacy
+      // `briefings/journey-workshop-{sessionId}.md` path.
+      const workshopBriefingRel = join(
+        buildSessionFolderPath(sessionInput),
+        "journey-workshop.md"
       )
+      const workshopBriefingPath = join(context.directory, workshopBriefingRel)
       await fs.mkdir(join(workshopBriefingPath, ".."), { recursive: true })
       await fs.writeFile(workshopBriefingPath, workshopBriefing, "utf-8")
 
       state.journeyWorkshop.status = "in_progress"
-      state.journeyWorkshop.briefingPath = workshopBriefingPath
+      state.journeyWorkshop.briefingPath = workshopBriefingRel
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "journey_workshop_opened", state.currentPhase, {
-        briefingPath: workshopBriefingPath,
+        briefingPath: workshopBriefingRel,
       })
 
       const participantList = DESIGN_THINKING_PARTICIPANTS.map(
         (id, i) => `  ${i + 1}. **${id}** (subagent_type="mesa/${id}", task_id="mesa-${id}")`
       ).join("\n")
 
-      const relativePath = workshopBriefingPath.replace(context.directory + "/", "")
+      const relativePath = workshopBriefingRel
 
       return successResponse(
         "Journey Workshop Round Ready",
@@ -322,7 +337,7 @@ export const openJourneyWorkshopRoundTool = tool({
           "",
           "After the round reaches consensus, produce a journeys document and call `complete_journey_workshop` with its path.",
         ].join("\n"),
-        { workshopBriefingPath, recommendedParticipants: DESIGN_THINKING_PARTICIPANTS }
+        { workshopBriefingPath: relativePath, recommendedParticipants: DESIGN_THINKING_PARTICIPANTS }
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -374,8 +389,10 @@ export const completeJourneyWorkshopTool = tool({
         return errorResponse("Journeys file is empty.")
       }
 
-      // Append journeys to the original briefing
-      const originalContent = await fs.readFile(state.briefing.path, "utf-8")
+      // Append journeys to the original briefing.
+      // Paths stored in state are RELATIVE to the workspace (spec-6886df4f, TD3).
+      const absBriefingPath = resolveAbsolutePath(context.directory, state.briefing.path!)
+      const originalContent = await fs.readFile(absBriefingPath, "utf-8")
       const separator = [
         "",
         "---",
@@ -384,7 +401,7 @@ export const completeJourneyWorkshopTool = tool({
         "",
       ].join("\n")
       const updatedBriefing = originalContent + separator + journeysContent
-      await fs.writeFile(state.briefing.path, updatedBriefing, "utf-8")
+      await fs.writeFile(absBriefingPath, updatedBriefing, "utf-8")
 
       state.journeyWorkshop.status = "completed"
       state.journeyWorkshop.journeysFilePath = args.journeys_file_path
