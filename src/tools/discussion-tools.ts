@@ -183,7 +183,7 @@ export const openAnalysisRoundTool = tool({
       const taskInstructions = participantsWithNames
         .map(
           (p, i) =>
-            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", task_id="mesa-${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
+            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", task_id="mesa-${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. When you call register_analysis, pass session_id: '${context.sessionID}' so your analysis is stored in the Manager's session folder. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
         )
         .join("\n\n")
 
@@ -193,6 +193,15 @@ export const openAnalysisRoundTool = tool({
         `Use \`task_id="mesa-{personaId}"\` when invoking every specialist. This creates a named session that persists across turns.`,
         `When a specialist is invoked again in Turn 2+, the same task_id resumes their session — they recall their prior analysis automatically.`,
         `If the task tool returns a \`ses_...\` session ID instead of accepting the slug, save that ID and pass it as task_id in subsequent turns to preserve memory.`,
+      ].join("\n")
+
+      const sessionIdNote = [
+        ``,
+        `### IMPORTANT: Store analyses in the Manager's session folder`,
+        `The Manager's OpenCode session ID for this round is: **${context.sessionID}**.`,
+        ``,
+        `When a specialist calls \`register_analysis\`, they MUST pass \`session_id: "${context.sessionID}"\`.`,
+        `If they omit this parameter, their analysis will be written to their own subagent session folder instead of the shared session folder, breaking the layout.`,
       ].join("\n")
 
       return successResponse(
@@ -216,6 +225,7 @@ export const openAnalysisRoundTool = tool({
           ``,
           taskInstructions,
           memoryNote,
+          sessionIdNote,
         ].join("\n")
       )
     } catch (err) {
@@ -240,6 +250,13 @@ export const registerAnalysisTool = tool({
     position_in_turn: tool.schema.number().optional().describe("Speaking order, 1-based (only when turn_type='discussion')"),
     responds_to: tool.schema.string().optional().describe("Agent ID being addressed (discussion only)"),
     session_resumed: tool.schema.boolean().optional().describe("Whether the specialist session was resumed (memory-integrity flag)"),
+    session_id: tool.schema
+      .string()
+      .optional()
+      .describe(
+        "Manager session ID — REQUIRED when a specialist subagent calls this tool. " +
+        "Use the session_id provided by the Manager in the delegation prompt so the analysis is stored in the Manager's session folder, not the subagent's own session folder."
+      ),
     reason: tool.schema
       .string()
       .optional()
@@ -250,7 +267,13 @@ export const registerAnalysisTool = tool({
   },
   async execute(args, context) {
     try {
-      const state = await loadState(context.directory, context.sessionID)
+      // When a specialist subagent calls register_analysis, it must pass the
+      // Manager's session_id. Otherwise it would load/save state against the
+      // subagent's own session and create a separate session folder
+      // (spec-6886df4f regression). The subagent's real context.sessionID is
+      // still used for ask_peer session tracking below.
+      const managerSessionID = args.session_id ?? context.sessionID
+      const state = await loadState(context.directory, managerSessionID)
       const phaseError = requirePhase(state, "DISCUSSION", "EXECUTION")
       if (phaseError) throw new PhaseError(phaseError)
 
@@ -352,7 +375,7 @@ export const registerAnalysisTool = tool({
       } else {
         // Compute canonical session-scoped path so get_peer_analyses always
         // has a valid filePath (spec-6886df4f).
-        const mesaSessionId = getSessionId(context.directory, context.sessionID)
+        const mesaSessionId = getSessionId(context.directory, managerSessionID)
         if (mesaSessionId) {
           const sessionInput = await ensureSessionInput(
             context.directory, state, mesaSessionId, getDb
@@ -411,7 +434,7 @@ export const registerAnalysisTool = tool({
         }
       }
 
-      await saveState(context.directory, state, context.sessionID)
+      await saveState(context.directory, state, managerSessionID)
 
       // P1-4: Audit logging for register_analysis
       await logAction(context.directory, "analysis_registered", state.currentPhase, {

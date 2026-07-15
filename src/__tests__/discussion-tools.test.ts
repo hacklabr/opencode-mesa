@@ -266,6 +266,58 @@ describe("register_analysis tool", () => {
     expect(typeof result).toBe("string")
     expect(result).toContain("PLANNING")
   })
+
+  test("uses session_id parameter to store analysis in Manager's session folder", async () => {
+    // Setup a Manager session with a briefing and an open analysis round.
+    const managerSessionId = "manager-session"
+    const subagentSessionId = "subagent-session"
+
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "DISCUSSION"
+    state.briefing.status = "approved"
+    state.briefing.slug = "manager-project"
+    state.sessionFolder = ".mesa/sessions/202607151200_1234_manager-project"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.participants = ["eng-1"]
+    await saveState(TEST_DIR, state, managerSessionId)
+
+    // Register analysis as if called by a subagent (different context.sessionID)
+    // but with session_id pointing to the Manager's session.
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Analysis from subagent.",
+        turn: 1,
+        session_id: managerSessionId,
+      },
+      { ...makeContext(), sessionID: subagentSessionId }
+    )
+
+    expect(result).toHaveProperty("title", "Analysis Registered: Engineer")
+
+    // The analysis should be in the Manager's session folder, not the subagent's.
+    const loaded = await loadState(TEST_DIR, managerSessionId)
+    expect(loaded.discussion.analyses.length).toBe(1)
+    const filePath = loaded.discussion.analyses[0].filePath
+    expect(filePath).toMatch(
+      /\.mesa\/sessions\/[0-9]{12}_[0-9a-f]{4}_manager-project\/analyses\/turn1\/eng-1\.md$/
+    )
+
+    const fileExists = await fs
+      .access(join(TEST_DIR, filePath!))
+      .then(() => true)
+      .catch(() => false)
+    expect(fileExists).toBe(true)
+
+    // The subagent session should NOT have created its own analysis folder.
+    // There should be exactly one session folder (the Manager's).
+    const sessionsDir = join(TEST_DIR, ".mesa", "sessions")
+    const sessionFolders = await fs.readdir(sessionsDir)
+    expect(sessionFolders.length).toBe(1)
+  })
 })
 
 describe("request_consensus tool", () => {

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.1] - 2026-07-15
+
+### Fixed
+- **Subagent analyses stored in Manager's session folder** (spec-6886df4f): specialist subagents were creating separate `.mesa/sessions/` folders because `register_analysis` used the subagent's own `context.sessionID`.
+  - Added `session_id` parameter to `register_analysis`.
+  - Specialists must pass the Manager's `session_id` (shown in the `open_analysis_round` output) so analyses are written to the shared session folder.
+  - `register_analysis` now loads/saves state and computes artifact paths using the Manager's session when `session_id` is provided.
+  - The subagent's real `context.sessionID` is still recorded for `ask_peer` contamination.
+  - Added test verifying analysis lands in the Manager's session folder, not the subagent's.
+
 ## [3.4.0] - 2026-07-15
 
 ### Added
