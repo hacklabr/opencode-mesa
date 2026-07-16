@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.4] - 2026-07-16
+
+### Added
+- **Manager fallback for `register_analysis`** — when a specialist subagent returns analysis content but fails to call `register_analysis`, the Manager can now record it on their behalf with `registered_by_manager: true`.
+  - Preserves workflow progress instead of blocking on silent no-op task results.
+  - Fallback entries do not capture the Manager session for `ask_peer`, preventing peer consultation from routing to the wrong session.
+  - New column `registered_by_manager` on `mesa_analyses` / `mesa_session_analyses` flags fallback registrations.
+
+### Fixed
+- **`complete_journey_workshop` now auto-transitions to `PLANNING`** after the design-thinking round, removing the undocumented `pause_discussion → resume_discussion(PLANNING)` workaround.
+- **`journey-workshop.md` no longer truncates the original briefing** — the generated workshop file now references the full approved briefing by path, avoiding mid-word cuts.
+- **`open_journey_workshop_round` instructions now include `propose_team` + `summon_team`** before `open_analysis_round`, aligning the output with the actual required workflow.
+- **Idempotency bug in `migrate_v5_to_v6`** — the migration no longer recreates `mesa_analyses` / `mesa_session_analyses` on every `getDb()` call, which previously caused newly added columns (e.g., `registered_by_manager`) to be silently dropped and re-added with their default values.
+
 ## [3.4.3] - 2026-07-15
 
 ### Fixed

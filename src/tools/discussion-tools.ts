@@ -235,7 +235,9 @@ export const openAnalysisRoundTool = tool({
 
 export const registerAnalysisTool = tool({
   description:
-    "Registers an analysis from a specialist in the current round. Call after each specialist completes their analysis. Accepts optional filePath (canonical .md location), kind (full|delta), and turnType (analysis|discussion).",
+    "Registers an analysis from a specialist in the current round. Call after each specialist completes their analysis. " +
+    "Accepts optional filePath (canonical .md location), kind (full|delta), and turnType (analysis|discussion). " +
+    "Use registered_by_manager=true when the Manager must record the analysis because the specialist failed to self-register.",
   args: {
     agent_id: tool.schema.string().describe("Specialist persona ID"),
     agent_name: tool.schema.string().describe("Specialist display name"),
@@ -255,6 +257,10 @@ export const registerAnalysisTool = tool({
         "Optional Manager session ID override. Specialists can pass this to ensure the analysis is stored in the Manager's session folder. " +
         "If omitted, Mesa resolves the Manager session automatically from the subagent's parent session chain."
       ),
+    registered_by_manager: tool.schema.boolean().optional().describe(
+      "Set to true when the Manager registers the analysis because the specialist failed to call register_analysis. " +
+      "Disables ask_peer session capture for this entry and flags the entry as a fallback registration."
+    ),
     reason: tool.schema
       .string()
       .optional()
@@ -429,6 +435,7 @@ export const registerAnalysisTool = tool({
         positionInTurn: args.position_in_turn,
         respondsTo: args.responds_to,
         sessionResumed: args.session_resumed,
+        registeredByManager: args.registered_by_manager ?? false,
         timestamp: new Date().toISOString(),
       }
 
@@ -462,11 +469,14 @@ export const registerAnalysisTool = tool({
         filePath: validatedFilePath,
         reason: args.reason,
         deviationCount: state.discussion.deviations ?? 0,
+        registeredByManager: args.registered_by_manager ?? false,
       })
 
       // Track the specialist's OpenCode session ID for ask_peer contamination.
       // When another specialist calls ask_peer, the question goes to THIS session.
-      if (context.sessionID) {
+      // Skip when the Manager registered on behalf of the specialist — the
+      // Manager's session must not become the peer consultation target.
+      if (context.sessionID && !args.registered_by_manager) {
         recordAgentSession(effectiveId, context.sessionID)
       }
 

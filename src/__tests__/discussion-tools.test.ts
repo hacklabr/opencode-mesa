@@ -368,6 +368,33 @@ describe("register_analysis tool", () => {
     // Reset SDK client so other tests are not affected.
     setStateSdkClient(null)
   })
+
+  test("registered_by_manager flag records fallback registration without capturing session", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "DISCUSSION"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    state.discussion.participants = ["eng-1"]
+    await saveState(TEST_DIR, state, "test-session")
+
+    const result = await registerAnalysisTool.execute(
+      {
+        agent_id: "eng-1",
+        agent_name: "Engineer",
+        content: "Manager-registered fallback content.",
+        turn: 1,
+        registered_by_manager: true,
+      },
+      makeContext()
+    )
+
+    expect(result).toHaveProperty("title", "Analysis Registered: Engineer")
+
+    const loaded = await loadState(TEST_DIR, "test-session")
+    expect(loaded.discussion.analyses.length).toBe(1)
+    expect(loaded.discussion.analyses[0].registeredByManager).toBe(true)
+  })
 })
 
 describe("request_consensus tool", () => {

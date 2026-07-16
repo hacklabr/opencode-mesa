@@ -2,7 +2,7 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState, getSessionId, getDb } from "../state.js"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import { requirePhase, formatPhaseHeader } from "../workflow/transitions.js"
+import { requirePhase, canTransition, formatPhaseHeader } from "../workflow/transitions.js"
 import { logAction } from "../audit.js"
 import { successResponse, errorResponse } from "../utils/responses.js"
 import { detectUserJourneys } from "../utils/journey-detection.js"
@@ -25,10 +25,13 @@ const DESIGN_THINKING_PARTICIPANTS = [
  * Builds a design-thinking briefing focused on user journeys, derived from the
  * original approved briefing. The goal is to give specialists a clear scope for
  * defining/refactoring journeys without re-analyzing implementation details.
+ *
+ * The original briefing is referenced by path rather than inlined, avoiding
+ * truncation and keeping the workshop file focused on journey-specific guidance.
  */
 function buildJourneyWorkshopBriefing(
   originalTitle: string,
-  originalContent: string,
+  originalBriefingPath: string,
   detection: Pick<JourneyWorkshop, "signals" | "suggestedJourneys" | "confidence" | "observations" >
 ): string {
   const signalsList = detection.signals.map((s) => `- ${s}`).join("\n") || "- (none)"
@@ -42,11 +45,11 @@ function buildJourneyWorkshopBriefing(
     "Define or refactor the user journeys that are required before the implementation analysis begins. " +
       "This workshop produces concrete journey artifacts that will be appended to the original briefing.",
     "",
-    "## Original Briefing Context",
+    "## Original Briefing",
     "",
-    "```",
-    originalContent.slice(0, 4000),
-    "```",
+    `Read the full approved briefing at: **${originalBriefingPath}**`,
+    "",
+    "Do not rely on a truncated excerpt — the full context (scope, constraints, categories, tags, etc.) is in the file above.",
     "",
     "## Detection Signals",
     "",
@@ -289,7 +292,7 @@ export const openJourneyWorkshopRoundTool = tool({
       const titleMatch = originalContent.match(/^#\s+(.+)$/m)
       const originalTitle = titleMatch?.[1] ?? state.briefing.slug ?? "Project"
 
-      const workshopBriefing = buildJourneyWorkshopBriefing(originalTitle, originalContent, {
+      const workshopBriefing = buildJourneyWorkshopBriefing(originalTitle, state.briefing.path, {
         signals: state.journeyWorkshop.signals,
         suggestedJourneys: state.journeyWorkshop.suggestedJourneys,
         confidence: state.journeyWorkshop.confidence,
@@ -327,13 +330,22 @@ export const openJourneyWorkshopRoundTool = tool({
           "",
           `**Workshop briefing:** ${relativePath}`,
           "",
-          "The workshop briefing has been generated. Now open a standard analysis round with the following design-thinking specialists:",
+          "The workshop briefing has been generated. The following design-thinking specialists will run the round:",
           "",
           participantList,
           "",
-          "## Next step",
+          "## Required steps before opening the round",
           "",
-          `Call \`open_analysis_round\` with:\n- topic: "User Journey Design Thinking Workshop"\n- participants: ${JSON.stringify(DESIGN_THINKING_PARTICIPANTS)}\n- max_turns: 2\n- briefing_content: (read the full content of ${relativePath})`,
+          "1. **Propose the workshop team** with `propose_team`:",
+          `   \`\`\`json\n   ${JSON.stringify(DESIGN_THINKING_PARTICIPANTS.map((id) => ({ personaId: id, name: id, division: "design", justification: "Design-thinking workshop participant for user-journey definition" })), null, 2)}\n   \`\`\``,
+          "",
+          "2. **Wait for human approval**, then `summon_team`.",
+          "",
+          "3. **Open the analysis round** with `open_analysis_round`:",
+          `   - topic: "User Journey Design Thinking Workshop"`,
+          `   - participants: ${JSON.stringify(DESIGN_THINKING_PARTICIPANTS)}`,
+          `   - max_turns: 2`,
+          `   - briefing_content: read the full content of ${relativePath}`,
           "",
           "After the round reaches consensus, produce a journeys document and call `complete_journey_workshop` with its path.",
         ].join("\n"),
@@ -403,11 +415,19 @@ export const completeJourneyWorkshopTool = tool({
       const updatedBriefing = originalContent + separator + journeysContent
       await fs.writeFile(absBriefingPath, updatedBriefing, "utf-8")
 
+      // After the workshop, return to PLANNING so the Manager can propose a
+      // fresh implementation team without a manual pause/resume workaround.
+      const previousPhase = state.currentPhase
+      if (state.currentPhase === "DISCUSSION" && canTransition(state.currentPhase, "PLANNING")) {
+        state.currentPhase = "PLANNING"
+      }
+
       state.journeyWorkshop.status = "completed"
       state.journeyWorkshop.journeysFilePath = args.journeys_file_path
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "journey_workshop_completed", state.currentPhase, {
         journeysFilePath: args.journeys_file_path,
+        previousPhase,
       })
 
       return successResponse(
@@ -418,12 +438,15 @@ export const completeJourneyWorkshopTool = tool({
           `Journeys appended to the original briefing: ${state.briefing.path}`,
           "",
           "The design-thinking workshop is complete. The original briefing now includes the defined user journeys.",
+          previousPhase !== state.currentPhase
+            ? `\nPhase transitioned automatically: ${previousPhase} → ${state.currentPhase}.`
+            : "",
           "",
           "**Next steps:**",
-          "1. If you are in DISCUSSION phase after the workshop round, call `analyze_briefing` again to see the enriched briefing.",
-          "2. If you are already in PLANNING, proceed directly to `propose_team` for the implementation team.",
-          "3. If you approved the spec and are in EXECUTION but need a different implementation team, call `replan_implementation_team` first, then `propose_team`.",
-          "4. Continue the Mesa workflow normally (summon team, define phases, open analysis round for implementation).",
+          "1. Call `analyze_briefing` to see the enriched briefing (now includes user journeys).",
+          "2. Propose the implementation team with `propose_team`.",
+          "3. Summon the approved team with `summon_team`.",
+          "4. Continue the Mesa workflow normally (define phases, open analysis round for implementation).",
         ].join("\n"),
         { journeysFilePath: args.journeys_file_path, briefingPath: state.briefing.path }
       )

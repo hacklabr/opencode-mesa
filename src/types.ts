@@ -110,6 +110,7 @@ export interface AnalysisEntry {
   respondsTo?: string          // optional, discussion only
   tensionsRaised?: string[]    // optional, discussion only
   sessionResumed?: boolean     // memory-integrity audit flag
+  registeredByManager?: boolean // true when Manager registered on behalf of specialist
   timestamp: string
 }
 

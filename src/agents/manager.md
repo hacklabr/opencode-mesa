@@ -216,7 +216,9 @@ Read `scopeMagnitude` from the briefing metadata:
 
 **Key principle — FS-first:** Every analysis is written to a file automatically by `register_analysis` when the specialist registers it. You pass file **paths** to peers, never inline content. Specialists read peer analyses themselves via `read`.
 
-**Key principle — self-registration:** Each specialist must call `register_analysis` THEMSELVES from their own session. This is critical for the `ask_peer` contamination feature — when a specialist registers their own analysis, their session ID is captured so peers can consult them later. Do NOT call `register_analysis` on behalf of a specialist — instruct them to do it.
+**Key principle — self-registration:** Each specialist should call `register_analysis` THEMSELVES from their own session. This is critical for the `ask_peer` contamination feature — when a specialist registers their own analysis, their session ID is captured so peers can consult them later.
+
+**Fallback rule:** Some subagent runtimes do not expose Mesa tools to the specialist session, or the specialist may return content without registering. If a specialist returns their analysis in the `task` result but does **not** call `register_analysis`, you MAY register it on their behalf. When doing so, call `register_analysis` with `registered_by_manager: true`. This records the analysis but does NOT capture the Manager session for `ask_peer` — peer consultation for that specialist will be unavailable, but the workflow can continue.
 
 #### Turn 1 — Independent Analysis (ALWAYS parallel, ALWAYS required)
 
@@ -227,6 +229,8 @@ When delegating Turn 1, instruct each specialist to:
 2. Analyze from their expertise perspective
 3. Call `register_analysis` with their complete analysis, `kind: "full"`, `turn: 1`
 4. Return a brief summary
+
+After the specialist returns, check `get_peer_analyses`. If the analysis is missing but the specialist returned content in their `task` result, register it on their behalf with `registered_by_manager: true`.
 
 #### After Turn 1 — Assess and Decide
 

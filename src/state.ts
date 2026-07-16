@@ -128,6 +128,7 @@ const AnalysisEntrySchema = z.object({
   positionInTurn: z.number().optional(),
   respondsTo: z.string().optional(),
   tensionsRaised: z.array(z.string()).optional(),
+  registeredByManager: z.boolean().optional(),
   sessionResumed: z.boolean().optional(),
   timestamp: z.string(),
 })
@@ -275,6 +276,7 @@ CREATE TABLE IF NOT EXISTS mesa_analyses (
   responds_to TEXT,
   tensions_raised TEXT,
   session_resumed INTEGER,
+  registered_by_manager INTEGER DEFAULT 0,
   UNIQUE(workspace_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_analyses_turn ON mesa_analyses(workspace_id, turn);
@@ -370,6 +372,7 @@ CREATE TABLE IF NOT EXISTS mesa_session_analyses (
   responds_to TEXT,
   tensions_raised TEXT,
   session_resumed INTEGER,
+  registered_by_manager INTEGER DEFAULT 0,
   UNIQUE(workspace_id, session_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_session_analyses_turn ON mesa_session_analyses(workspace_id, session_id, turn);
@@ -795,9 +798,11 @@ function migrate_v5_to_v6(db: IDatabase): void {
   // SQLite cannot ALTER constraints — must use table recreation pattern.
   const tx = db.transaction(() => {
     for (const table of ["mesa_analyses", "mesa_session_analyses"]) {
-      // Check if the table exists and has the old constraint
+      // Check if the table exists and has the old constraint.
+      // Idempotency: if turn_type already exists, the migration already ran.
       const tableInfo = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
       if (tableInfo.length === 0) continue
+      if (tableInfo.some((col) => col.name === "turn_type")) continue
 
       const isScoped = table === "mesa_session_analyses"
       const cols = isScoped
@@ -1002,6 +1007,31 @@ function migrate_v10_to_v11(db: IDatabase): void {
     }
 
     db.run("UPDATE mesa_session_state SET state_version = 11 WHERE state_version = 10")
+  })
+  tx()
+}
+
+/**
+ * v11 → v12: adds registered_by_manager flag to mesa_analyses.
+ *
+ * When a specialist fails to self-register, the Manager may record the
+ * analysis on its behalf. This column flags those fallback entries so
+ * ask_peer does not route questions to the Manager session instead of the
+ * specialist session.
+ */
+function migrate_v11_to_v12(db: IDatabase): void {
+  const tx = db.transaction(() => {
+    for (const table of ["mesa_analyses", "mesa_session_analyses"]) {
+      try {
+        db.run(`ALTER TABLE ${table} ADD COLUMN registered_by_manager INTEGER DEFAULT 0`)
+      } catch (e: unknown) {
+        const err = e as Error
+        if (!err.message.includes("duplicate column name")) throw e
+      }
+    }
+
+    db.run("UPDATE mesa_state SET state_version = 12 WHERE state_version = 11")
+    db.run("UPDATE mesa_session_state SET state_version = 12 WHERE state_version = 11")
   })
   tx()
 }
@@ -1699,6 +1729,7 @@ export function getDb(directory: string): IDatabase {
   migrate_v8_to_v9(db)
   migrate_v9_to_v10(db)
   migrate_v10_to_v11(db)
+  migrate_v11_to_v12(db)
   // File relocation (spec-6886df4f, TD5) — runs after schema migrations
   // (so the session_folder column exists) but before migrateFromJson
   // (so JSON-imported rows also get their files relocated on next open).
@@ -1721,14 +1752,15 @@ function insertChildRows(db: IDatabase, wsId: string, state: DiscussionState): v
 
   for (const a of state.discussion.analyses) {
     db.run(
-      `INSERT INTO mesa_analyses (workspace_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO mesa_analyses (workspace_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [wsId, a.agentId, a.agentName, a.content, a.turn, a.timestamp,
        a.filePath ?? null, a.kind ?? "full", a.turnType ?? "analysis",
        a.round ?? null, a.positionInTurn ?? null,
        a.respondsTo ?? null,
        a.tensionsRaised ? JSON.stringify(a.tensionsRaised) : null,
-       a.sessionResumed ? 1 : 0]
+       a.sessionResumed ? 1 : 0,
+       a.registeredByManager ? 1 : 0]
     )
   }
 
@@ -1757,15 +1789,17 @@ function insertSessionChildRows(db: IDatabase, wsId: string, sessionId: string, 
   }
 
   for (const a of state.discussion.analyses) {
+    const sr = a.sessionResumed ? 1 : 0
     db.run(
-      `INSERT INTO mesa_session_analyses (workspace_id, session_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO mesa_session_analyses (workspace_id, session_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [wsId, sessionId, a.agentId, a.agentName, a.content, a.turn, a.timestamp,
        a.filePath ?? null, a.kind ?? "full", a.turnType ?? "analysis",
        a.round ?? null, a.positionInTurn ?? null,
        a.respondsTo ?? null,
        a.tensionsRaised ? JSON.stringify(a.tensionsRaised) : null,
-       a.sessionResumed ? 1 : 0]
+       sr,
+       a.registeredByManager ? 1 : 0]
     )
   }
 
@@ -1796,7 +1830,7 @@ function loadSessionState(db: IDatabase, wsId: string, sessionId: string): Discu
     .all(wsId, sessionId) as Array<{ persona_id: string; name: string; division: string; status: string }>
 
   const analyses = db
-    .query("SELECT agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ? ORDER BY turn")
+    .query("SELECT agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ? ORDER BY turn")
     .all(wsId, sessionId) as Array<Record<string, unknown>>
 
   const votes = db
@@ -1831,6 +1865,7 @@ function mapAnalysisRow(a: AnalysisRow): AnalysisEntry {
     respondsTo: (a.responds_to as string | undefined) ?? undefined,
     tensionsRaised,
     sessionResumed: a.session_resumed != null ? !!a.session_resumed : undefined,
+    registeredByManager: a.registered_by_manager != null ? !!a.registered_by_manager : undefined,
     timestamp: a.timestamp as string,
   }
 }
