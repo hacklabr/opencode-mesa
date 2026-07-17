@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-07-17
+
+### Added
+- **Project memory Markdown sync** — project-scope memories are now mirrored as Git-trackable Markdown files in `.mesa/memories/`, enabling team knowledge sharing via version control.
+  - SQLite remains the primary source of truth; Markdown files are commitable replicas.
+  - New module `src/tools/memory-sync.ts` with bidirectional sync, deterministic YAML frontmatter, atomic writes, and reconciliation via last-write-wins by `updated_at`.
+  - Migration `v12→v13`: adds `synced_at` column and `idx_memory_project_dedup` index.
+  - `memory_store`: project dedup now ignores `source_agent`; write-through to Markdown; resurrects forgotten memories on re-store.
+  - `memory_recall`: reconciles filesystem ↔ DB at start (handles git-pull imports).
+  - `memory_forget`: moves file to `.mesa/memories/deleted/` with `status: deleted` tombstone.
+  - `getDb()`: reconcile-before-sweep ordering; purge stale deleted files after 7-day window.
+  - Backfill: existing project memories are exported to Markdown on first `loadState`.
+  - Global and session-scoped memories are never mirrored to Markdown.
+  - 12 new integration tests + extended unit tests with filesystem assertions.
+
 ## [3.4.4] - 2026-07-16
 
 ### Added
