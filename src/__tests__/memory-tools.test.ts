@@ -2,6 +2,8 @@ import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { tool } from "@opencode-ai/plugin/tool"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
+import { createHash } from "node:crypto"
+import { existsSync } from "node:fs"
 import { loadState, closeStorage } from "../state.js"
 import { openDatabase } from "../db/driver.js"
 import {
@@ -10,6 +12,10 @@ import {
   memoryForgetTool,
 } from "../tools/memory-tools.js"
 import type { ToolResult } from "@opencode-ai/plugin/tool"
+
+function computeHash(content: string): string {
+  return createHash("sha256").update(content.trim().toLowerCase()).digest("hex")
+}
 
 // The plugin's tool.schema is backed by Zod v4, while this project depends on Zod v3.
 // Use tool.schema.object(...) so the test schema is compatible with the tool's own
@@ -99,6 +105,13 @@ describe("memory_store tool", () => {
     expect(metadata.id).toBeGreaterThan(0)
     expect(metadata.category).toBe("convention")
     expect(metadata.scope).toBe("project")
+
+    const mdPath = join(TEST_DIR, ".mesa", "memories", `convention--${computeHash("This project uses bun runtime with ESM — never use require() for importing modules in this codebase")}.md`)
+    const fileContent = await fs.readFile(mdPath, "utf-8")
+    expect(fileContent).toContain('category: "convention"')
+    expect(fileContent).toContain('scope: "project"')
+    expect(fileContent).toContain('status: "active"')
+    expect(fileContent).toContain("bun runtime with ESM")
   })
 
   test("stores with all fields specified and persists correctly in DB", async () => {
@@ -124,6 +137,10 @@ describe("memory_store tool", () => {
     expect(row!.access_count).toBe(0)
     expect(row!.relevance_score).toBe(1.0)
     expect(row!.expires_at).toBeNull()
+
+    const globalHash = computeHash(content)
+    const globalMdPath = join(TEST_DIR, ".mesa", "memories", `architecture--${globalHash}.md`)
+    expect(existsSync(globalMdPath)).toBe(false)
   })
 
   test("defaults scope to project when not specified", async () => {
@@ -417,6 +434,10 @@ describe("memory_forget tool", () => {
 
     expect(queryMemoryById(id)!.status).toBe("active")
 
+    const hash = computeHash("Memory to be forgotten in the soft delete test for the memory forget tool")
+    const activeMdPath = join(TEST_DIR, ".mesa", "memories", `observation--${hash}.md`)
+    expect(existsSync(activeMdPath)).toBe(true)
+
     const result = await memoryForgetTool.execute({ id }, makeContext())
 
     expect(result).toHaveProperty("title", "Memory Deleted")
@@ -425,6 +446,12 @@ describe("memory_forget tool", () => {
     expect(getMeta<{ id: number }>(result).id).toBe(id)
 
     expect(queryMemoryById(id)!.status).toBe("deleted")
+
+    expect(existsSync(activeMdPath)).toBe(false)
+    const deletedMdPath = join(TEST_DIR, ".mesa", "memories", "deleted", `observation--${hash}.md`)
+    expect(existsSync(deletedMdPath)).toBe(true)
+    const deletedContent = await fs.readFile(deletedMdPath, "utf-8")
+    expect(deletedContent).toContain('status: "deleted"')
   })
 
   test("returns error for non-existent ID", async () => {

@@ -6,6 +6,7 @@ import { z, ZodError } from "zod"
 import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, DiscussionMode } from "./types.js"
 import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config.js"
 import { buildSessionFolderPath } from "./utils/paths.js"
+import { reconcileMemories, purgeStaleMemoryFiles } from "./tools/memory-sync.js"
 
 // SDK client for parent session lookup (set from index.ts)
 type SessionGetter = (sessionId: string) => Promise<{ parentID?: string } | null>
@@ -1037,6 +1038,24 @@ function migrate_v11_to_v12(db: IDatabase): void {
 }
 
 /**
+ * v12 → v13: Memory replica sync (project-scope Markdown files).
+ *
+ * Adds `synced_at` TEXT column to `mesa_memory` for observability of the
+ * bidirectional reconciliation between SQLite and `.mesa/memories/` Markdown
+ * files. Creates a covering index for the new project-scope dedup query that
+ * ignores `source_agent`.
+ */
+function migrate_v12_to_v13(db: IDatabase): void {
+  try {
+    db.run("ALTER TABLE mesa_memory ADD COLUMN synced_at TEXT")
+  } catch (e: unknown) {
+    const err = e as Error
+    if (!err.message.includes("duplicate column name")) throw e
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memory_project_dedup ON mesa_memory(workspace_id, scope, category, content_hash)")
+}
+
+/**
  * v10 → v11 file relocation (spec-6886df4f, TD5).
  *
  * Moves session artifacts from the legacy scattered layout into the
@@ -1730,13 +1749,16 @@ export function getDb(directory: string): IDatabase {
   migrate_v9_to_v10(db)
   migrate_v10_to_v11(db)
   migrate_v11_to_v12(db)
+  migrate_v12_to_v13(db)
   // File relocation (spec-6886df4f, TD5) — runs after schema migrations
   // (so the session_folder column exists) but before migrateFromJson
   // (so JSON-imported rows also get their files relocated on next open).
   migrateFiles_v10_to_v11(directory, db)
   migrateFromJson(directory, db)
 
+  reconcileMemories(directory, db)
   maintenanceSweep(db)
+  purgeStaleMemoryFiles(directory, db)
 
   return db
 }

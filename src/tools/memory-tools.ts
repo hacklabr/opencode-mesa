@@ -5,7 +5,13 @@ import { createHash } from "node:crypto"
 import { successResponse, errorResponse } from "../utils/responses.js"
 import { PLUGIN_STATE_DIR } from "../config.js"
 import { logAction } from "../audit.js"
-import type { MemoryCategory, MemoryScope } from "../types.js"
+import type { MemoryCategory, MemoryScope, MemoryEntry } from "../types.js"
+import {
+  writeMemoryFile,
+  markMemoryDeleted,
+  reactivateMemoryFile,
+  reconcileMemories,
+} from "./memory-sync.js"
 
 const MEMORY_TTL_DAYS = 90
 const MAX_CONTENT_LENGTH = 500
@@ -63,23 +69,73 @@ export const memoryStoreTool = tool({
         const contentHash = computeContentHash(args.content)
         const now = new Date().toISOString()
 
-        // Source agent: use session ID as proxy when agent identity is unavailable
         const sourceAgent = context.sessionID ?? "unknown"
         const sourceSession = context.sessionID ?? null
 
-        // Dedup check
-        const existing = db
-          .query(
-            "SELECT id FROM mesa_memory WHERE workspace_id = ? AND scope = ? AND category = ? AND source_agent = ? AND content_hash = ? AND status = 'active'"
-          )
-          .get(workspaceId, scope, args.category, sourceAgent, contentHash) as { id: number } | null
+        if (scope === "project") {
+          const existing = db
+            .query(
+              "SELECT id, status FROM mesa_memory " +
+              "WHERE workspace_id = ? AND scope = 'project' AND category = ? AND content_hash = ? " +
+              "ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, updated_at DESC"
+            )
+            .get(workspaceId, args.category, contentHash) as { id: number; status: string } | null
 
-        if (existing) {
-          return successResponse(
-            "Memory Exists (Idempotent)",
-            `An identical memory entry already exists (id=${existing.id}). No duplicate created.`,
-            { id: existing.id, deduplicated: true }
-          )
+          if (existing && existing.status === "active") {
+            return successResponse(
+              "Memory Exists (Idempotent)",
+              `An identical memory entry already exists (id=${existing.id}). No duplicate created.`,
+              { id: existing.id, deduplicated: true }
+            )
+          }
+
+          if (existing && existing.status === "deleted") {
+            db.run(
+              "UPDATE mesa_memory SET status = 'active', updated_at = ? WHERE id = ?",
+              [now, existing.id]
+            )
+
+            const row = db
+              .query<MemoryEntry>("SELECT * FROM mesa_memory WHERE id = ?")
+              .get(existing.id)
+            if (row) {
+              try {
+                reactivateMemoryFile(context.directory, row)
+              } catch (e) {
+                await logAction(context.directory, "memory_sync_failed", "MEMORY", {
+                  error: e instanceof Error ? e.message : String(e),
+                  id: existing.id,
+                })
+              }
+            }
+
+            await logAction(context.directory, "memory_stored", "MEMORY", {
+              id: existing.id,
+              category: args.category,
+              scope,
+              resurrected: true,
+            })
+
+            return successResponse(
+              "Memory Reactivated",
+              `Reactivated previously deleted memory entry (id=${existing.id}).`,
+              { id: existing.id, category: args.category, scope, resurrected: true }
+            )
+          }
+        } else {
+          const existing = db
+            .query(
+              "SELECT id FROM mesa_memory WHERE workspace_id = ? AND scope = ? AND category = ? AND source_agent = ? AND content_hash = ? AND status = 'active'"
+            )
+            .get(workspaceId, scope, args.category, sourceAgent, contentHash) as { id: number } | null
+
+          if (existing) {
+            return successResponse(
+              "Memory Exists (Idempotent)",
+              `An identical memory entry already exists (id=${existing.id}). No duplicate created.`,
+              { id: existing.id, deduplicated: true }
+            )
+          }
         }
 
         const expiresAt = computeExpiresAt(scope)
@@ -106,6 +162,22 @@ export const memoryStoreTool = tool({
           scope,
           contentLength: args.content.length,
         })
+
+        if (scope === "project") {
+          const row = db
+            .query<MemoryEntry>("SELECT * FROM mesa_memory WHERE id = ?")
+            .get(memoryId)
+          if (row) {
+            try {
+              writeMemoryFile(context.directory, row)
+            } catch (e) {
+              await logAction(context.directory, "memory_sync_failed", "MEMORY", {
+                error: e instanceof Error ? e.message : String(e),
+                id: memoryId,
+              })
+            }
+          }
+        }
 
         const preview = args.content.length > 80
           ? args.content.slice(0, 80) + "..."
@@ -151,6 +223,8 @@ export const memoryRecallTool = tool({
     try {
       const db = openMemoryDb(context.directory)
       try {
+        reconcileMemories(context.directory, db)
+
         const workspaceId = context.directory
         const limit = Math.min(args.limit ?? 10, 20)
         const now = new Date().toISOString()
@@ -251,6 +325,20 @@ export const memoryForgetTool = tool({
         await logAction(context.directory, "memory_forgotten", "MEMORY", {
           id: args.id,
         })
+
+        const row = db
+          .query<MemoryEntry>("SELECT * FROM mesa_memory WHERE id = ?")
+          .get(args.id)
+        if (row && row.scope === "project") {
+          try {
+            markMemoryDeleted(context.directory, row)
+          } catch (e) {
+            await logAction(context.directory, "memory_sync_failed", "MEMORY", {
+              error: e instanceof Error ? e.message : String(e),
+              id: args.id,
+            })
+          }
+        }
 
         return successResponse(
           "Memory Deleted",
