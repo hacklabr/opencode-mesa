@@ -62,6 +62,22 @@ Just plain content here.`
     expect(persona.name).toBe("no-frontmatter")
     expect(persona.systemPrompt).toContain("Just plain content")
   })
+
+  test("appends global instructions when provided", () => {
+    const raw = `---
+name: Test Agent
+description: A test agent
+---
+
+# Test
+
+Body content.`
+
+    const persona = parsePersonaFile(raw, "test-agent.md", "test", "embedded", "Global rule.")
+    expect(persona.systemPrompt).toContain("Body content.")
+    expect(persona.systemPrompt).toContain("Global rule.")
+    expect(persona.systemPrompt).toContain("---")
+  })
 })
 
 describe("catalog loader", () => {
@@ -95,5 +111,15 @@ describe("catalog loader", () => {
     const { personas } = await loadCatalogFromDirectory(CATALOG_DIR)
     const devs = personas.filter((p) => p.division === "software-development")
     expect(devs.length).toBeGreaterThan(5)
+  })
+
+  test("loaded personas include global execution guidelines", async () => {
+    const { personas } = await loadCatalogFromDirectory(CATALOG_DIR)
+    expect(personas.length).toBeGreaterThan(0)
+    for (const p of personas) {
+      expect(p.systemPrompt).toContain("Global Execution Guidelines")
+      expect(p.systemPrompt).toContain("Default to Parallel Execution")
+      expect(p.systemPrompt).toContain("Avoid Editing Collisions")
+    }
   })
 })

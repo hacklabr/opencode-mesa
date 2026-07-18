@@ -1,8 +1,28 @@
 import { promises as fs } from "node:fs"
-import { join, basename } from "node:path"
+import { join, basename, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { Persona, CatalogSummary } from "./types.js"
 
 export type { Persona, CatalogSummary }
+
+const GLOBAL_INSTRUCTIONS_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "agents",
+  "specialist-global-instructions.md"
+)
+
+let cachedGlobalInstructions: string | null = null
+
+async function loadGlobalInstructions(): Promise<string> {
+  if (cachedGlobalInstructions !== null) return cachedGlobalInstructions
+  try {
+    cachedGlobalInstructions = await fs.readFile(GLOBAL_INSTRUCTIONS_PATH, "utf-8")
+  } catch {
+    cachedGlobalInstructions = ""
+  }
+  return cachedGlobalInstructions
+}
 
 function parseFrontmatter(raw: string): { data: Record<string, unknown>; body: string } {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
@@ -40,9 +60,14 @@ export function parsePersonaFile(
   raw: string,
   filename: string,
   division: string,
-  source: "embedded" | "custom" = "embedded"
+  source: "embedded" | "custom" = "embedded",
+  globalInstructions = ""
 ): Persona {
   const { data, body } = parseFrontmatter(raw)
+
+  const systemPrompt = globalInstructions
+    ? `${body.trim()}\n\n---\n\n${globalInstructions.trim()}`
+    : body
 
   return {
     id: filenameToId(filename),
@@ -54,7 +79,7 @@ export function parsePersonaFile(
     color: String(data.color ?? ""),
     vibe: String(data.vibe ?? ""),
     tools: Array.isArray(data.tools) ? (data.tools as string[]) : [],
-    systemPrompt: body,
+    systemPrompt,
   }
 }
 
@@ -63,6 +88,7 @@ export async function loadCatalogFromDirectory(
 ): Promise<{ personas: Persona[]; summary: CatalogSummary }> {
   const personas: Persona[] = []
   const divisions: string[] = []
+  const globalInstructions = await loadGlobalInstructions()
 
   const entries = await fs.readdir(catalogRoot, { withFileTypes: true })
   for (const entry of entries) {
@@ -77,7 +103,7 @@ export async function loadCatalogFromDirectory(
       const filePath = join(divisionDir, mdFile)
       try {
         const raw = await fs.readFile(filePath, "utf-8")
-        const persona = parsePersonaFile(raw, mdFile, entry.name, "embedded")
+        const persona = parsePersonaFile(raw, mdFile, entry.name, "embedded", globalInstructions)
         personas.push(persona)
       } catch {
         // skip unreadable files

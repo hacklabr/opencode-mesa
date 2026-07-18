@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..")
 const MERGED_CATALOG = join(ROOT, "dist", "catalog", "agency-agents")
-const CATALOG_DIR = MERGED_CATALOG
 const DEFAULT_outputDir = join(ROOT, ".opencode", "agents")
 const PRIMARY_outputDir = join(ROOT, "src", "agents")
+const DEFAULT_GLOBAL_INSTRUCTIONS_FILE = join(PRIMARY_outputDir, "specialist-global-instructions.md")
+
 const outputDir = process.argv[2] || DEFAULT_outputDir
+const CATALOG_DIR = process.argv[3] || MERGED_CATALOG
+const GLOBAL_INSTRUCTIONS_FILE = process.argv[4] || DEFAULT_GLOBAL_INSTRUCTIONS_FILE
 
 function parseFrontmatter(raw) {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
@@ -57,6 +60,14 @@ async function loadCatalogPersonas() {
   return personas
 }
 
+async function loadGlobalInstructions() {
+  try {
+    return await readFile(GLOBAL_INSTRUCTIONS_FILE, "utf-8")
+  } catch {
+    return ""
+  }
+}
+
 async function writePrimaryAgents() {
   const agents = [
     {
@@ -97,7 +108,7 @@ async function writePrimaryAgents() {
   return generated
 }
 
-async function writeSubagents(personas) {
+async function writeSubagents(personas, globalInstructions) {
   const subagentsDir = join(outputDir, "mesa")
   await rm(subagentsDir, { recursive: true, force: true })
   await mkdir(subagentsDir, { recursive: true })
@@ -124,8 +135,12 @@ async function writeSubagents(personas) {
       "",
     ].join("\n")
 
-    const body =
+    let body =
       persona.systemPrompt || `You are ${persona.name}. ${persona.description}`
+
+    if (globalInstructions) {
+      body = `${body.trim()}\n\n---\n\n${globalInstructions.trim()}`
+    }
 
     const content = frontmatter + body + "\n"
     const outPath = join(subagentsDir, `${persona.id}.md`)
@@ -142,7 +157,8 @@ async function main() {
   console.log(`Primary agents: ${primaries.join(", ")}`)
 
   const personas = await loadCatalogPersonas()
-  const subagents = await writeSubagents(personas)
+  const globalInstructions = await loadGlobalInstructions()
+  const subagents = await writeSubagents(personas, globalInstructions)
   console.log(`Subagents generated: ${subagents.length} in mesa/ (hidden, mode: subagent)`)
 
   console.log(`\nOutput: ${outputDir}`)

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-07-18
+
+### Added
+- **Global parallel execution guidelines** — all specialists and the Manager now receive instructions to plan and execute work in parallel whenever possible.
+  - New file `src/agents/specialist-global-instructions.md` with rules for splitting work by boundary, avoiding editing collisions, delegating independent `task` calls, and integrating parallel outputs.
+  - `src/agents/manager.md` updated with a parallel execution heuristic, a dedicated "Parallel Execution Planning" subsection in Phase 7, and a new few-shot example.
+  - `src/catalog/loader.ts` injects the global instructions into every persona's `systemPrompt` loaded from the catalog.
+  - `src/setup/generate-agents.js` appends the same instructions to every generated subagent in `.opencode/agents/mesa/`.
+  - `package.json` build script copies `specialist-global-instructions.md` to `dist/agents/` so the runtime loader finds it after build.
+  - New and updated tests verify the injection in `parsePersonaFile`, `loadCatalogFromDirectory`, and the `generate-agents.js` script.
+
 ## [3.5.0] - 2026-07-17
 
 ### Added

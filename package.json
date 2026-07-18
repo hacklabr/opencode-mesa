@@ -1,6 +1,6 @@
 {
   "name": "opencode-mesa",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "description": "OpenCode plugin for structured discussion tables with specialized AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "tsc && rm -rf dist/catalog/agency-agents && mkdir -p dist/catalog/agency-agents && cp -r src/catalog/agency-agents/. dist/catalog/agency-agents/ || true",
+    "build": "tsc && rm -rf dist/catalog/agency-agents && mkdir -p dist/catalog/agency-agents dist/agents && cp -r src/catalog/agency-agents/. dist/catalog/agency-agents/ && cp src/agents/specialist-global-instructions.md dist/agents/specialist-global-instructions.md || true",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
