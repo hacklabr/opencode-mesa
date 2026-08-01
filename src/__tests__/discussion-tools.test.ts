@@ -13,6 +13,13 @@ import {
   resumeDiscussionTool,
   cancelDiscussionTool,
 } from "../tools/discussion-tools.js"
+import {
+  askPeerTool,
+  recordAgentSession,
+  getAgentSession,
+  clearAgentSessions,
+  setSdkClient,
+} from "../tools/peer-tools.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "discussion-tools")
 
@@ -35,6 +42,8 @@ describe("open_analysis_round tool", () => {
   })
 
   afterEach(async () => {
+    setSdkClient(null)
+    clearAgentSessions()
     closeStorage(TEST_DIR)
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
@@ -195,6 +204,56 @@ describe("open_analysis_round tool", () => {
 
     const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.discussion.participants).toEqual(["eng-1", "design-1"])
+  })
+
+  test("preserves agent session mappings across rounds — ask_peer still routes after a second round (D10.1)", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.currentPhase = "PLANNING"
+    state.team = [
+      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
+    ]
+    await saveState(TEST_DIR, state, "test-session")
+
+    // Specialist self-registered from their own session during round 1.
+    recordAgentSession("eng-1", "ses_eng-1")
+
+    await openAnalysisRoundTool.execute(
+      { topic: "Round 1", participants: ["eng-1"] },
+      makeContext()
+    )
+
+    // Return to PLANNING so the legacy phase guard allows a second round.
+    const afterR1 = await loadState(TEST_DIR, "test-session")
+    afterR1.currentPhase = "PLANNING"
+    await saveState(TEST_DIR, afterR1, "test-session")
+
+    await openAnalysisRoundTool.execute(
+      { topic: "Round 2", participants: ["eng-1"], force: true },
+      makeContext()
+    )
+
+    // The session mapping must survive the second round open.
+    expect(getAgentSession("eng-1")).toBe("ses_eng-1")
+
+    // And a consultation after the second round must route to that session.
+    let promptedSessionId: string | null = null
+    setSdkClient({
+      session: {
+        status: async () => ({ data: { "ses_eng-1": { type: "idle" } } }),
+        prompt: async (opts: { path: { id: string } }) => {
+          promptedSessionId = opts.path.id
+          return { data: { parts: [{ type: "text", text: "peer answer" }] } }
+        },
+      },
+    })
+
+    const result = await askPeerTool.execute(
+      { peer_id: "eng-1", question: "still there?" },
+      makeContext()
+    )
+
+    expect(promptedSessionId).toBe("ses_eng-1")
+    expect((result as { output: string }).output).toContain("peer answer")
   })
 })
 

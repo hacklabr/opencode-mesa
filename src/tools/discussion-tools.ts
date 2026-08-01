@@ -16,7 +16,7 @@ import {
   resolveAbsolutePath,
   validateWorkspacePath,
 } from "../utils/paths.js"
-import { recordAgentSession, clearAgentSessions } from "./peer-tools.js"
+import { recordAgentSession, resetPeerConsultations } from "./peer-tools.js"
 import { PhaseError, MesaError } from "../errors.js"
 
 const MAX_TOTAL_CHARS = 400000
@@ -158,8 +158,11 @@ export const openAnalysisRoundTool = tool({
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "analysis_round_opened", state.currentPhase, { topic: args.topic })
 
-      // Clear stale agent session mappings from any previous round
-      clearAgentSessions()
+      // New round = fresh per-turn consultation budget (D6), but agent session
+      // mappings MUST survive: ask_peer routing depends on them across rounds
+      // (spec D10.1). Session cleanup happens only via clearAgentSessions()
+      // at process/test teardown — there is no per-session-end plugin hook.
+      resetPeerConsultations()
 
       const participantsWithNames = args.participants.map((id) => {
         const name = state.team.find((t) => t.personaId === id)?.name ?? id
