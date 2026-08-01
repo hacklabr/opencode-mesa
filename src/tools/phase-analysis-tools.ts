@@ -282,7 +282,7 @@ export const openPhaseAnalysisRoundTool = tool({
         lines.push("Use `task_id=\"mesa-{personaId}\"` when invoking each specialist to resume their named session.")
         lines.push("If the task tool returns a `ses_...` ID, save it and reuse it in subsequent turns.")
         for (const s of args.specialists) {
-          lines.push(`  ${s}: task(subagent_type="mesa/${s}", task_id="mesa-${s}", prompt="...", description="...")`)
+          lines.push(`  ${s}: task(subagent_type="mesa/specialist", task_id="mesa-${s}", prompt="...", description="...")`)
         }
       }
       lines.push("", "Next: Register analyses, then request_phase_consensus.")

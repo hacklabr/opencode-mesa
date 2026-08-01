@@ -42,23 +42,13 @@ import { checkForUpdate } from "./updater/checker.js"
 import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools.js"
 import { askPeerTool, setSdkClient } from "./tools/peer-tools.js"
 import { memoryStoreTool, memoryRecallTool, memoryForgetTool } from "./tools/memory-tools.js"
-import { loadState, getSessionId, getDb } from "./state.js"
 import { openDatabase } from "./db/driver.js"
 import { PLUGIN_STATE_DIR } from "./config.js"
 import { setStateSdkClient } from "./state.js"
-import { logAction } from "./audit.js"
-import { buildAskPeerPath, ensureSessionInput } from "./utils/paths.js"
-import { promises as fs } from "node:fs"
+import { buildSpecialistPrompt, type TaskToolArgs } from "./workflow/specialist-injection.js"
 import { join } from "node:path"
-import { randomUUID } from "node:crypto"
-
-// P1-T7: Capture SDK client for session.status() checks (will be used by permission.ask hook in Phase 2)
-let opencodeClient: unknown = null
-
-const activeTaskCalls = new Map<string, Set<string>>()
 
 export const mesa: Plugin = async (input) => {
-  opencodeClient = input.client
   setSdkClient(input.client)
   setStateSdkClient(input.client)
 
@@ -110,125 +100,19 @@ export const mesa: Plugin = async (input) => {
       memory_forget: memoryForgetTool,
     },
 
-    "permission.ask": async (permissionInput, output) => {
-      if (permissionInput.type !== "task") return
-
-      const pattern = Array.isArray(permissionInput.pattern)
-        ? permissionInput.pattern[0]
-        : permissionInput.pattern
-
-      if (!pattern || !pattern.startsWith("mesa/")) return
-
-      try {
-        const directory = (permissionInput.metadata?.directory as string) || input.directory
-        const state = await loadState(directory, permissionInput.sessionID)
-
-        // Gate 1: Only during DISCUSSION phase (spec-4dcc492f, Decision 3)
-        if (state.currentPhase !== "DISCUSSION") {
-          output.status = "deny"
-          return
-        }
-
-        // Gate 2: Only during debate/discussion mode (sequential turns)
-        if (state.discussion.mode !== "debate") {
-          output.status = "deny"
-          return
-        }
-
-        // Gate 3: Recursion prevention via local Map (no server call)
-        const calleePersonaId = pattern.replace(/^mesa\//, "")
-        const callerSessionId = permissionInput.sessionID
-        const isAlreadyCallee = Array.from(activeTaskCalls.values()).some(
-          (set) => set.has(calleePersonaId)
-        )
-        if (isAlreadyCallee) {
-          output.status = "deny"
-          return
-        }
-
-        output.status = "allow"
-
-        // Track the active call for recursion prevention
-        const callerCallees = activeTaskCalls.get(callerSessionId) ?? new Set<string>()
-        callerCallees.add(calleePersonaId)
-        activeTaskCalls.set(callerSessionId, callerCallees)
-      } catch {
-        output.status = "deny"
-      }
-    },
-
-    "tool.execute.after": async (toolInput, toolOutput) => {
+    "tool.execute.before": async (toolInput, output) => {
       if (toolInput.tool !== "task") return
 
-      const args = toolInput.args as Record<string, unknown> | undefined
-      if (!args?.subagent_type) return
-
-      const subagentType = String(args.subagent_type)
-      if (!subagentType.startsWith("mesa/")) return
+      const args = output.args as TaskToolArgs | undefined
+      if (!args) return
 
       try {
-        const calleePersonaId = subagentType.replace(/^mesa\//, "")
-        const directory = input.directory
-
-        const callerCallees = activeTaskCalls.get(toolInput.sessionID)
-        if (callerCallees) {
-          callerCallees.delete(calleePersonaId)
-          if (callerCallees.size === 0) {
-            activeTaskCalls.delete(toolInput.sessionID)
-          }
+        const injected = await buildSpecialistPrompt(args)
+        if (injected !== null) {
+          args.prompt = injected
         }
-
-        const mesaSessionId = getSessionId(directory)
-        if (!mesaSessionId) return
-
-        // Resolve session folder input for session-scoped ask_peer path
-        // (spec-6886df4f, TD7). The hook has access to state via loadState.
-        // Best-effort: skip audit-logging if the folder can't be resolved.
-        const state = await loadState(directory, mesaSessionId).catch(() => null)
-        if (!state) return
-
-        const sessionInput = await ensureSessionInput(
-          directory, state, mesaSessionId, getDb
-        ).catch(() => null)
-        if (!sessionInput) return
-
-        const exchangeId = randomUUID().slice(0, 8)
-        const exchangeRelPath = buildAskPeerPath(
-          sessionInput,
-          toolInput.sessionID.slice(0, 8),
-          calleePersonaId,
-          exchangeId
-        )
-        const exchangeAbsPath = join(directory, exchangeRelPath)
-        const exchangeDir = join(exchangeAbsPath, "..")
-        await fs.mkdir(exchangeDir, { recursive: true })
-
-        const promptText = (args.prompt as string) || "(no prompt captured)"
-        const responseText = (toolOutput.output || "").slice(0, 5000)
-
-        await fs.writeFile(exchangeAbsPath, [
-          `# Peer Consultation via task`,
-          ``,
-          `**Caller Session:** ${toolInput.sessionID}`,
-          `**Peer:** ${calleePersonaId}`,
-          `**Timestamp:** ${new Date().toISOString()}`,
-          ``,
-          `## Question`,
-          ``,
-          promptText,
-          ``,
-          `## Response`,
-          ``,
-          responseText,
-        ].join("\n"), "utf-8")
-
-        await logAction(directory, "peer_task_completed", "DISCUSSION", {
-          callerSession: toolInput.sessionID,
-          peer: calleePersonaId,
-          exchangeFile: exchangeRelPath,
-        })
       } catch {
-        // Audit logging is best-effort
+        // Persona injection is best-effort — never block the task call
       }
     },
 

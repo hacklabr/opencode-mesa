@@ -22,57 +22,44 @@ describe("generate-agents script", () => {
     await fs.rm(tempBase, { recursive: true, force: true })
   })
 
-  test("appends global instructions to generated subagents", async () => {
+  test("generates a single clean specialist subagent with empty body", async () => {
     const outputDir = join(tempBase, "agents")
-    const catalogDir = join(tempBase, "catalog")
-    const globalFile = join(tempBase, "global.md")
 
-    await fs.mkdir(join(catalogDir, "engineering"), { recursive: true })
-    await fs.writeFile(
-      join(catalogDir, "engineering", "test-engineer.md"),
-      `---
-name: Test Engineer
-description: A test engineer
-emoji: 🧪
----
+    await execFileAsync("node", [SCRIPT_PATH, outputDir])
 
-# Test Engineer
-
-You are a test engineer.`,
-      "utf-8"
-    )
-
-    await fs.writeFile(globalFile, "Global parallel execution rule.", "utf-8")
-
-    await execFileAsync("node", [SCRIPT_PATH, outputDir, catalogDir, globalFile])
-
-    const generatedPath = join(outputDir, "mesa", "test-engineer.md")
+    const generatedPath = join(outputDir, "mesa", "specialist.md")
     const generated = await fs.readFile(generatedPath, "utf-8")
 
     expect(generated).toContain("mode: subagent")
-    expect(generated).toContain("You are a test engineer.")
-    expect(generated).toContain("Global parallel execution rule.")
+    expect(generated).toContain("hidden: true")
+    expect(generated).toContain("task: deny")
+
+    // Body must be empty — the persona prompt is injected by the plugin
+    // at delegation time, not baked into the file.
+    const body = generated.split(/^---$/m)[2]
+    expect(body.trim()).toBe("")
+
+    // No per-persona files are generated
+    const mesaDir = await fs.readdir(join(outputDir, "mesa"))
+    expect(mesaDir).toEqual(["specialist.md"])
+  })
+
+  test("removes stale per-persona subagent files on regeneration", async () => {
+    const outputDir = join(tempBase, "agents")
+    const mesaDir = join(outputDir, "mesa")
+    await fs.mkdir(mesaDir, { recursive: true })
+    await fs.writeFile(join(mesaDir, "engineering-backend-architect.md"), "stale", "utf-8")
+
+    await execFileAsync("node", [SCRIPT_PATH, outputDir])
+
+    const remaining = await fs.readdir(mesaDir)
+    expect(remaining).toEqual(["specialist.md"])
   })
 
   test("generates primary agents from src/agents", async () => {
     const outputDir = join(tempBase, "agents")
-    const catalogDir = join(tempBase, "catalog")
-    const globalFile = join(tempBase, "global.md")
 
-    await fs.mkdir(join(catalogDir, "engineering"), { recursive: true })
-    await fs.writeFile(
-      join(catalogDir, "engineering", "test-engineer.md"),
-      `---
-name: Test Engineer
-description: A test engineer
----
-
-Body.`,
-      "utf-8"
-    )
-    await fs.writeFile(globalFile, "", "utf-8")
-
-    await execFileAsync("node", [SCRIPT_PATH, outputDir, catalogDir, globalFile])
+    await execFileAsync("node", [SCRIPT_PATH, outputDir])
 
     const managerPath = join(outputDir, "manager.md")
     const briefingWriterPath = join(outputDir, "briefing-writer.md")

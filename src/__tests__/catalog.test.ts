@@ -118,8 +118,8 @@ describe("catalog loader", () => {
     expect(personas.length).toBeGreaterThan(0)
     for (const p of personas) {
       expect(p.systemPrompt).toContain("Global Execution Guidelines")
-      expect(p.systemPrompt).toContain("Default to Parallel Execution")
-      expect(p.systemPrompt).toContain("Avoid Editing Collisions")
+      expect(p.systemPrompt).toContain("You Execute — You Do Not Delegate")
+      expect(p.systemPrompt).toContain("Respect Boundaries")
     }
   })
 })

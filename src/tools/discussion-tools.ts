@@ -173,7 +173,7 @@ export const openAnalysisRoundTool = tool({
         : null
 
       const participantList = participantsWithNames
-        .map((p) => `  ${p.name} (subagent_type="mesa/${p.id}", task_id="mesa-${p.id}")`)
+        .map((p) => `  ${p.name} (subagent_type="mesa/specialist", task_id="mesa-${p.id}")`)
         .join("\n")
 
       const briefingInstruction = briefingFilePath
@@ -183,7 +183,7 @@ export const openAnalysisRoundTool = tool({
       const taskInstructions = participantsWithNames
         .map(
           (p, i) =>
-            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/${p.id}", task_id="mesa-${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
+            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/specialist", task_id="mesa-${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
         )
         .join("\n\n")
 

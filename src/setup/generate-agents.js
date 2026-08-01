@@ -1,72 +1,12 @@
-import { readFile, writeFile, mkdir, rm, readdir } from "node:fs/promises"
-import { join, dirname, basename } from "node:path"
+import { readFile, writeFile, mkdir, rm } from "node:fs/promises"
+import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..")
-const MERGED_CATALOG = join(ROOT, "dist", "catalog", "agency-agents")
 const DEFAULT_outputDir = join(ROOT, ".opencode", "agents")
 const PRIMARY_outputDir = join(ROOT, "src", "agents")
-const DEFAULT_GLOBAL_INSTRUCTIONS_FILE = join(PRIMARY_outputDir, "specialist-global-instructions.md")
 
 const outputDir = process.argv[2] || DEFAULT_outputDir
-const CATALOG_DIR = process.argv[3] || MERGED_CATALOG
-const GLOBAL_INSTRUCTIONS_FILE = process.argv[4] || DEFAULT_GLOBAL_INSTRUCTIONS_FILE
-
-function parseFrontmatter(raw) {
-  const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
-  if (!match) return { data: {}, body: raw }
-  const data = {}
-  for (const line of match[1].split("\n")) {
-    const idx = line.indexOf(":")
-    if (idx === -1) continue
-    const key = line.slice(0, idx).trim()
-    let value = line.slice(idx + 1).trim()
-    if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1)
-    if (key === "tools" && typeof value === "string" && value.includes(",")) {
-      data[key] = value.split(",").map((t) => t.trim())
-    } else {
-      data[key] = value
-    }
-  }
-  return { data, body: match[2].trim() }
-}
-
-function sanitizeId(filename) {
-  return basename(filename, ".md")
-}
-
-async function loadCatalogPersonas() {
-  const personas = []
-  const entries = await readdir(CATALOG_DIR, { withFileTypes: true })
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue
-    if (["examples", "scripts"].includes(entry.name)) continue
-    const divisionDir = join(CATALOG_DIR, entry.name)
-    const files = await readdir(divisionDir)
-    for (const file of files.filter((f) => f.endsWith(".md"))) {
-      const raw = await readFile(join(divisionDir, file), "utf-8")
-      const { data, body } = parseFrontmatter(raw)
-      if (!data.description) continue
-      personas.push({
-        id: sanitizeId(file),
-        name: data.name || sanitizeId(file),
-        description: data.description,
-        division: entry.name,
-        emoji: data.emoji || "",
-        systemPrompt: body,
-      })
-    }
-  }
-  return personas
-}
-
-async function loadGlobalInstructions() {
-  try {
-    return await readFile(GLOBAL_INSTRUCTIONS_FILE, "utf-8")
-  } catch {
-    return ""
-  }
-}
 
 async function writePrimaryAgents() {
   const agents = [
@@ -108,46 +48,30 @@ async function writePrimaryAgents() {
   return generated
 }
 
-async function writeSubagents(personas, globalInstructions) {
+async function writeSpecialistSubagent() {
   const subagentsDir = join(outputDir, "mesa")
   await rm(subagentsDir, { recursive: true, force: true })
   await mkdir(subagentsDir, { recursive: true })
 
-  const generated = []
-  for (const persona of personas) {
-    const description = persona.emoji
-      ? `${persona.emoji} ${persona.description}`
-      : persona.description
+  // Single clean subagent. The persona system prompt is NOT baked here —
+  // the plugin injects it into the task prompt at delegation time via the
+  // tool.execute.before hook, keyed by task_id="mesa-{personaId}".
+  const content = [
+    "---",
+    "description: Mesa specialist - clean subagent that receives the specialist persona prompt injected by the opencode-mesa plugin at delegation time",
+    "mode: subagent",
+    "hidden: true",
+    "permission:",
+    "  edit: allow",
+    "  write: allow",
+    "  bash: allow",
+    "  task: deny",
+    "---",
+    "",
+    "",
+  ].join("\n")
 
-    const frontmatter = [
-      "---",
-      `description: ${description}`,
-      "mode: subagent",
-      "hidden: true",
-      "permission:",
-      "  edit: allow",
-      "  write: allow",
-      "  bash: allow",
-      "  task:",
-      '    "mesa/*": ask',
-      '    "*": deny',
-      "---",
-      "",
-    ].join("\n")
-
-    let body =
-      persona.systemPrompt || `You are ${persona.name}. ${persona.description}`
-
-    if (globalInstructions) {
-      body = `${body.trim()}\n\n---\n\n${globalInstructions.trim()}`
-    }
-
-    const content = frontmatter + body + "\n"
-    const outPath = join(subagentsDir, `${persona.id}.md`)
-    await writeFile(outPath, content, "utf-8")
-    generated.push(persona.id)
-  }
-  return generated
+  await writeFile(join(subagentsDir, "specialist.md"), content, "utf-8")
 }
 
 async function main() {
@@ -156,10 +80,8 @@ async function main() {
   const primaries = await writePrimaryAgents()
   console.log(`Primary agents: ${primaries.join(", ")}`)
 
-  const personas = await loadCatalogPersonas()
-  const globalInstructions = await loadGlobalInstructions()
-  const subagents = await writeSubagents(personas, globalInstructions)
-  console.log(`Subagents generated: ${subagents.length} in mesa/ (hidden, mode: subagent)`)
+  await writeSpecialistSubagent()
+  console.log("Subagent generated: mesa/specialist (hidden, mode: subagent, empty body)")
 
   console.log(`\nOutput: ${outputDir}`)
   console.log("Restart opencode to load the new agents.")

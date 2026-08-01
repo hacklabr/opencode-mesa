@@ -10,7 +10,7 @@ graph TB
         User[User]
         Agents[Agent Sessions\nbriefing-writer · manager]
         TaskTool[task tool\nnative]
-        SubAgents["Specialist Subagents\nmesa/* namespace"]
+        SubAgents["Generic Specialist Subagent\nmesa/specialist (empty body)"]
     end
 
     subgraph "Mesa Plugin"

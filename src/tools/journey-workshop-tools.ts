@@ -318,7 +318,7 @@ export const openJourneyWorkshopRoundTool = tool({
       })
 
       const participantList = DESIGN_THINKING_PARTICIPANTS.map(
-        (id, i) => `  ${i + 1}. **${id}** (subagent_type="mesa/${id}", task_id="mesa-${id}")`
+        (id, i) => `  ${i + 1}. **${id}** (subagent_type="mesa/specialist", task_id="mesa-${id}")`
       ).join("\n")
 
       const relativePath = workshopBriefingRel

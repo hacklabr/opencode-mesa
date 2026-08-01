@@ -2,75 +2,47 @@
 
 These rules apply to every task you receive, regardless of your specialty. They govern *how* you deliver work, not *what* you deliver.
 
-## Default to Parallel Execution
+## You Execute — You Do Not Delegate
 
-When you receive a multi-step task, first ask: "Can these steps run in parallel?"
+You cannot invoke other subagents. The `task` tool is not available inside your session. Do the work yourself, end to end.
 
-- **If yes**: split the work into independent subtasks and delegate each one to a focused subagent via the `task` tool. Run the delegations in the same turn. Do not wait for one to finish before starting the next.
-- **If no**: document the dependency chain explicitly and execute only the dependent steps sequentially.
+- **Never** try to delegate part of your task to another specialist via `task`.
+- If your task is large enough to split, do NOT split it yourself. Deliver your part and explicitly tell the Manager, in your response, which independent parts could be delegated in parallel and to which personas. Parallel delegation is the Manager's job, not yours.
+- If the task depends on another specialist's input you don't have, produce your best deliverable with explicit assumptions documented, and flag the dependency to the Manager.
 
-## Split Work by Boundary, Not by Layer
+## Consulting Peers
 
-Divide tasks so that each subagent owns a clear, non-overlapping boundary:
+During discussion turns you MAY consult another specialist directly via the `ask_peer` tool:
 
-- **File boundary** — one subagent edits `auth.ts`, another edits `billing.ts`, never both editing the same file.
-- **Module boundary** — one subagent owns the API layer, another owns the database layer, another owns the UI layer.
-- **Feature boundary** — one subagent implements user registration, another implements password reset.
-- **Region boundary** — one subagent refactors the northern-region report, another refactors the southern-region report.
+- Use it to clarify ambiguities, challenge positions, or request elaboration.
+- Be targeted — do not ask vague questions.
+- `ask_peer` is unidirectional: you ask, the peer answers. Do not use it to reply to a consultation you received — reply naturally in your analysis output instead.
 
-Avoid splits where two subagents must later merge changes in the same function, component, or configuration block.
+## Respect Boundaries
 
-## Define Interfaces Before Parallel Work Starts
+Other specialists may be working in parallel on the same project:
 
-Before delegating parallel subtasks, specify:
+- Never modify a file, function, class, table, route, or configuration key that belongs to another specialist's task.
+- If a shared file must change, produce the snippet or specification and flag it to the Manager — the Manager designates a single owner for the file.
+- Before writing, check whether your change collides with another specialist's stated scope. If unsure, ask the Manager or note the risk in your response.
 
-1. **Inputs** — what each subagent receives (file paths, schemas, contracts).
-2. **Outputs** — what each subagent must produce (file paths, formats, tests).
-3. **Invariants** — what no subagent is allowed to change (shared constants, public APIs, database conventions).
-4. **Integration point** — who combines the results and how conflicts are resolved.
+## Honor the Interfaces
 
-If you cannot define these interfaces, the work is not ready to be parallelized.
+The Manager defines, before parallel work starts:
 
-## Avoid Editing Collisions
+1. **Inputs** — what you receive (file paths, schemas, contracts).
+2. **Outputs** — what you must produce (file paths, formats, tests).
+3. **Invariants** — what you are NOT allowed to change (shared constants, public APIs, database conventions).
 
-- Never assign two subagents to modify the same file, function, class, table, route, or configuration key at the same time.
-- If a shared file must change, designate a single owner for that file and have other subagents produce snippets or specifications that the owner integrates.
-- Before writing, check whether another subagent is already touching the same area. If unsure, ask the Manager or serialize the work.
-
-## Prefer Independent `task` Calls
-
-When delegating parallel work, issue multiple `task` calls in a single response. Each call should be self-contained and able to proceed without waiting for the others.
-
-Example:
-
-```
-task(subagent_type="mesa/software-development-backend-architect", task_id="mesa-api-design", prompt="Design the REST contract for /orders...")
-task(subagent_type="mesa/software-development-database-administrator", task_id="mesa-db-schema", prompt="Design the PostgreSQL schema for orders...")
-task(subagent_type="mesa/software-development-frontend-developer", task_id="mesa-ui-orders", prompt="Build the order list UI component...")
-```
-
-After all parallel tasks complete, integrate their outputs in a follow-up step.
-
-## When You Are the Subagent
-
-If you receive a task that is large enough to split:
-
-1. Propose the split to the Manager (or execute it directly if the split is obvious and safe).
-2. Identify which parts are independent.
-3. Delegate each independent part to the most appropriate specialist.
-4. Collect results, verify consistency, and integrate.
-
-Do not try to do everything yourself when parallel help is available.
+Treat invariants as hard constraints. If fulfilling your task requires violating one, stop and report the conflict instead of proceeding.
 
 ## Final Integration Is a Separate Step
 
-Parallel work always ends with one agent — usually you or the Manager — reviewing all outputs and merging them into a coherent result. This step is not optional. Verify that:
+Parallel work always ends with one agent — usually the Manager — reviewing all outputs and merging them into a coherent result. Make that step easy:
 
-- No two subagents changed the same file.
-- Contracts and interfaces align.
-- Tests pass for the combined work.
-- No invariant was violated.
+- Confirm explicitly: (a) which files you changed/created, (b) the workspace-relative path of each artifact, (c) which acceptance criteria you met.
+- Report any deviation from the agreed contracts immediately, in your response.
 
 ## Document Deviations
 
-If you cannot parallelize work that looks parallelizable, record why. The Manager needs this information to improve the execution plan.
+If you cannot deliver exactly what was specified, record why — what was blocked, what assumption you made, what risk remains. The Manager needs this information to improve the execution plan.

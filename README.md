@@ -218,7 +218,7 @@ The Manager opens an analysis round:
 For each specialist, the Manager invokes them via OpenCode's native `task` tool:
 
 ```
-task(subagent_type="mesa/engineering-backend-architect", prompt="Analyze the following...", description="Backend analysis")
+task(subagent_type="mesa/specialist", task_id="mesa-engineering-backend-architect", prompt="Analyze the following...", description="Backend analysis")
 ```
 
 After each specialist responds, the Manager registers their analysis:
@@ -470,15 +470,15 @@ State is managed through strict phase transitions — every tool validates the c
 - professional-development, quality-assurance, sales, security, social-engagement
 - software-development, strategy, urban-planning, worldbuilding
 
-Each specialist is registered as a hidden subagent in the `mesa/` namespace with `mode: subagent` and their own system prompt. OpenCode automatically injects the specialist's system prompt when invoked — the Manager must NOT include it in the task prompt.
+All specialists share a single generic hidden subagent, `mesa/specialist`, registered with `mode: subagent` and an intentionally empty body. At delegation time the Mesa plugin injects the persona's system prompt into the task prompt automatically (via the `tool.execute.before` hook) — the Manager must NOT include it in the task prompt. The `task_id="mesa-{personaId}"` parameter tells the plugin which persona to inject.
 
 The Manager invokes specialists via:
 
 ```
-task(subagent_type="mesa/engineering-backend-architect", prompt="<task details only>", description="...")
+task(subagent_type="mesa/specialist", task_id="mesa-engineering-backend-architect", prompt="<task details only>", description="...")
 ```
 
-To regenerate after catalog changes:
+To regenerate the agent files after plugin updates:
 
 ```bash
 bun run setup:agents

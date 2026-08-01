@@ -212,7 +212,7 @@ export const delegateTaskTool = tool({
   description:
     "Defines a task for a specialist. Records the delegation in Mesa state and returns instructions to invoke the specialist via the task tool. When a phase appendix exists, it is used as the authoritative specification for that phase.",
   args: {
-    personaId: tool.schema.string().describe("The specialist persona ID (also the subagent_type for the task tool)"),
+    personaId: tool.schema.string().describe("The specialist persona ID (passed as task_id=\"mesa-{personaId}\" to the task tool)"),
     task: tool.schema.string().describe("Clear description of the task to delegate"),
     context_info: tool.schema
       .string()
@@ -310,7 +310,7 @@ export const delegateTaskTool = tool({
           `Task defined for **${specialist.name}** (${args.personaId}).${enrollmentNote}`,
           ``,
           `Now invoke the specialist using the **task** tool:`,
-          `\`task(subagent_type="mesa/${args.personaId}", task_id="mesa-${args.personaId}", prompt="...", description="...")\``,
+          `\`task(subagent_type="mesa/specialist", task_id="mesa-${args.personaId}", prompt="...", description="...")\``,
           ``,
           `Using \`task_id="mesa-${args.personaId}"\` creates a named session that persists across turns. If the specialist was invoked before in this session, they resume with full context.`,
           `If the task tool returns a \`ses_...\` ID instead of accepting the slug, save that ID and reuse it as task_id in subsequent invocations to preserve memory.`,
