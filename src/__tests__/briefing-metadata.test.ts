@@ -244,10 +244,10 @@ describe("create_briefing with metadata args", () => {
 })
 
 // ---------------------------------------------------------------------------
-// C. deliver_briefing default
+// C. approve_briefing metadata default (folded from deliver_briefing, spec D5)
 // ---------------------------------------------------------------------------
 
-describe("deliver_briefing metadata default", () => {
+describe("approve_briefing metadata default (folded from deliver_briefing)", () => {
   beforeEach(async () => {
     await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
   })
@@ -257,7 +257,7 @@ describe("deliver_briefing metadata default", () => {
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
-  test("defaults to scopeMagnitude composite when metadata is null at delivery", async () => {
+  test("defaults to scopeMagnitude composite when metadata is null at approval", async () => {
     await createBriefingTool.execute(
       { slug: "no-meta", title: "No Meta", content: "# Content" },
       makeContext()
@@ -265,16 +265,17 @@ describe("deliver_briefing metadata default", () => {
     await approveBriefingTool.execute({}, makeContext())
 
     let state = await loadState(TEST_DIR, "test-session")
-    expect(state.briefing.metadata).toBeNull()
-
-    await deliverBriefingTool.execute({}, makeContext())
-
-    state = await loadState(TEST_DIR, "test-session")
     expect(state.briefing.metadata).not.toBeNull()
     expect(state.briefing.metadata!.scopeMagnitude).toBe("composite")
     expect(state.briefing.metadata!.classificationReason).toContain("default")
     expect(state.briefing.metadata!.nonTechnicalDimensions).toEqual([])
     expect(state.briefing.metadata!.nonTechnicalFlag).toBe(false)
+
+    // deliver_briefing remains an idempotent backward-compatible shim.
+    await deliverBriefingTool.execute({}, makeContext())
+
+    state = await loadState(TEST_DIR, "test-session")
+    expect(state.briefing.metadata!.scopeMagnitude).toBe("composite")
   })
 
   test("does NOT overwrite metadata when already populated", async () => {

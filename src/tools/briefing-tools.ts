@@ -168,7 +168,7 @@ export const createBriefingTool = tool({
 
 export const approveBriefingTool = tool({
   description:
-    "Marks the current briefing as approved and updates the state. Must be called after human approval.",
+    "Marks the current briefing as approved and delivers it to the Manager (sets phase to PLANNING). Must be called after human approval. Absorbs the former deliver_briefing step.",
   args: {},
   async execute(_args, context) {
     try {
@@ -178,6 +178,18 @@ export const approveBriefingTool = tool({
       }
 
       state.briefing.status = "approved"
+      state.currentPhase = "PLANNING"
+
+      // Composite-default-on-unknown (spec-fb0ba2d7, Decision 6) — folded from
+      // deliver_briefing so approval alone delivers (spec D5 absorption).
+      if (state.briefing.metadata === null) {
+        state.briefing.metadata = {
+          scopeMagnitude: "composite",
+          classificationReason: "default — no explicit classification during discovery",
+          nonTechnicalDimensions: [],
+          nonTechnicalFlag: false,
+        }
+      }
 
       // Paths stored in state are RELATIVE to the workspace (spec-6886df4f, TD3).
       // Prepend context.directory for all filesystem I/O.
@@ -195,7 +207,8 @@ export const approveBriefingTool = tool({
 
       return successResponse(
         "Briefing Approved",
-        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing "${state.briefing.slug}" approved. Ready for delivery to Manager.`
+        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing "${state.briefing.slug}" approved and delivered to the Manager.\n\nNext step: analyze the briefing and propose a team. If you are not already acting as the Manager agent, switch by typing \`/agent manager\`.`,
+        { briefingPath: state.briefing.path }
       )
     } catch (err) {
       return errorResponse(`Error approving briefing: ${err instanceof Error ? err.message : String(err)}`)
@@ -308,7 +321,7 @@ export const importBriefingTool = tool({
 
 export const deliverBriefingTool = tool({
   description:
-    "Delivers the approved briefing to the Manager. Updates the state phase to PLANNING. The Manager reads briefing.md directly from the session folder — no delivery copy is created.",
+    "DEPRECATED — approve_briefing now delivers (sets phase to PLANNING and backfills metadata). Kept as an idempotent backward-compatible shim; will be removed in the v4 workflow (spec D5).",
   args: {},
   async execute(_args, context) {
     try {
