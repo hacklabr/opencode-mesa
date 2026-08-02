@@ -435,6 +435,9 @@ export const registerAnalysisTool = tool({
         turn: args.turn,
         turnType,
         round: args.round,
+        // v14 (spec D2): link to the open kernel round when one exists.
+        // Legacy flows (no open round) leave roundId undefined — unaffected.
+        roundId: state.rounds?.find((r) => r.status === "open")?.id,
         positionInTurn: args.position_in_turn,
         respondsTo: args.responds_to,
         sessionResumed: args.session_resumed,
@@ -469,6 +472,7 @@ export const registerAnalysisTool = tool({
         turn: args.turn,
         kind,
         turnType,
+        roundId: entry.roundId ?? null,
         filePath: validatedFilePath,
         reason: args.reason,
         deviationCount: state.discussion.deviations ?? 0,

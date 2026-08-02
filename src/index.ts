@@ -38,6 +38,8 @@ import {
   requestPhaseConsensusTool,
   generatePhaseAppendixTool,
 } from "./tools/phase-analysis-tools.js"
+import { openRoundTool, closeRoundTool } from "./tools/round-tools.js"
+import { recordDecisionTool, produceDeliverableTool, approveDeliverableTool } from "./tools/decision-tools.js"
 import { checkForUpdate } from "./updater/checker.js"
 import { mesaCheckUpdateTool, mesaUpdateTool } from "./tools/update-tools.js"
 import { askPeerTool, setSdkClient } from "./tools/peer-tools.js"
@@ -92,6 +94,11 @@ export const mesa: Plugin = async (input) => {
       open_phase_analysis_round: openPhaseAnalysisRoundTool,
       request_phase_consensus: requestPhaseConsensusTool,
       generate_phase_appendix: generatePhaseAppendixTool,
+      open_round: openRoundTool,
+      close_round: closeRoundTool,
+      record_decision: recordDecisionTool,
+      produce_deliverable: produceDeliverableTool,
+      approve_deliverable: approveDeliverableTool,
       mesa_check_update: mesaCheckUpdateTool,
       mesa_update: mesaUpdateTool,
       ask_peer: askPeerTool,
@@ -193,6 +200,7 @@ export const mesa: Plugin = async (input) => {
       "verify_implementation",
       "open_analysis_round", "register_analysis", "get_peer_analyses", "request_consensus",
       "generate_specification", "generate_specification_overview", "approve_specification",
+      "open_round", "close_round", "record_decision", "produce_deliverable", "approve_deliverable",
       "pause_discussion", "resume_discussion", "cancel_discussion",
       "mesa_check_update", "mesa_update", "ask_peer",
       "memory_store", "memory_recall", "memory_forget",
