@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
 /**
- * Manager behavioral regression suite — frozen baseline BEFORE the manager.md v4 rewrite
- * (Mesa flexibilization, session 202608012203_040c).
+ * Manager behavioral regression suite — v4 ACCEPTANCE (T11/T12).
+ * (Frozen as a pre-v4 baseline in Phase 0; flipped to v4 assertions in Phase 3.)
  *
  * Two layers:
  *  (A) Structural assertions against the CURRENT src/agents/manager.md — green NOW,
@@ -233,9 +233,11 @@ describe("manager.md — surviving-mechanism baseline (green NOW, must NOT regre
     expect(MANAGER_MD).toMatch(/registered_by_manager/)
   })
 
-  test("task_id session memory convention is documented", () => {
-    expect(MANAGER_MD).toMatch(/task_id="mesa-\{personaId\}"/)
-    expect(MANAGER_MD).toMatch(/resumes (the existing|their) session/i)
+  test("delegation mechanics: inline persona primary + ses_ resumption documented", () => {
+    expect(MANAGER_MD).toMatch(/<specialist-persona/)
+    expect(MANAGER_MD).toMatch(/task_id:"ses_\.\.\."/)
+    expect(MANAGER_MD).toMatch(/resumes the existing session/i)
+    expect(MANAGER_MD).toMatch(/mesa-\{personaId\}/) // legacy slug path documented
   })
 
   test("ask_peer sequential-topology rule survives", () => {
@@ -258,48 +260,111 @@ describe("manager.md — surviving-mechanism baseline (green NOW, must NOT regre
     expect(MANAGER_MD).toMatch(/Verification/)
   })
 
-  test("C7-baseline — current consensus requires substantive reasoning in votes", () => {
-    expect(MANAGER_MD).toMatch(/request_consensus/)
-    expect(MANAGER_MD).toMatch(/substantive/i)
+  test("C7-baseline — consensus decisions require substantive grounding (declared positions + cited evidence)", () => {
+    expect(MANAGER_MD).toMatch(/POSITION:/)
+    expect(MANAGER_MD).toMatch(/close_round/)
+    expect(MANAGER_MD).toMatch(/evidencePaths/)
   })
 })
 
 // ---------------------------------------------------------------------------
-// v4 features the CURRENT prompt lacks — test.todo: implement in Phase 3.
-// Each maps to an eval case; flip to real assertions when manager.md v4 ships.
+// v4 acceptance (T11/T12) — real assertions against the v4 prompt.
 // ---------------------------------------------------------------------------
 
-describe("manager.md v4 — pending features (test.todo, flip green in Phase 3)", () => {
-  test.todo(
-    "C3 — prompt contains a non-software workflow exemplar (e.g., academic article) " +
-      "and does not mandate Implementation/Verification for non-code deliverables"
-  )
-  test.todo(
-    "C4 — prompt instructs when/how to delegate workflow design to a domain specialist, " +
-      "with the Manager re-running the invariant check on the returned design"
-  )
-  test.todo(
-    "C6 — prompt requires a workflow-plan.md artifact with the 6-invariant self-check " +
-      "(independence, adversarial-pass, human-gate, traceability, recorded-negative, deviation-log) " +
-      "presented to the human before the first round"
-  )
-  test.todo(
-    "C7 — close-round language: unanimous POSITION: agree + cited evidence → converged (tally, not judgment)"
-  )
-  test.todo(
-    "C8 — close-round language: any POSITION: disagree forbids declaring convergence; " +
-      "subset round or escalation is mandated"
-  )
-  test.todo(
-    "C9 — close-round language: domain-level reservations (vs process-level) block 'converged'; " +
-      "reservations copied verbatim into tensions[]"
-  )
-  test.todo(
-    "C10 — close-round language: outcome summary must cite analysis file paths; " +
-      "evidence-free summaries are named a violation"
-  )
-  test.todo(
-    "C5-v4 — recorded-negative generalized: any skipped optional step is stated out loud with its reason " +
-      "(not only the non-technical scan)"
-  )
+describe("manager.md v4 — workflow-design cases (C1–C6 acceptance)", () => {
+  test("C3 — prompt contains a non-software workflow exemplar and scopes Implementation/Verification to code deliverables", () => {
+    expect(MANAGER_MD).toMatch(/Academic article|systematic review|PRISMA/i)
+    expect(MANAGER_MD).toMatch(/ONLY when the deliverable is executable code/i)
+    expect(MANAGER_MD).toMatch(/No Implementation phase/i)
+    expect(MANAGER_MD).toMatch(/No Verification phase/i)
+  })
+
+  test("C4 — prompt instructs delegating workflow design to a domain specialist with invariant re-validation", () => {
+    expect(MANAGER_MD).toMatch(/delegate the workflow design/i)
+    expect(MANAGER_MD).toMatch(/re-run the invariant self-check/i)
+    expect(MANAGER_MD).toMatch(/record_decision type:"delegation"/)
+  })
+
+  test("C5-v4 — recorded negatives generalized: plan shape has mandatory Skipped lines with reasons", () => {
+    expect(MANAGER_MD).toMatch(/- Skipped:/)
+    expect(MANAGER_MD).toMatch(/every `Skipped:` line must carry a reason/i)
+  })
+
+  test("C6 — workflow-plan.md with the 6-invariant self-check presented at gate 0", () => {
+    expect(MANAGER_MD).toMatch(/workflow-plan\.md/)
+    expect(MANAGER_MD).toMatch(/- Invariant check:/)
+    for (const key of [
+      "independence",
+      "adversarial-pass",
+      "human-gate",
+      "traceability",
+      "recorded-negative",
+      "deviation-log",
+    ]) {
+      expect(MANAGER_MD).toContain(`- ${key}:`)
+    }
+    expect(MANAGER_MD).toMatch(/Gate 0/)
+    expect(MANAGER_MD).toMatch(/record_decision[\s\S]{0,80}type:"gate"[\s\S]{0,80}target:"plan"/)
+  })
+})
+
+describe("manager.md v4 — consensus cases (C7–C10 acceptance)", () => {
+  test("C7 — close-round language: unanimous agree → converged as tally, not domain judgment", () => {
+    expect(MANAGER_MD).toMatch(/WHETHER the round converged/i)
+    expect(MANAGER_MD).toMatch(/never decide WHO IS RIGHT/i)
+    expect(MANAGER_MD).toMatch(/tallying, not judging/i)
+  })
+
+  test("C8 — a declared disagree vetoes converged; subset round or escalation mandated", () => {
+    expect(MANAGER_MD).toMatch(/NEVER declare convergence/i)
+    expect(MANAGER_MD).toMatch(/disagree vetoes/i)
+    expect(MANAGER_MD).toMatch(/Subset round/i)
+    expect(MANAGER_MD).toMatch(/escalated/i)
+  })
+
+  test("C9 — domain-level reservations block convergence; reservations copied verbatim", () => {
+    expect(MANAGER_MD).toMatch(/VERBATIM/)
+    expect(MANAGER_MD).toMatch(/domain-level/i)
+    expect(MANAGER_MD).toMatch(/process-level/i)
+  })
+
+  test("C10 — close_round requires cited evidence; evidence-free decisions named a violation", () => {
+    expect(MANAGER_MD).toMatch(/evidencePaths/)
+    expect(MANAGER_MD).toMatch(/A decision without cited evidence is not a decision/i)
+  })
+})
+
+describe("manager.md v4 — T12 exemplar fidelity", () => {
+  const softwareExemplar = MANAGER_MD.split("### Exemplar 1")[1]?.split("### Exemplar 2")[0] ?? ""
+
+  test("software exemplar exists and reproduces the classic pipeline stages in order", () => {
+    expect(softwareExemplar.length).toBeGreaterThan(0)
+    expect(softwareExemplar).toMatch(
+      /briefing[\s\S]*?team[\s\S]*?parallel[\s\S]*?sequential[\s\S]*?specification[\s\S]*?implementation[\s\S]*?verification/i
+    )
+  })
+
+  test("software exemplar satisfies all 6 invariants explicitly", () => {
+    for (const key of [
+      "independence",
+      "adversarial-pass",
+      "human-gate",
+      "traceability",
+      "recorded-negative",
+      "deviation-log",
+    ]) {
+      expect(softwareExemplar).toContain(`- ${key}: ok`)
+    }
+  })
+
+  test("academic exemplar is LAST (recency) and free of software pipeline stages in its plan", () => {
+    const academicIdx = MANAGER_MD.search(/### Exemplar 3/i)
+    const delegatedIdx = MANAGER_MD.search(/### Exemplar 2/i)
+    const softwareIdx = MANAGER_MD.search(/### Exemplar 1/i)
+    expect(academicIdx).toBeGreaterThan(delegatedIdx)
+    expect(delegatedIdx).toBeGreaterThan(softwareIdx)
+    const academic = MANAGER_MD.slice(academicIdx)
+    const planBody = academic.split("- Skipped:")[0]
+    expect(planBody).not.toMatch(/mode:.*implementation/i)
+  })
 })

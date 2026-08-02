@@ -65,8 +65,7 @@ describe("persona tool denylist (spec D5 dead/renamed tools)", () => {
     expect(referencesOf("specialist-global-instructions.md")).toEqual([])
   })
 
-  test.todo(
-    "manager.md references zero dead/renamed tools — flips green with the T11 v4 rewrite " +
-      "(current v3 carries journey/phase-gate/consensus/specification references by design)"
-  )
+  test("manager.md references zero dead/renamed tools", () => {
+    expect(referencesOf("manager.md")).toEqual([])
+  })
 })
