@@ -1,5 +1,7 @@
 # Phase Appendices Reference
 
+> **Superseded (2026-08):** This document describes the pre-flexibilization architecture. See docs/workflow.md and docs/architecture.md for the current kernel model.
+
 Reference documentation for Mesa phase appendices — what they are, how they are structured, and how they relate to the master specification.
 
 > **Diátaxis category**: Reference

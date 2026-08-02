@@ -4,7 +4,7 @@ Common issues and solutions for the Mesa plugin.
 
 ## Mesa tools not appearing
 
-**Symptom**: After installing Mesa, none of the 21 tools (e.g. `mesa_status`, `create_briefing`) are available in OpenCode.
+**Symptom**: After installing Mesa, none of the 24 tools (e.g. `mesa_status`, `create_briefing`) are available in OpenCode.
 
 **Solution**: Verify plugin registration in your project's `opencode.json`:
 
@@ -18,11 +18,11 @@ Common issues and solutions for the Mesa plugin.
 - Restart OpenCode after editing `opencode.json`.
 - Run `mesa_status` to confirm the plugin is loaded.
 
-## Agent not switching after briefing delivery
+## Agent not switching after briefing approval
 
-**Symptom**: After calling `deliver_briefing`, the active agent is still `briefing-writer` instead of `manager`.
+**Symptom**: After calling `approve_briefing`, the active agent is still `briefing-writer` instead of `manager`.
 
-**Solution**: This is expected behavior. `deliver_briefing` transitions the state to `PLANNING` but does not auto-switch agents. Manually switch with:
+**Solution**: This is expected behavior. `approve_briefing` approves the briefing and hands it to the Manager, but Mesa never switches agents for you. Manually switch with:
 
 ```
 /agent manager
@@ -30,38 +30,116 @@ Common issues and solutions for the Mesa plugin.
 
 The Manager agent will then pick up the briefing and proceed with team proposal.
 
-## State file corrupted
+## `open_round` refuses: no approved workflow plan
 
-**Symptom**: Tools fail with parse errors or unexpected state, or `.mesa/state.json` contains malformed JSON.
+**Symptom**: `open_round` fails with a plan-gate error, or `mesa_status` shows a "No approved workflow plan" instruction.
 
-**Solution**: Mesa automatically creates a backup (`.mesa/state.json.bak`) on every state save. On load, if `state.json` is corrupted, Mesa recovers from the backup automatically.
+**Solution**: The plan gate (gate 0) has not been satisfied. The Manager must:
 
-- Check `.mesa/state.json.bak` — if it exists and is valid, Mesa will use it.
-- If both files are corrupted, delete `.mesa/state.json` and `.mesa/state.json.bak`. Mesa will create a fresh state on the next tool call.
-- `.tmp` files from interrupted writes are cleaned up on startup.
+1. Write `workflow-plan.md` in the session folder (`.mesa/sessions/<id>/`).
+2. Present it to the human for approval.
+3. Record the approval:
 
-## Discussion stuck in wrong phase
+```
+record_decision(type="gate", target="plan",
+  reason="Human approved workflow plan",
+  payload={path: ".mesa/sessions/<id>/workflow-plan.md"})
+```
 
-**Symptom**: A tool call fails with a phase mismatch error, or the discussion appears stuck.
+This is the **only** path to an approved plan. Verbal approval in chat is not sufficient — `open_round` reads the plan pointer in state, not the conversation.
+
+If the plan needs to change mid-flight, edit the file and record `record_decision(type="plan-amendment", target="plan", payload={version: <n+1>})`. The version must strictly increase — silent replanning is a violation, and version bumps make unlogged amendments detectable.
+
+## LEGACY SESSION — no approved plan
+
+**Symptom**: `mesa_status` or `open_round` shows:
+
+```
+LEGACY SESSION — no approved plan.
+This session was migrated from the old pipeline; its workflow was approved under rules that no longer exist.
+```
+
+**Cause**: The session was created before the flexibilization refactor (state migrated to v14/v15 — its `rounds[]` contains a `legacy-*` round). The old phase-pipeline workflow was approved under rules that no longer exist, so Mesa will not silently adopt a synthesized plan — that would violate the plan gate retroactively.
+
+**Solution**: The Manager must:
+
+1. Synthesize a `workflow-plan.md` mapping existing artifacts (rounds, analyses, deliverables) to the remaining steps — no perfect phase translation is required, just the next steps.
+2. **Present it to the human as a plan gate** — the workflow agreement changed mid-flight, so human consent is required again.
+3. Record the approval via `record_decision(type="gate", target="plan", payload={path})`.
+
+After that, `open_round` works normally.
+
+## Specialist gets a `<specialist-setup-error>` notice
+
+**Symptom**: A delegated specialist responds that it received a setup error instead of a persona.
+
+**Cause**: The persona was not resolved by the `tool.execute.before` hook. Persona resolution order:
+
+1. `task_id="ses_..."` — session resumption (persona already in history).
+2. **Inline persona block (primary path)** — a `<specialist-persona id="...">` block in the prompt. Required on runtimes that reject non-`ses_` task IDs.
+3. `task_id="mesa-{personaId}"` — the slug path; the hook injects the persona from the catalog on runtimes that accept it.
 
 **Solution**:
 
-1. Run `mesa_status` to see the current phase and state summary.
-2. If you need to step back, use `pause_discussion` to pause.
-3. Then use `resume_discussion(target_phase="TARGET_PHASE")` to resume at the desired phase.
-4. As a last resort, use `cancel_discussion` to reset (preserves briefing and team, clears analyses).
+- If the runtime rejects `task_id="mesa-..."`, the Manager must **inline the persona**: include the full `<specialist-persona id="..." name="...">...</specialist-persona>` block (from `get_specialist`) directly in the task prompt.
+- If the error says the persona ID was not found, run `list_specialists` to get a valid ID and retry.
+- Note: if the specialist session shows both a setup-error banner **and** an injected persona, the injection actually succeeded — the banner is a stale artifact of the fallback path; the specialist should proceed.
 
-## Cannot restart after cancellation
+## `close_round` refuses: declared POSITION missing
 
-**Symptom**: After calling `cancel_discussion`, you want to restart but are unsure how.
+**Symptom**: `close_round` fails with "declared POSITION missing for: ...".
 
-**Solution**: `CANCELLED` state now transitions to `PLANNING` on restart. Use `resume_discussion(target_phase="PLANNING")` or call any PLANNING-phase tool (e.g. `open_analysis_round` with `force=true`). The briefing and team are preserved from the previous run.
+**Solution**: Every participant must have ≥1 analysis **self-registered from its own session** whose file contains a lexical block:
 
-## Specialist not found in team
+```
+POSITION: agree | agree-with-reservations | disagree — [reason]
+```
 
-**Symptom**: `delegate_task` fails because the specialist was not part of the summoned team.
+Common causes:
 
-**Solution**: In `EXECUTION` phase, `delegate_task` supports a **catalog fallback** — it accepts any specialist from the full catalog, not just those on the summoned team. If the `personaId` matches a catalog entry, the tool will succeed even if the specialist was not part of the original team proposal.
+- The analysis was registered with `registered_by_manager=true` — these **never** satisfy the gate (that would let the Manager write the specialist's position). Re-invoke the specialist and have it self-register.
+- The analysis content was registered inline but no `file_path` was set, or the file lacks the POSITION block. Ensure the specialist's final artifact ends with the block.
+- If the human decides to close anyway, call `close_round` with `humanOverride: true` (recorded in the audit log). Note: `humanOverride` does **not** bypass the `evidencePaths[]` requirement.
+
+## `close_round` refuses: "converged" vetoed by declared disagree
+
+**Symptom**: `close_round(decision="converged", ...)` fails because a participant declared `disagree`.
+
+**Solution**: This is a load-bearing rule, not a bug. Three legal moves:
+
+1. Open a **subset round** with exactly the dissenting participants: `open_round(topic=..., participants=["dissenter-id"])`.
+2. Close as `converged-with-open-tensions`, copying the tension **verbatim** into `tensions[]` so it reaches the deliverable and the human.
+3. Close as `escalated` — the human is the only judge of content.
+
+## `produce_deliverable` refuses: no closed round
+
+**Symptom**: `produce_deliverable` fails with "no closed round with at least one analysis exists".
+
+**Solution**: Close a round first (`close_round`). Deliverables must trace to executed deliberation. If the human authorizes skipping this, pass `humanOverride: true` — the override is audit-logged.
+
+## State database issues
+
+**Symptom**: Tools fail with state errors, or `.mesa/state.db` appears corrupted.
+
+**Solution**:
+
+1. Check that `.mesa/state.db` exists and is writable.
+2. Inspect the schema:
+   ```bash
+   sqlite3 .mesa/state.db ".tables"
+   ```
+3. As a last resort, delete `.mesa/state.db` — Mesa recreates it with the current schema (v15) on the next tool call. This clears session state but preserves Markdown artifacts (briefings, plans, analyses, deliverables) under `.mesa/sessions/`.
+
+Legacy `.mesa/state.json` files are migrated to SQLite automatically on first load.
+
+## Session inactive after pause/cancel
+
+**Symptom**: Tool calls fail with `Operation not allowed when discussion status is "paused"` (or `"cancelled"`).
+
+**Solution**: All mutating tools require status `active`.
+
+- If paused: call `resume_discussion()`. The Manager should then follow the resume ritual — re-read the plan and round trace, and declare its position ("Plan v2: r1–r3 closed, r4 open. Next: X") before any other action.
+- If cancelled: analysis data was cleared, but briefing, team, and deliverables are preserved. Start a new session to continue.
 
 ## Tests failing
 
@@ -70,108 +148,13 @@ The Manager agent will then pick up the briefing and proceed with team proposal.
 **Solution**:
 
 ```bash
-# Ensure dependencies are installed
 bun install
-
-# Run tests
-~/.bun/bin/bun test src/__tests__/
-
-# Or via npm script
+bun run build   # at least once
 bun test
 ```
 
 Common issues:
+
 - **Import errors**: Ensure `bun run build` has been run at least once.
 - **State file conflicts**: Tests use a temporary directory under `/tmp/`. If tests fail with permission errors, check `/tmp` write access.
 - **Snapshot mismatches**: Delete `src/__tests__/__snapshots__/` and re-run.
-
-## Phase analysis issues
-
-### No phases detected in approved specification
-
-**Symptom**: `check_execution_phases` reports "No Execution Plan Detected" even though the specification clearly contains phases.
-
-**Solution**: Phase detection uses a three-tier strategy:
-
-1. **YAML frontmatter**: Add an `execution_plan` key to the spec's frontmatter for reliable detection:
-   ```yaml
-   ---
-   execution_plan:
-     - "Foundation"
-     - "Core Tools"
-     - "Manager Integration"
-   ---
-   ```
-
-2. **Markdown headings**: Use `## Phase N: Name` syntax:
-   ```markdown
-   ## Phase 1: Foundation
-   ## Phase 2: Core Tools
-   ```
-
-3. **Heuristics**: Ensure "Phase N" or "Step N" appears in headings or bold text.
-
-If the spec is analysis-only (keywords: "audit report", "recommendations", "assessment only"), phase detection is intentionally bypassed.
-
-### Appendix not found during task delegation
-
-**Symptom**: `delegate_task` with `phase_name` does not prepend the appendix to the specialist's context.
-
-**Solution**:
-
-1. Verify the appendix exists: check `.mesa/specifications/appendices/` for files matching the phase slug.
-2. Verify the appendix is indexed: `mesa_status` should show `appendices` in the state summary.
-3. Check the phase name slugification: `delegate_task` converts the phase name to a slug (lowercase, hyphens). Ensure the appendix filename contains this slug.
-
-The resolution order is:
-1. `state.appendices` array
-2. Scan `.mesa/specifications/appendices/` directory
-
-### Phase analysis round fails to open
-
-**Symptom**: `open_phase_analysis_round` returns "Phase analysis can only be opened during EXECUTION phase."
-
-**Solution**: Phase analysis is a sub-workflow within `EXECUTION`. Ensure:
-
-1. The specification has been approved (`approve_specification(approved=true)`).
-2. The current phase is `EXECUTION` (check with `mesa_status`).
-3. If stuck in a different phase, use `resume_discussion(target_phase="EXECUTION")` or restart.
-
-### Consensus not reached for a phase
-
-**Symptom**: `request_phase_consensus` returns "Phase Consensus Not Reached".
-
-**Solution**: This is expected behavior when specialists disagree. The Manager should:
-
-1. Review the vote summary to identify points of disagreement.
-2. Open a debate round by asking dissenting specialists for additional analysis.
-3. Call `register_analysis` for the dissenting specialists.
-4. Call `request_phase_consensus` again with the new votes.
-
-If consensus remains elusive after multiple rounds, the Manager may proceed with the majority view and document reservations in the appendix's `Consensus Outcome` section.
-
-### State version mismatch after update
-
-**Symptom**: `loadState` logs a warning: "State version mismatch: db=1, current=2."
-
-**Solution**: This is a normal message after upgrading Mesa. The automatic migration (`migrate_v1_to_v2`) should handle it. If tools fail:
-
-1. Check that `.mesa/state.db` exists and is writable.
-2. Verify the `mesa_phase_context` table exists:
-   ```bash
-   sqlite3 .mesa/state.db ".tables"
-   ```
-3. If the table is missing, the migration may have failed. Delete `.mesa/state.db` and `.mesa/state.db.bak` — Mesa will recreate the database with the correct schema on the next tool call. Note: this clears state but preserves briefings and specifications.
-
-## Performance
-
-### Phase analysis is slow
-
-**Symptom**: Iterative phase analysis takes a long time, especially in guided mode.
-
-**Mitigation**:
-
-- Use **automatic mode** for straightforward phases.
-- Select only the phases that truly need deep analysis (e.g., "1, 3" instead of "all").
-- Phases are analyzed **sequentially** by design. This reduces cost unpredictability and state complexity.
-- The p95 latency target for a single phase analysis round is 5 minutes. If consistently exceeded, instrument with `audit.log` timestamps and consider parallel execution in a future release.

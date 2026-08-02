@@ -1,5 +1,7 @@
 # Especificação: Auditoria do protótipo tabla-go, arquitetura de plugins OpenCode e mapeamento de gaps para o plugin Mesa de Discussão
 
+> **Superseded (2026-08):** This document describes the pre-flexibilization architecture. See docs/workflow.md and docs/architecture.md for the current kernel model.
+
 **Gerado em:** 2026-05-29 15:53:51
 
 ## Participantes

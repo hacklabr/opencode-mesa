@@ -16,95 +16,76 @@ Think of Mesa as a **round table** for AI agents: you bring the problem, Mesa as
 
 ## How It Works
 
+Mesa is an **adaptive orchestrator**, not a fixed pipeline. The Manager reads your briefing, **designs a workflow tailored to your scope**, gets it approved, and executes it using one universal primitive — the **discussion round** — composing parallel/sequential rounds with variable casts.
+
 ```mermaid
 flowchart TD
-    Start([User types /agent briefing-writer]) --> Discovery
+    Start([User types /agent briefing-writer]) --> Briefing
 
-    subgraph "Phase 1: Briefing"
-        Discovery[Briefing Writer\nStructured discovery interview] --> Draft[Draft briefing document]
-        Draft --> Review{User reviews\nbriefing}
-        Review -->|Changes needed| Discovery
-        Review -->|Approved| Approve[approve_briefing]
-        Approve --> Deliver[deliver_briefing]
+    subgraph "Briefing"
+        Briefing[Briefing Writer\nstructured discovery] --> BReview{User reviews}
+        BReview -->|Changes| Briefing
+        BReview -->|Approved| BApprove[approve_briefing]
     end
 
-    Deliver --> Planning
+    BApprove --> Team
 
-    subgraph "Phase 2: Planning"
-        Planning[Manager analyzes briefing\nanalyze_briefing] --> Browse[list_specialists\nbrowse catalog]
-        Browse --> Propose[propose_team\nwith justifications]
-        Propose --> TeamReview{User reviews\nteam proposal}
-        TeamReview -->|Changes needed| Browse
-        TeamReview -->|Approved| Summon[summon_team]
-        Summon --> Phases[define_phases]
+    subgraph "Team"
+        Team[Manager browses catalog\nlist_specialists] --> Propose[propose_team]
+        Propose --> TReview{User reviews}
+        TReview -->|Changes| Propose
+        TReview -->|Approved| Summon[summon_team]
     end
 
-    Phases --> Analysis
+    Summon --> Plan
 
-    subgraph "Phase 3: Analysis"
-        Analysis[open_analysis_round] --> Loop{For each specialist\neach turn}
-        Loop --> Task[Manager invokes specialist\nvia task tool]
-        Task --> Register[register_analysis]
-        Register --> Loop
-        Loop -->|All turns done| Consensus
+    subgraph "Workflow Plan — Gate 0"
+        Plan[Manager writes\nworkflow-plan.md] --> PReview{User approves plan}
+        PReview -->|Changes| Plan
+        PReview -->|Approved| Gate0["record_decision(type='gate', target='plan')"]
     end
 
-    subgraph "Phase 4: Consensus"
-        Consensus[request_consensus\nSpecialists vote] --> VoteResult{Result}
-        VoteResult -->|All AGREE| Spec
-        VoteResult -->|DISAGREE| Debate[Debate round\nre-analyze]
-        Debate --> Consensus
+    Gate0 --> Rounds
+
+    subgraph "Rounds — the universal primitive"
+        Rounds[open_round\ntopic + participants ⊆ team] --> Analyses[register_analysis × N\nPOSITION: agree / agree-with-reservations / disagree]
+        Analyses --> Close{close_round}
+        Close -->|disagree| Subset[subset round\nwith dissenters]
+        Subset --> Analyses
+        Close -->|converged / open-tensions| Next{More rounds\nin plan?}
+        Next -->|Yes| Rounds
     end
 
-    subgraph "Phase 5: Specification"
-        Spec[generate_specification] --> SpecReview{User reviews\nspecification}
-        SpecReview -->|Rejected| Revision[Return for revision]
-        Revision --> Spec
-        SpecReview -->|Approved| ApproveSpec[approve_specification]
+    Next -->|No| Deliverable
+
+    subgraph "Deliverable"
+        Deliverable[produce_deliverable] --> DReview{User reviews}
+        DReview -->|Rejected| Deliverable
+        DReview -->|Approved| DApprove[approve_deliverable]
     end
 
-    ApproveSpec --> Execution
-
-    subgraph "Phase 6: Execution"
-        Execution[check_execution_phases] --> PhaseGate{Phases detected?}
-        PhaseGate -->|No| Impl[delegate_task for each task]
-        PhaseGate -->|Yes| HumanChoice{Human choice}
-        HumanChoice -->|Implement directly| Impl
-        HumanChoice -->|Deep-dive phases| PhaseAnalysis[open_phase_analysis_round]
-        PhaseAnalysis --> PhaseConsensus[request_phase_consensus]
-        PhaseConsensus --> PhaseAppendix[generate_phase_appendix]
-        PhaseAppendix --> MorePhases{More phases?}
-        MorePhases -->|Yes| PhaseAnalysis
-        MorePhases -->|No| Impl
-        Impl --> Verify[QA Engineer verifies] --> VerifyResult{Result?}
-        VerifyResult -->|Passed| More{More tasks?}
-        VerifyResult -->|Failed| HumanGate{Human decides}
-        HumanGate -->|Accept| More
-        HumanGate -->|Correct| Impl
-        More -->|Yes| Impl
-        More -->|No| Done([Done ✅])
-    end
+    DApprove --> Done([Done])
 
     style Start fill:#4CAF50,color:#fff
     style Done fill:#4CAF50,color:#fff
-    style Discovery fill:#2196F3,color:#fff
-    style Planning fill:#FF9800,color:#fff
-    style Analysis fill:#9C27B0,color:#fff
-    style Consensus fill:#F44336,color:#fff
-    style Spec fill:#00BCD4,color:#fff
-    style Execution fill:#795548,color:#fff
+    style Briefing fill:#2196F3,color:#fff
+    style Team fill:#FF9800,color:#fff
+    style Plan fill:#9C27B0,color:#fff
+    style Rounds fill:#F44336,color:#fff
+    style Deliverable fill:#00BCD4,color:#fff
 ```
 
-The workflow has six phases:
+The flow:
 
-1. **Briefing** — The Briefing Writer agent conducts a structured discovery interview with you, drafts a briefing document, and waits for your approval.
-2. **Planning** — The Manager agent analyzes your briefing, browses the specialist catalog, proposes a team with justifications, and waits for your approval.
-3. **Analysis** — Each specialist analyzes the briefing from their unique perspective, across multiple turns. Analyses are registered and accumulated.
-4. **Consensus** — Specialists vote on the combined analysis (AGREE / AGREE_WITH_RESERVATIONS / DISAGREE). If disagreements exist, a debate round follows until consensus is reached.
-5. **Specification** — All specialist sections are compiled into a single Markdown document. You review and approve or reject it.
-6. **Execution** — The Manager checks for execution phases, optionally runs per-phase analysis, then delegates implementation tasks to specialists.
+1. **Briefing** — The Briefing Writer conducts a structured discovery interview, drafts a briefing document, and waits for your approval. Approval is a fact, not a phase — `approve_briefing` is the only path to an approved briefing.
+2. **Team** — The Manager browses the specialist catalog, proposes a team with justifications, and waits for your approval (`summon_team`).
+3. **Workflow plan (gate 0)** — The Manager writes `workflow-plan.md`: deliverable, scope class, planned rounds, gates, and an explicit `Skipped:` line for every optional step. You approve the document; the Manager records it via `record_decision`. No round can open without an approved plan.
+4. **Rounds** — For each round, `open_round` sets the topic and cast (a subset of the team). Specialists analyze and self-register their work, ending with a declared `POSITION:` block. `close_round` records the outcome: `converged`, `converged-with-open-tensions` (tensions copied verbatim), or `escalated` (you judge). A declared `disagree` vetoes "converged" — the Manager opens a subset round with the dissenters.
+5. **Deliverable** — `produce_deliverable` writes the canonical artifact (specification, overview, journeys, appendix, …) with round provenance. You approve it via `approve_deliverable`.
 
-Every phase transition requires **explicit human approval** — Mesa never proceeds without your say-so.
+Every approval gate — briefing, team, plan, deliverable — requires **explicit human approval recorded through a tool**. Verbal approval in chat is never sufficient.
+
+Consensus is **emergent**: specialists declare positions; the Manager judges whether the *process* converged, never who is *right*. There is no structured voting.
 
 ## Quick Start
 
@@ -113,7 +94,7 @@ Every phase transition requires **explicit human approval** — Mesa never proce
 curl -fsSL https://raw.githubusercontent.com/hacklabr/opencode-mesa/main/install.sh | bash
 ```
 
-The script clones the repo, builds the plugin, generates specialist agents, and prints the plugin path to add to your `opencode.json`. Restart OpenCode, then start a discussion:
+The script clones the repo, builds the plugin, generates the Mesa agents, and prints the plugin path to add to your `opencode.json`. Restart OpenCode, then start a discussion:
 
 ```
 /agent briefing-writer
@@ -133,7 +114,7 @@ This single command:
 
 - Clones the repository to `~/.local/share/opencode-mesa`
 - Installs dependencies and builds the plugin
-- Generates 367 specialist subagents from the catalog
+- Generates the Mesa agents (`briefing-writer`, `manager`, and the generic `mesa/specialist` subagent)
 - Prints the plugin path for your `opencode.json`
 
 ### Manual Install
@@ -167,11 +148,11 @@ After restarting OpenCode, verify Mesa is loaded:
 > mesa_status
 ```
 
-You should see the plugin version, current phase (`PLANNING`), and empty counts for team, analyses, and votes.
+You should see the plugin version and the current session summary (briefing, team, plan, rounds, deliverables).
 
 ## Usage
 
-### Starting a Discussion (Briefing Phase)
+### Briefing
 
 Switch to the Briefing Writer agent and describe what you need:
 
@@ -179,9 +160,11 @@ Switch to the Briefing Writer agent and describe what you need:
 /agent briefing-writer
 ```
 
-The Briefing Writer conducts a structured discovery interview — asking about your project's goals, constraints, scope, and success criteria. When the interview is complete, it calls `create_briefing` to save the document, and waits for your approval via `approve_briefing`.
+The Briefing Writer conducts a structured discovery interview — goals, constraints, scope, success criteria. When complete, it calls `create_briefing` to save the document, and waits for your approval via `approve_briefing`. Approval also hands the briefing to the Manager — switch agents manually:
 
-Once approved, `deliver_briefing` hands the briefing to the Manager agent and transitions to the **PLANNING** phase.
+```
+/agent manager
+```
 
 You can also import an existing document as a briefing (skips the interview):
 
@@ -189,9 +172,9 @@ You can also import an existing document as a briefing (skips the interview):
 > import_briefing(file_path="/path/to/my-briefing.md", slug="my-project", title="My Project")
 ```
 
-### Team Proposal & Approval (Planning Phase)
+### Team
 
-The Manager agent reads the briefing via `analyze_briefing`, browses the specialist catalog with `list_specialists`, and proposes a team:
+The Manager browses the catalog with `list_specialists` / `get_specialist` and proposes a team:
 
 ```
 > propose_team(specialists=[
@@ -200,119 +183,77 @@ The Manager agent reads the briefing via `analyze_briefing`, browses the special
   ])
 ```
 
-You review the proposal — if you approve, the Manager calls `summon_team` to mark specialists as ready, then `define_phases` to set the workflow phases.
+If you approve, the Manager calls `summon_team`. Only summoned team members can participate in rounds.
 
-### Analysis Rounds (Analysis Phase)
+### Workflow Plan (Gate 0)
 
-The Manager opens an analysis round:
-
-```
-> open_analysis_round(
-    topic="API design for order management",
-    participants=["engineering-backend-architect", "security-specialist"],
-    max_turns=2,
-    briefing_content="..."
-  )
-```
-
-For each specialist, the Manager invokes them via OpenCode's native `task` tool:
+Before the first round, the Manager writes `workflow-plan.md` in the session folder and presents it to you. On your approval:
 
 ```
-task(subagent_type="mesa/specialist", task_id="mesa-engineering-backend-architect", prompt="Analyze the following...", description="Backend analysis")
+> record_decision(type="gate", target="plan",
+    reason="Human approved workflow plan v1",
+    payload={path: ".mesa/sessions/<id>/workflow-plan.md"})
 ```
 
-After each specialist responds, the Manager registers their analysis:
+Mid-flight changes require a new file version plus `record_decision(type="plan-amendment", ...)` — silent replanning is detectable and forbidden.
+
+### Rounds
+
+```
+> open_round(topic="API design for order management",
+    participants=["engineering-backend-architect", "security-specialist"])
+```
+
+The Manager invokes each participant via OpenCode's native `task` tool against the generic `mesa/specialist` subagent. Each specialist self-registers from its own session:
 
 ```
 > register_analysis(agent_id="engineering-backend-architect", agent_name="Backend Architect", content="...", turn=1)
 ```
 
-### Consensus & Specification (Consensus + Documentation Phases)
-
-Once all analyses are in, the Manager calls `request_consensus` with each specialist's vote:
+Every participant's final artifact ends with a declared position:
 
 ```
-> request_consensus(
-    votes=[
-      { agent_id: "engineering-backend-architect", agent_name: "Backend Architect", vote: 1, reason: "Agree with security findings" },
-      { agent_id: "security-specialist", agent_name: "Security Specialist", vote: 2, reason: "Agree but recommend rate limiting" }
-    ],
-    round=1
+POSITION: agree | agree-with-reservations | disagree — [reason]
+```
+
+### Closing a Round
+
+```
+> close_round(
+    decision="converged-with-open-tensions",
+    summary="...",
+    tensions=["Rate limiting strategy unresolved — Security Specialist"],
+    evidencePaths=[".mesa/sessions/<id>/analyses/turn1/security-specialist.md", ...]
   )
 ```
 
-Votes: `0` = DISAGREE, `1` = AGREE, `2` = AGREE_WITH_RESERVATIONS.
+- A declared `disagree` **vetoes `converged`** — open a subset round with the dissenters, record the tension verbatim, or escalate to the human.
+- `evidencePaths[]` is mandatory — decisions without cited evidence are rubber-stamping.
+- Analyses registered by the Manager on a specialist's behalf never satisfy the position requirement.
 
-If all agree, the Manager compiles the specification:
-
-```
-> generate_specification(
-    sections=[
-      { specialist_name: "Backend Architect", specialist_id: "engineering-backend-architect", content: "## Backend Recommendations\n\n..." },
-      { specialist_name: "Security Specialist", specialist_id: "security-specialist", content: "## Security Analysis\n\n..." }
-    ],
-    topic="Order Management API"
-  )
-```
-
-You review the generated spec, then approve or reject:
+### Deliverables
 
 ```
-> approve_specification(approved=true)
-> approve_specification(approved=false, feedback="Missing error handling section")
+> produce_deliverable(kind="specification", topic="Order Management API", content="...")
+> approve_deliverable(path=".mesa/sessions/<id>/specification.md", approved=true)
 ```
 
-### Execution (Execution Phase)
+Kinds: `specification`, `overview`, `journeys`, `appendix`, `other`. Approved deliverables are immutable; each records the rounds it derives from.
 
-After specification approval, the Manager delegates implementation tasks:
+## Session Lifecycle
 
-```
-> delegate_task(
-    personaId="engineering-backend-architect",
-    task="Implement order management API endpoints",
-    context_info="See specification section 2..."
-  )
-```
-
-The tool returns instructions for invoking the specialist via the `task` tool.
-
-## Workflow Reference
-
-The state machine controls phase transitions. Every transition is validated — invalid transitions are rejected with a clear error message.
+The session has a single status — `active`, `paused`, or `cancelled`. All mutating tools require `active`.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PLANNING
-    PLANNING --> ANALYSIS : open_analysis_round
-    PLANNING --> PAUSED : pause_discussion
-    PLANNING --> CANCELLED : cancel_discussion
-    ANALYSIS --> CONSENSUS : request_consensus
-    ANALYSIS --> PAUSED : pause_discussion
-    ANALYSIS --> CANCELLED : cancel_discussion
-    CONSENSUS --> DOCUMENTATION : generate_specification
-    CONSENSUS --> ANALYSIS : reopen debate
-    CONSENSUS --> PAUSED : pause_discussion
-    CONSENSUS --> CANCELLED : cancel_discussion
-    DOCUMENTATION --> APPROVAL : auto-transition
-    DOCUMENTATION --> PAUSED : pause_discussion
-    DOCUMENTATION --> CANCELLED : cancel_discussion
-    APPROVAL --> EXECUTION : approve_specification(true)
-    APPROVAL --> DOCUMENTATION : approve_specification(false)
-    APPROVAL --> PAUSED : pause_discussion
-    APPROVAL --> CANCELLED : cancel_discussion
-    EXECUTION --> PAUSED : pause_discussion
-    EXECUTION --> CANCELLED : cancel_discussion
-    PAUSED --> PLANNING : resume_discussion
-    PAUSED --> ANALYSIS : resume_discussion
-    PAUSED --> CONSENSUS : resume_discussion
-    PAUSED --> DOCUMENTATION : resume_discussion
-    PAUSED --> APPROVAL : resume_discussion
-    PAUSED --> EXECUTION : resume_discussion
-    PAUSED --> CANCELLED : cancel_discussion
-    CANCELLED --> PLANNING : restart
+    [*] --> active
+    active --> paused : pause_discussion
+    paused --> active : resume_discussion
+    active --> cancelled : cancel_discussion
+    paused --> cancelled : cancel_discussion
 ```
 
-You can pause, resume, or cancel at any phase. Cancelling clears analysis data but preserves the briefing and team. You can restart from `CANCELLED` back to `PLANNING`.
+Cancelling clears analysis data but preserves the briefing, team, and deliverables. On resume, the Manager re-reads the plan and round trace and declares its position before acting.
 
 ## Architecture
 
@@ -322,133 +263,104 @@ graph TB
         User[User]
         Agents[Agent Sessions\nbriefing-writer · manager]
         TaskTool[task tool\nnative]
-        SubAgents["Specialist Subagents\nmesa/* namespace"]
+        SubAgents["Generic Specialist Subagent\nmesa/specialist (empty body)"]
     end
 
     subgraph "Mesa Plugin"
-        Tools["29 Tools\nbriefing · manager · discussion\ncatalog · phase-analysis · status"]
-        State["State Layer\nstate.ts · audit.ts"]
+        Tools["24 Tools\nkernel 16 + peripheral 8"]
+        State["State Layer\nstate.ts · SQLite"]
         Catalog["Catalog\nloader.ts · 367 specialists"]
-        Hook["System Prompt Hook\ninjects Mesa context"]
+        Hooks["Hooks\nconfig · tool.execute.before\nchat.system.transform"]
     end
 
     subgraph "Workspace (.mesa/)"
-        StateFile[state.json]
-        Briefings[briefings/]
-        Specs[specifications/]
-        Appendices[appendices/]
-        PhaseDrafts[phase-analysis/]
+        Db[state.db]
+        Sessions["sessions/\nbriefing · plan · analyses\ndeliverables"]
         AuditFile[audit.log]
     end
 
-    Tools --> State --> StateFile
+    Tools --> State --> Db
+    Tools --> Sessions
     Tools --> Catalog
-    Hook --> Agents
+    Hooks --> Agents
     Agents --> Tools
     Agents --> TaskTool --> SubAgents
 
     style Tools fill:#E91E63,color:#fff
     style State fill:#FFC107,color:#000
     style Catalog fill:#4CAF50,color:#fff
-    style Hook fill:#9C27B0,color:#fff
+    style Hooks fill:#9C27B0,color:#fff
 ```
 
-Mesa is an OpenCode plugin that registers 29 tools, 367 specialist subagents, and a system prompt hook. The plugin itself manages state transitions and persistence — the actual specialist invocation happens through OpenCode's native `task` tool, which creates a real subagent session with the specialist's own system prompt.
+Mesa is an OpenCode plugin that registers 24 tools, a 367-persona specialist catalog, and three hooks. The plugin manages seams — cross-session capture, artifact integrity, human gates, circuit breakers, audit — while the workflow itself lives in the Manager's prompt. Specialist invocation happens through OpenCode's native `task` tool.
 
 Key design decisions:
 
-- **Specialists are real subagents** — each runs in its own session with its own system prompt, not a simulated persona.
-- **State is file-based** — everything lives in `.mesa/` within your workspace. No databases, no external services.
-- **The Manager never generates content** — it orchestrates. Specialists generate the actual analysis and specification content.
-- **Human approval gates** — team proposal, specification, and every phase transition can require explicit human confirmation.
-- **Phase-level analysis produces authoritative appendices** — iterative phase analysis creates immutable appendix documents that override the master spec for their scoped phase, ensuring delegated specialists receive the most detailed and debated context.
+- **Kernel/shell model** — code keeps only what is a seam (K1–K5): cross-session capture, artifact integrity, human approval gates, circuit breakers, tamper-evident audit. Workflow topology, consensus format, and rigor live in the prompt.
+- **Data preconditions, not phases** — guards check that required artifacts exist and are approved, never that the session sits at a pipeline position. Every error message teaches recovery.
+- **Specialists are real subagents** — each runs in its own session with its own system prompt, injected at delegation time.
+- **Emergent consensus** — specialists declare POSITION blocks; the Manager tabulates process state, never infers positions or judges content merit.
+- **The plan is the contract** — intention (`workflow-plan.md`), fact (state pointer), trace (`rounds[]`). Amendments bump the version with an audited reason.
+- **Tool visibility filtering** — specialist sessions receive only their 7-tool seam; denied tools are removed from the LLM payload, saving ~5.3k tokens per specialist session.
+
+See [docs/architecture.md](docs/architecture.md) for the full reference.
 
 ## Tool Reference
 
-Mesa provides 29 tools organized into six categories.
+Mesa provides 24 tools: a 16-tool workflow kernel plus 8 peripherals.
 
-### General Tools
+### Kernel
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `mesa_status` | Returns the current plugin status, phase, and counts | _(none)_ |
+| Tool | Description |
+|------|-------------|
+| `mesa_status` | Plugin status, session summary, and plan-gate instruction |
+| `list_specialists` | List specialist personas (`division?`, `search?` filters) |
+| `get_specialist` | Full details and system prompt of a persona (`id`) |
+| `create_briefing` | Create a briefing document (`slug`, `title`, `content`) |
+| `import_briefing` | Import an existing file as a briefing (`file_path`, `slug`, `title?`) |
+| `approve_briefing` | Approve the briefing and hand it to the Manager — the only path to approved |
+| `propose_team` | Propose a team with justifications for human approval |
+| `summon_team` | Summon the approved team |
+| `open_round` | Open a discussion round (`topic`, `participants` ⊆ team, `briefing_content?`) |
+| `register_analysis` | Register a specialist's analysis in the open round (`agent_id`, `agent_name`, `content`, `turn`, `file_path?`, `kind?`, `turn_type?`) |
+| `get_peer_analyses` | List analysis file paths and metadata (read-only) |
+| `close_round` | Close the open round with an audited outcome (`decision`, `summary`, `tensions`, `evidencePaths`, `humanOverride?`) |
+| `record_decision` | Record an audited decision — plan gate, amendments, overrides, delegations, notes (`type`, `target?`, `reason`, `payload?`) |
+| `produce_deliverable` | Produce a canonical deliverable in the session folder (`kind`, `topic`, `content`, `humanOverride?`) |
+| `approve_deliverable` | Approve or reject a deliverable — the only path to approved (`path`, `approved`, `feedback?`) |
+| `ask_peer` | Ask a peer specialist a direct question with full session context |
 
-### Catalog Tools
+### Peripherals
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `list_specialists` | Lists available specialist personas from the catalog | `division?` `string` — filter by division name (e.g. `'engineering'`, `'product'`) · `search?` `string` — search term to filter by name or description |
-| `get_specialist` | Returns full details and system prompt of a specialist | `id` `string` — the persona ID (e.g. `'engineering-backend-architect'`) |
-
-### Briefing Tools
-
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `create_briefing` | Creates and saves a new briefing document in `.mesa/briefings/` | `slug` `string` — URL-friendly identifier (e.g. `'ecommerce-platform'`) · `title` `string` — the briefing title · `content` `string` — full briefing content in Markdown |
-| `approve_briefing` | Marks the current briefing as approved (requires human confirmation) | _(none)_ |
-| `deliver_briefing` | Delivers the approved briefing to the Manager, transitions to PLANNING | _(none)_ |
-| `import_briefing` | Imports an existing file as a pre-approved briefing, resets to PLANNING | `file_path` `string` — absolute path to the briefing file · `slug` `string` — URL-friendly identifier · `title?` `string` — title (defaults to filename) |
-
-### Manager Tools
-
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `analyze_briefing` | Reads the current approved briefing for analysis (PLANNING phase only) | _(none)_ |
-| `propose_team` | Proposes a team of specialists with justifications for human approval | `specialists` `array<{ personaId: string, name: string, division: string, justification: string }>` — proposed specialists |
-| `summon_team` | Summons the approved team, marking each specialist as ready | _(none)_ |
-| `delegate_task` | Defines a task for a specialist, returns invocation instructions (EXECUTION phase only) | `personaId` `string` — specialist persona ID · `task` `string` — task description · `context_info?` `string` — additional context |
-| `verify_implementation` | Records verification result after implementation, handles human decision gate for gaps | `phase_name` `string` · `task_description` `string` · `acceptance_criteria` `string[]` · `result` `"passed"\|"failed"` · `gaps` `string[]` · `qa_specialist_id` `string` · `human_decision?` `"accepted"\|"correct"` · `accepted_gaps?` `string[]` |
-| `define_phases` | Defines the ordered workflow phases for the current project | `phases` `array<string>` — ordered phase names (e.g. `['PLANNING', 'ANALYSIS', 'CONSENSUS']`) |
-| `check_execution_phases` | Detects phases in approved spec, presents implement vs deep-dive choice | _(none)_ |
-| `select_phases_for_analysis` | Parses human phase selection (e.g. `'all'`, `'1, 3, 5'`) | `selection` `string` · `phase_count` `number` |
-| `configure_phase_observation` | Configures guided/auto mode for phase analysis | `phase_name` `string` · `mode` `string` · `master_spec_context?` `string` · `observations?` `string` |
-
-### Discussion Tools
-
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `open_analysis_round` | Opens a structured analysis round with topic and participants (PLANNING → ANALYSIS) | `topic` `string` — the discussion topic · `participants` `array<string>` — ordered specialist persona IDs · `max_turns?` `number` — max turns per specialist (default: 2) · `briefing_content?` `string` — briefing content for specialists |
-| `register_analysis` | Registers a specialist's analysis in the current round (ANALYSIS phase only) | `agent_id` `string` — specialist persona ID · `agent_name` `string` — specialist display name · `content` `string` — the analysis content · `turn` `number` — current turn number (1-based) |
-| `request_consensus` | Initiates consensus voting (ANALYSIS → CONSENSUS) | `votes` `array<{ agent_id: string, agent_name: string, vote: 0\|1\|2, reason: string }>` — specialist votes (0=DISAGREE, 1=AGREE, 2=AGREE_WITH_RESERVATIONS) · `round` `number` — consensus round number |
-| `generate_specification` | Compiles specialist analyses into a specification document (CONSENSUS → DOCUMENTATION → APPROVAL) | `sections` `array<{ specialist_name: string, specialist_id: string, content: string }>` — specification sections · `topic` `string` — specification topic/title |
-| `approve_specification` | Approves or rejects the specification (APPROVAL → EXECUTION or → DOCUMENTATION) | `approved` `boolean` — whether approved · `feedback?` `string` — optional rejection reason |
-| `pause_discussion` | Pauses the current discussion, preserving state for later resumption | _(none)_ |
-| `resume_discussion` | Resumes a paused discussion to a specified phase | `target_phase` `string` — phase to resume to (e.g. `'ANALYSIS'`, `'CONSENSUS'`) |
-| `cancel_discussion` | Cancels the discussion and clears analysis data | _(none)_ |
-
-### Phase Analysis Tools
-
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `check_execution_phases` | Detects phases in approved spec, presents implement vs deep-dive choice | _(none)_ |
-| `select_phases_for_analysis` | Parses human phase selection (e.g. `'all'`, `'1, 3, 5'`) | `selection` `string` · `phase_count` `number` |
-| `open_phase_analysis_round` | Opens focused analysis round for one execution phase | `phase_index` `number` · `phase_name` `string` · `mode` `string` · `specialists?` `array` · `briefing_content?` `string` · `observations?` `string` |
-| `request_phase_consensus` | Records consensus votes for a phase analysis | `phase_index` `number` · `phase_name` `string` · `votes` `array` · `round` `number` · `consensus_reached` `boolean` |
-| `generate_phase_appendix` | Generates canonical appendix from phase analysis | `phase_index` `number` · `phase_name` `string` · `phase_scope` `string` · `specialist_analyses_summary` `string` · `consensus_outcome` `string` · `technical_decisions` `string` · `revised_execution_plan` `string` · `delta_from_master` `string` · `mode` `string` · `specialists` `array` · `mini_discovery_context?` `string` |
-| `configure_phase_observation` | Configures guided/auto mode for phase analysis | `phase_name` `string` · `mode` `string` · `master_spec_context?` `string` · `observations?` `string` |
-| `detect_phases` | Reads master spec and detects execution phases | `spec_path?` `string` |
+| Tool | Description |
+|------|-------------|
+| `pause_discussion` | Pause the session; state preserved |
+| `resume_discussion` | Resume a paused session |
+| `cancel_discussion` | Cancel the session; clears analyses, preserves briefing/team/deliverables |
+| `memory_store` | Store a cross-session memory entry (deduplicated) |
+| `memory_recall` | Recall project memories by category/query |
+| `memory_forget` | Soft-delete a memory entry |
+| `mesa_check_update` | Check for a newer plugin version |
+| `mesa_update` | Update the plugin (requires restart) |
 
 ## State Persistence
 
-All discussion state is stored in `.mesa/` within your workspace:
+All session state lives in `.mesa/` within your workspace:
 
 ```
 .mesa/
-├── state.json                 # Current discussion state (phase, team, analyses, votes)
-├── briefing-current.md        # Active briefing (delivered to Manager)
-├── briefings/                 # Saved briefing documents
-│   └── briefing-{slug}.md
-├── specifications/            # Generated specification documents
-│   ├── spec-{id}.md
-│   └── appendices/            # Phase appendix documents
-│       └── appendix-{id}-{phase}-{uuid}.md
-├── phase-analysis/            # Draft phase analysis workspace
-│   └── phase-{index}-{slug}/
-├── briefing-for-discussion.md # Briefing content passed to specialists
-└── audit.log                  # Action audit trail
+├── state.db                    # SQLite state (v15): briefing, team, rounds, deliverables, plan
+├── audit.log                   # Tamper-evident action trail
+└── sessions/
+    └── {timestamp}_{id}_{slug}/
+        ├── briefing.md
+        ├── workflow-plan.md    # The approved plan (gate 0)
+        ├── analyses/           # Per-turn analysis files
+        ├── specification.md    # + overview.md, appendices/, deliverables/
+        └── ...
 ```
 
-State is managed through strict phase transitions — every tool validates the current phase before executing. Invalid transitions are rejected with a descriptive error. The audit log records every significant action (briefing approved, team summoned, consensus reached, etc.) for traceability.
+Integrity is protected by data preconditions, not a phase state machine — every tool validates that the artifacts it depends on exist and are approved. The audit log records every significant action with the current plan version.
 
 ## Agents
 
@@ -457,26 +369,16 @@ State is managed through strict phase transitions — every tool validates the c
 | Agent | Description |
 |-------|-------------|
 | `briefing-writer` | Conducts structured discovery sessions to produce professional briefings |
-| `manager` | Orchestrates specialist teams for structured discussion and specification |
+| `manager` | Designs the workflow plan and orchestrates specialist rounds |
 
-### Specialist Subagents
+### Specialist Subagent
 
-367 specialists from the [agency-agents](https://github.com/msitarzewski/agency-agents) catalog, organized in 26+ divisions:
+All 367 personas from the [agency-agents](https://github.com/msitarzewski/agency-agents) catalog run through a single generic hidden subagent, `mesa/specialist`, registered with `mode: subagent` and an intentionally empty body. At delegation time the plugin resolves the persona (via the `tool.execute.before` hook):
 
-- accounting, administrative, china-marketing, culture, customer-service
-- design, digital-marketing, education, electronics, environment
-- finance, fintech, game-development, geospatial, human-resources
-- integrations, legal, mechatronics, politics, product
-- professional-development, quality-assurance, sales, security, social-engagement
-- software-development, strategy, urban-planning, worldbuilding
+1. **Inline persona block (primary)** — the Manager includes `<specialist-persona id="...">...</specialist-persona>` in the task prompt. Required on runtimes that reject non-`ses_` task IDs.
+2. **`task_id` slug** — `task_id="mesa-{personaId}"`; the hook injects the persona from the catalog. A stable `task_id` preserves specialist memory across rounds.
 
-All specialists share a single generic hidden subagent, `mesa/specialist`, registered with `mode: subagent` and an intentionally empty body. At delegation time the Mesa plugin injects the persona's system prompt into the task prompt automatically (via the `tool.execute.before` hook) — the Manager must NOT include it in the task prompt. The `task_id="mesa-{personaId}"` parameter tells the plugin which persona to inject.
-
-The Manager invokes specialists via:
-
-```
-task(subagent_type="mesa/specialist", task_id="mesa-engineering-backend-architect", prompt="<task details only>", description="...")
-```
+Specialist sessions see only their seam tools (`register_analysis`, `get_peer_analyses`, `ask_peer`, memory tools, `mesa_status`) — everything else is filtered out of the request payload.
 
 To regenerate the agent files after plugin updates:
 
@@ -493,7 +395,7 @@ bun run lint           # Type-check without emitting
 bun run typecheck      # Type-check without emitting
 bun test               # Run test suite (vitest)
 bun run dev            # Watch mode (tsc --watch)
-bun run setup:agents   # Generate .opencode/agents/ from catalog
+bun run setup:agents   # Generate .opencode/agents/ (briefing-writer, manager, mesa/specialist)
 ```
 
 **Prerequisites**: [Bun](https://bun.sh/) runtime, TypeScript 5+

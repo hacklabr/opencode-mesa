@@ -1,6 +1,51 @@
 # Architecture Reference
 
-Technical architecture of the Mesa plugin — components, data flow, and design decisions.
+Technical architecture of the Mesa plugin — the kernel/shell model, data preconditions, state, and design decisions.
+
+> **Diátaxis category**: Reference
+
+## Kernel / Shell Model
+
+Mesa is an **adaptive orchestrator**. The codebase is split by one test: *is this a seam, or a recipe?*
+
+- **Kernel (code)**: only what is a **seam** between sessions, state, and audit — things a prompt cannot enforce.
+- **Shell (prompts)**: workflow topology, consensus format, rigor, domain recipes — the Manager's judgment, expressed in `src/agents/manager.md`.
+
+### The K1–K5 Seam Test
+
+A capability stays in code **iff** it matches one of these:
+
+| # | Kernel keeps | Reason |
+|---|--------------|--------|
+| **K1** | Cross-session capture (hooks, `ask_peer`, persona injection) | Impossible via prompt — the Manager does not control the runtime |
+| **K2** | Artifact integrity (canonical writes, path containment, dedup) | State corruption is irreversible |
+| **K3** | Human approval gates (briefing, team, deliverables, plan) | Trust boundary — a chokepoint the agent cannot silently forge |
+| **K4** | Circuit breakers (session budgets, rate caps) | Protect against the LLM itself |
+| **K5** | Tamper-evident audit log | A falsifiable trail defeats the point |
+
+**Lives in the shell (prompt)**: pipeline/topology of the workflow, consensus format, rigor levels, journey/phase recipes, implementation/verification rituals, journey/phase detection. The old phase×mode state machine (`VALID_TRANSITIONS`, `VALID_MODE_TRANSITIONS`, `requirePhase`/`requireMode`, `define_phases`) died integrally.
+
+### Data Preconditions (Replacing the State Machine)
+
+Guards are **data-checkable preconditions**, never pipeline positions. A precondition is legitimate iff it (a) is checkable without interpreting content, (b) protects a trust boundary or integrity, and (c) has an audited human override. Global guard: all mutations require session `status == "active"`.
+
+| Tool | Code-enforced precondition |
+|------|---------------------------|
+| `create_briefing` / `import_briefing` | No briefing with status ≠ `rejected` in the session |
+| `approve_briefing` | Briefing `draft` → `approved`; the **only** path to approved |
+| `propose_team` | Briefing `approved` |
+| `summon_team` | A pending proposal exists |
+| `open_round` | Briefing approved ∧ ≥1 summoned member ∧ **plan approved (pointer)** ∧ no open round ∧ `rounds.length < 12` ∧ participants ⊆ team (**hard error**) |
+| `register_analysis` | Round open ∧ agent ∈ participants ∧ dedup `UNIQUE(session, round, agent, turn, turn_type)` ∧ ≤40 analyses/round ∧ `delta` requires a prior `full` |
+| `get_peer_analyses` | None (read-only) |
+| `close_round` | Round open ∧ completeness (≥1 self-registered analysis per participant with a lexical POSITION block; `registered_by_manager` entries don't count) ∧ `evidencePaths[]` non-empty; completeness override requires `humanOverride: true` (audited) |
+| `record_decision` | Global guard only |
+| `produce_deliverable` | ≥1 closed round with ≥1 analysis OR `humanOverride: true` (audited) ∧ path contained in session folder |
+| `approve_deliverable` | Deliverable `draft` → `approved`/`rejected`; the **only** path |
+| `ask_peer` | Busy-check + session lookup + tool lockdown + rate cap (2/turn) + peer auto-registered |
+| `pause` / `resume` / `cancel` | Trivial status transitions |
+
+**Design rule**: code enforces; error messages teach recovery (self-documenting guards); the prompt teaches philosophy in exactly one paragraph. Precondition tables in the prompt would re-create pipeline-thinking.
 
 ## Component Overview
 
@@ -14,24 +59,22 @@ graph TB
     end
 
     subgraph "Mesa Plugin"
-        Tools["28 Tools\nbriefing · manager · discussion\ncatalog · phase-analysis · status"]
-        State["State Layer\nstate.ts · audit.ts"]
+        Tools["24 Tools\nkernel 16 + peripheral 8"]
+        State["State Layer\nstate.ts · SQLite"]
         Catalog["Catalog\nloader.ts · 367 specialists"]
-        Hook["System Prompt Hook\ninjects Mesa context"]
+        Hooks["Hooks\nconfig · tool.execute.before\nchat.system.transform"]
     end
 
     subgraph "Workspace (.mesa/)"
-        StateFile[state.json]
-        Briefings[briefings/]
-        Specs[specifications/]
-        Appendices[appendices/]
-        PhaseDrafts[phase-analysis/]
+        Db[state.db]
+        Sessions["sessions/\nbriefing · plan · analyses\ndeliverables"]
         AuditFile[audit.log]
     end
 
-    Tools --> State --> StateFile
+    Tools --> State --> Db
+    Tools --> Sessions
     Tools --> Catalog
-    Hook --> Agents
+    Hooks --> Agents
     Agents --> Tools
     Agents --> TaskTool --> SubAgents
 ```
@@ -40,339 +83,179 @@ graph TB
 
 ### Tools (`src/tools/`)
 
-Six tool modules, each registering tools via the `tool()` helper from `@opencode-ai/plugin`:
+Eleven modules registering 24 tools via the `tool()` helper:
 
 | Module | Tools | Purpose |
 |--------|-------|---------|
-| `mesa-tools.ts` | `mesa_status` | Plugin health and state summary |
+| `mesa-tools.ts` | `mesa_status` | Plugin health, session summary, plan-gate instruction |
 | `catalog-tools.ts` | `list_specialists`, `get_specialist` | Browse and retrieve specialist profiles |
-| `briefing-tools.ts` | `create_briefing`, `approve_briefing`, `deliver_briefing`, `import_briefing` | Briefing lifecycle management |
-| `manager-tools.ts` | `analyze_briefing`, `propose_team`, `summon_team`, `delegate_task`, `define_phases`, `check_execution_phases`, `select_phases_for_analysis`, `configure_phase_observation` | Team assembly, task delegation, and phase gate orchestration |
-| `discussion-tools.ts` | `open_analysis_round`, `register_analysis`, `request_consensus`, `generate_specification`, `approve_specification`, `pause_discussion`, `resume_discussion`, `cancel_discussion` | Structured discussion workflow |
-| `phase-analysis-tools.ts` | `open_phase_analysis_round`, `request_phase_consensus`, `generate_phase_appendix`, `detect_phases` | Iterative per-phase analysis and appendix generation |
+| `briefing-tools.ts` | `create_briefing`, `approve_briefing`, `import_briefing` | Briefing lifecycle (approval absorbs delivery) |
+| `manager-tools.ts` | `propose_team`, `summon_team` | Team assembly gates |
+| `round-tools.ts` | `open_round`, `close_round` | The universal discussion primitive |
+| `discussion-tools.ts` | `register_analysis`, `get_peer_analyses`, `pause_discussion`, `resume_discussion`, `cancel_discussion` | Analysis capture and session lifecycle |
+| `decision-tools.ts` | `record_decision`, `produce_deliverable`, `approve_deliverable` | Audited decisions and canonical artifacts |
+| `peer-tools.ts` | `ask_peer` | Cross-session peer consultation (K1/K4) |
+| `memory-tools.ts` | `memory_store`, `memory_recall`, `memory_forget` | Cross-session knowledge persistence |
+| `update-tools.ts` | `mesa_check_update`, `mesa_update` | Self-update |
 
-### State (`src/state.ts`, `src/audit.ts`)
+**Kernel 16**: `mesa_status`, `list_specialists`, `get_specialist`, `create_briefing`, `import_briefing`, `approve_briefing`, `propose_team`, `summon_team`, `open_round`, `register_analysis`, `get_peer_analyses`, `close_round`, `record_decision`, `produce_deliverable`, `approve_deliverable`, `ask_peer`.
 
-**State management** follows a strict load → mutate → save pattern:
+**Peripheral 8**: `pause_discussion`, `resume_discussion`, `cancel_discussion`, `memory_store`, `memory_recall`, `memory_forget`, `mesa_check_update`, `mesa_update`.
 
-1. **Load**: `loadState()` reads `.mesa/state.json`. If corrupted, falls back to `.mesa/state.json.bak`. If neither exists, returns initial state.
-2. **Mutate**: The tool handler modifies the state object in memory.
-3. **Save**: `saveState()` writes to `.mesa/state.json.tmp`, then atomically renames to `.mesa/state.json`. The previous file is preserved as `.mesa/state.json.bak`.
+### State (`src/state.ts`, `src/audit.ts`) — v15
 
-**Atomic writes** ensure no data loss on crash:
-- Write to `.tmp` file
-- `rename()` (atomic on POSIX) to final path
-- Previous state preserved as `.bak`
+State lives in **SQLite** at `.mesa/state.db` (Bun SQLite), with session-scoped tables. Legacy `.mesa/state.json` files are migrated automatically on first load.
 
-**Audit trail**: Every significant action (briefing approved, team summoned, analysis registered, etc.) is appended to `.mesa/audit.log` with a timestamp.
+State follows a strict load → mutate → save pattern with atomic writes, and every significant action is appended to `.mesa/audit.log` with a timestamp and the current `planVersion` — plan decisions and amendments cannot be causally re-shuffled retroactively (K5 sharpening).
 
-**Schema versioning**: State includes a `stateVersion` field. Future migrations check this field and apply transformations as needed.
+**`CURRENT_STATE_VERSION = 15`**. The v14 structural migration (still the live schema) introduced:
+
+- **`rounds[]`** (append-only, JSON column) — the universal deliberation primitive. `AnalysisEntry` carries a `roundId` FK. Legacy analyses are backfilled into a synthetic closed round `legacy-round-1`.
+- **`deliverables[]`** (JSON column) — generalizes specification/appendices/journeys: `{path, kind, status, provenance: {roundIds}}`. Legacy specs backfill as `kind: "specification"`.
+- **`plan`** (JSON column) — the plan pointer: `{path, version, status, approvedAt}`.
+- **`mesa_votes` dropped** — exported to the audit log before removal (structured voting is dead; positions are declared).
+
+Key types (`src/types.ts`):
+
+```ts
+interface Round {
+  id: string                    // "r1", "r2", ... ("legacy-round-1" for backfill)
+  topic: string
+  participants: string[]        // ⊆ team (hard error otherwise)
+  status: "open" | "closed"
+  openedAt: string
+  closedAt?: string
+  outcome?: RoundOutcome
+}
+
+interface RoundOutcome {
+  decision: "converged" | "converged-with-open-tensions" | "escalated"
+  summary: string
+  tensions: string[]            // verbatim from declared positions
+  evidencePaths: string[]       // non-empty — anti-rubber-stamping
+  positions: Record<string, string>  // agentId → declared position
+}
+
+interface Deliverable {
+  path: string
+  kind: "specification" | "overview" | "journeys" | "appendix" | "other"
+  status: "draft" | "approved" | "rejected"
+  provenance: { roundIds: string[] }
+}
+
+interface PlanPointer {
+  path: string
+  version: number
+  status: "draft" | "approved"
+  approvedAt?: string
+}
+```
+
+One round may be open at a time (cheap sanity invariant for the audit).
+
+### Circuit Breakers (`src/config.ts`)
+
+Constants protecting against the LLM itself (K4). Overrides require a human-authorized, audited `record_decision`.
+
+| Constant | Value | Guards |
+|----------|-------|--------|
+| `MAX_ROUNDS_PER_SESSION` | 12 | `open_round` — non-converging composition |
+| `MAX_ANALYSES_PER_ROUND` | 40 | `register_analysis` — runaway rounds |
+| `PEER_CONSULTATION_CAP` | 2 | `ask_peer` — per-turn peer consultations |
 
 ### Catalog (`src/catalog/`)
 
-The specialist catalog is loaded from embedded YAML files in `src/catalog/agency-agents/`:
-
-1. **Loader** (`loader.ts`): Reads all `.md` files from the catalog directory, parses YAML frontmatter (delimited by `---`), and extracts specialist metadata (name, description, division, system prompt).
-2. **Frontmatter parser**: Simple regex-based parser that extracts YAML key-value pairs between `---` delimiters.
-3. **Caching**: The catalog is loaded once and cached in memory for the plugin's lifetime. Subsequent `list_specialists` and `get_specialist` calls read from cache.
-
-Each specialist has:
-- `id`: URL-friendly identifier (e.g. `engineering-backend-architect`)
-- `name`: Display name
-- `description`: Short description
-- `division`: Organizational division (e.g. `engineering`, `product`, `design`)
-- `systemPrompt`: Full system prompt text (from the body of the `.md` file)
+367 specialist personas loaded from bundled `.md` files (YAML frontmatter + body), parsed once and cached in memory. Each specialist has `id`, `name`, `description`, `division`, and `systemPrompt`.
 
 ### Workflow (`src/workflow/`)
 
-The state machine is the single source of truth for phase transitions:
+- **`specialist-injection.ts`** — the `tool.execute.before` hook intercepts `task` calls for `mesa/specialist` and resolves the persona in order: (1) session resumption (`task_id="ses_..."` — pass through), (2) **inline `<specialist-persona id="...">` block in the prompt (primary path — for runtimes rejecting non-`ses_` task IDs)**, (3) `task_id` slug `mesa-{personaId}` (hook injects the persona from the catalog). If no persona resolves, a `<specialist-setup-error>` notice is prepended instead of blocking the call.
+- **`tool-visibility.ts`** — per-agent tool visibility filtering (see below).
+- **`transitions.ts`** — legacy status transitions (active/paused/cancelled) only.
 
-- **`transitions.ts`**: Defines the valid transitions map — `{ from_phase: [valid_target_phases] }`. Every tool that transitions state validates against this map.
-- Tools call `validateTransition(from, to)` before any state change. Invalid transitions throw a `PhaseError` with a descriptive message.
+### Tool Visibility Filtering (Spec D8)
+
+The `config` hook (`applySpecialistToolPermissions`) injects `deny` permission rules for every registered Mesa tool **not** in the specialist allowlist into `agent["mesa/specialist"].permission`:
+
+```ts
+SPECIALIST_ALLOWED_TOOLS = [
+  "register_analysis", "get_peer_analyses", "ask_peer",
+  "memory_store", "memory_recall", "memory_forget", "mesa_status",
+]
+```
+
+OpenCode removes permission-denied tools from the LLM request payload at request-build time (`resolveTools`), so this is a **real token saving** (~5.3k per specialist session), not just execution blocking. Properties:
+
+- **Self-healing**: derived from the live tool registry — the deny list can never drift from registered tools.
+- **Named agents left untouched**: `manager` and `briefing-writer` keep the full kernel.
+- **Never clobbers**: explicit pre-existing rules (e.g. user overrides in `opencode.json`) are preserved.
+
+### Plan Gate (`src/utils/plan-gate.ts`)
+
+Single source of truth for "no approved plan" recovery, surfaced ambiently by `mesa_status` and as a hard precondition by `open_round`. Distinguishes:
+
+- **Legacy session** (v14/v15-migrated — `rounds[]` contains a `legacy-*` round): the workflow was approved under the old pipeline; silently adopting a synthesized plan would violate the gate retroactively. The Manager must synthesize a `workflow-plan.md` mapping existing artifacts to remaining steps and present it to the human.
+- **Fresh session**: the Manager writes the plan before the first round (gate 0).
+
+Approval is recorded via `record_decision(type="gate", target="plan", payload={path})` — the only path to an approved plan pointer. `type="plan-amendment"` bumps the version (must strictly increase); `type="override"` force-approves with an explicit audit marking.
 
 ### Errors (`src/errors.ts`)
-
-Typed error classes for consistent error handling:
 
 | Class | Use |
 |-------|-----|
 | `MesaError` | Base class for all Mesa errors |
-| `PhaseError` | Invalid phase transition or wrong-phase tool call |
-| `StateError` | State file corruption, missing state |
+| `PhaseError` | Invalid lifecycle/status operation |
+| `StateError` | State corruption, missing state |
 | `ValidationError` | Invalid tool parameters |
 | `CatalogError` | Specialist not found, catalog load failure |
 
-### Types (`src/types.ts`)
+### Session Folder Layout
 
-Centralized type definitions used across all modules:
+All session artifacts live under `.mesa/sessions/{YYYYMMDDHHmm}_{4hex}_{slug}/`:
 
-- `MesaPhase` — union type of all valid phases
-- `MesaState` — full state object shape
-- `TeamProposal`, `Specialist` — team-related types
-- `AnalysisEntry`, `VoteEntry` — discussion types
-- `ToolResponse` — standardized `{ ok: boolean, data/error }` pattern
+```
+.mesa/
+├── state.db                          # SQLite state (v15)
+├── audit.log                         # Tamper-evident action trail
+└── sessions/
+    └── 202608012203_040c_my-project/
+        ├── briefing.md               # Approved briefing
+        ├── workflow-plan.md          # The plan (intention layer)
+        ├── analyses/
+        │   ├── turn1/{personaId}.md
+        │   ├── discussion-r{R}/{personaId}.md
+        │   └── ask_peer/{caller}_{callee}_{id}.md
+        ├── specification.md          # kind="specification"
+        ├── overview.md               # kind="overview"
+        ├── appendices/               # kind="appendix"
+        └── deliverables/             # kind="other"
+```
 
-### Utilities (`src/utils/`)
-
-- **`responses.ts`**: Standardized tool response helpers (`ok(data)`, `error(message)`) that wrap responses in a consistent format with a phase context header.
-- **`slug.ts`**: Shared slug validation regex (lowercase, numbers, hyphens only).
+Canonical artifact writes use temp-file + atomic rename; paths are validated for workspace containment (K2). Approved deliverables are immutable — re-production at the same path is refused.
 
 ## How Tools Are Registered
 
-The plugin entry point (`src/index.ts`) exports a function that returns a plugin definition:
+The plugin entry (`src/index.ts`) returns the plugin definition:
 
 ```typescript
-import { tool } from "@opencode-ai/plugin"
-
-export default function mesaPlugin() {
+export const mesa: Plugin = async (input) => {
+  const mesaTools = { mesa_status: ..., /* 24 tools */ }
   return {
-    name: "mesa",
-    tools: [
-      tool({ name: "mesa_status", ... }),
-      tool({ name: "create_briefing", ... }),
-      // ... 19 more tools
-    ],
-    hooks: {
-      "experimental.chat.system.transform": systemPromptHook,
+    tool: mesaTools,
+    config: async (config) => {
+      applySpecialistToolPermissions(config, Object.keys(mesaTools))
     },
+    "tool.execute.before": async (toolInput, output) => { /* persona injection */ },
+    "experimental.chat.system.transform": async (_input, output) => { /* Mesa context + memory hint */ },
   }
 }
 ```
 
-Each `tool()` call defines:
-- `name`: Tool identifier (used by agents)
-- `description`: What the tool does (shown to the AI)
-- `parameters`: Zod schema for parameter validation
-- `execute`: Handler function that implements the tool logic
+## Design Decisions (Recap)
 
-## How State Is Managed
-
-Every tool follows the same pattern:
-
-```
-1. loadState()           → Read .mesa/state.json (with .bak recovery)
-2. Validate phase        → Ensure tool is called in the right phase
-3. Validate parameters   → Zod handles this at the tool boundary
-4. Mutate state          → Update in-memory state object
-5. saveState()           → Atomic write (tmp → rename → bak rotation)
-6. audit()               → Append action to audit.log
-7. Return response       → ok(data) or error(message) with phase header
-```
-
-## How Specialists Are Loaded
-
-1. At plugin startup, `loadCatalog()` reads all `.md` files from the bundled `src/catalog/agency-agents/` directory.
-2. Each file is parsed for YAML frontmatter (metadata) and body (system prompt).
-3. The parsed specialists are stored in an in-memory `Map<string, Specialist>`.
-4. `list_specialists` filters and paginates the cached catalog.
-5. `get_specialist` retrieves a single specialist by ID.
-
-Specialist subagents are registered separately via `bun run setup:agents`, which generates `.opencode/agents/mesa-*.md` files — one per specialist. OpenCode loads these as hidden subagents in the `mesa/` namespace.
-
----
-
-## Phase Analysis Architecture
-
-### Sidecar Pattern (`mesa_phase_context`)
-
-The phase analysis feature introduces a **JSON sidecar table** alongside the existing normalized schema. This hybrid approach separates queryable relational data from ephemeral phase-local context.
-
-```mermaid
-erDiagram
-    MESA_STATE ||--o{ MESA_TEAM : has
-    MESA_STATE ||--o{ MESA_ANALYSES : has
-    MESA_STATE ||--o{ MESA_VOTES : has
-    MESA_STATE ||--o{ MESA_PHASE_CONTEXT : sidecar
-
-    MESA_STATE {
-        string workspace_id PK
-        string current_phase
-        string specification_path
-        string appendices
-        int state_version
-    }
-
-    MESA_PHASE_CONTEXT {
-        string workspace_id PK
-        string session_id PK
-        string phase PK
-        text context_json
-        int schema_version
-        string updated_at
-    }
-```
-
-**Rule**: Queryable data goes in normalized tables; ephemeral phase-local context goes in the sidecar.
-
-| Data Type | Location | Example |
-|-----------|----------|---------|
-| Analyses, votes, team | Normalized tables | `mesa_analyses`, `mesa_votes` |
-| Phase observations, mini-briefing answers | Sidecar | `context_json.observations` |
-| Consensus metadata | Sidecar | `context_json.consensusReached` |
-| Draft directory paths | Sidecar | `context_json.draftDir` |
-| Appendix references | State JSON | `DiscussionState.appendices` |
-
-The sidecar is **versioned**: `schema_version` on each row enables future migrations. Context is validated with Zod on read/write via `PhaseContextSchema`.
-
-```typescript
-// Writing to the sidecar
-const repo = new SqliteStateRepository(workspaceDir);
-await repo.savePhaseContext({
-  workspaceId: workspaceDir,
-  sessionId,
-  phase: "phase-1-foundation",
-  context: { mode: "observed", observations: "...", status: "analysis_opened" },
-  schemaVersion: 1,
-  updatedAt: new Date().toISOString(),
-});
-```
-
-### File Layout: Draft vs. Canonical
-
-Phase analysis maintains a strict separation between mutable drafts and immutable canonical artifacts.
-
-```
-workspace/
-├── .mesa/
-│   ├── state.db                          # SQLite state + sidecar
-│   ├── audit.log                         # Audit trail
-│   ├── phase-analysis/                   # Draft workspace (mutable)
-│   │   └── phase-1-foundation/
-│   │       ├── mini-briefing.md
-│   │       ├── analysis-engineering-1.md
-│   │       └── consensus-votes.json
-│   └── specifications/
-│       ├── spec-910a7363.md              # Master spec (immutable after approval)
-│       └── appendices/                   # Canonical appendices (immutable)
-│           ├── appendix-910a7363-foundation-a3f7e2b1.md
-│           └── analyses-910a7363-foundation-a3f7e2b1/
-│               ├── analysis-engineering-1.md
-│               └── analysis-security-1.md
-```
-
-**Atomic promotion**: `generate_phase_appendix` writes to a temporary file, then renames it to the canonical path:
-
-```typescript
-const tempPath = `${canonicalAbs}.tmp`;
-await artifacts.writeFile(tempPath, appendixContent);
-await fs.rename(tempPath, canonicalAbs);  // Atomic on POSIX
-```
-
-This ensures that readers never see a partially written appendix.
-
-### Appendix Linking Model
-
-Appendices are linked bidirectionally:
-
-1. **Master → Appendices**: The `DiscussionState.appendices` array stores relative filenames of all approved appendices.
-2. **Appendix → Master**: Each appendix frontmatter includes `master_spec: "spec-{id}.md"`.
-
-```mermaid
-graph LR
-    Master["spec-910a7363.md\n<appendices index table>"] -->|references| A1["appendix-910a7363-foundation-xxx.md"]
-    Master -->|references| A2["appendix-910a7363-core-tools-yyy.md"]
-    A1 -->|master_spec| Master
-    A2 -->|master_spec| Master
-```
-
-**Resolution at delegation time**: When `delegate_task` receives a `phase_name`, it:
-
-1. Slugifies the phase name.
-2. Scans `state.appendices` for a basename containing that slug.
-3. Falls back to scanning the appendices directory if not found in state.
-4. If found, prepends the appendix path to the specialist's context.
-
-```typescript
-// In delegate_task
-if (args.phase_name) {
-  const appendixPath = await findPhaseAppendix(directory, state.appendices, args.phase_name);
-  if (appendixPath) {
-    effectiveContext = `**Phase Appendix (authoritative for "${args.phase_name}"):** ${appendixPath}`;
-  }
-}
-```
-
-### State Version Migration
-
-The phase analysis feature bumped `CURRENT_STATE_VERSION` from 1 to 2.
-
-**Migration path (`migrate_v1_to_v2`)**:
-
-1. Creates `mesa_phase_context` table (idempotent).
-2. Adds `appendices` column to `mesa_state` and `mesa_session_state` (idempotent via `ALTER TABLE ... ADD COLUMN`).
-3. Bumps `state_version` from 1 to 2 for all existing rows.
-
-**Backward compatibility**:
-
-- JSON state files (legacy v1) are automatically migrated to SQLite on first load.
-- Old SQLite databases without the `appendices` column receive the column with default `'[]'`.
-- The `loadState` function tolerates version mismatches with a warning:
-  ```
-  [Mesa] State version mismatch: db=1, current=2. Migration may be needed.
-  ```
-
-**Zod defaults** ensure in-memory safety: `appendices: z.array(z.string()).default([])`.
-
-**Regression test requirement**: Loading a v1 state must succeed with `appendices` defaulting to `[]`.
-
-### Repository Interfaces
-
-The phase analysis feature introduces two repository abstractions:
-
-#### `StateRepository`
-
-Handles phase context CRUD in the sidecar table:
-
-```typescript
-interface StateRepository {
-  getPhaseContext(workspaceId, sessionId, phase): Promise<PhaseContextRecord | null>
-  savePhaseContext(record): Promise<void>
-  deletePhaseContext(workspaceId, sessionId, phase): Promise<void>
-  listPhaseContexts(workspaceId, sessionId): Promise<PhaseContextRecord[]>
-  close(): void
-}
-```
-
-Implementation: `SqliteStateRepository` (Bun SQLite).
-
-#### `ArtifactRepository`
-
-Handles file system operations for drafts and canonical appendices:
-
-```typescript
-interface ArtifactRepository {
-  readFile(filePath): Promise<string>
-  writeFile(filePath, content): Promise<void>
-  fileExists(filePath): Promise<boolean>
-  ensureDirectory(dirPath): Promise<void>
-  listFiles(directory): Promise<string[]>
-}
-```
-
-Implementation: `FsArtifactRepository` (Node.js `fs/promises`).
-
-This abstraction allows tests to substitute an in-memory artifact repository for hermetic testing.
-
-### Phase Detection Strategy
-
-Phase detection uses a three-tier strategy defined in `src/utils/phase-detection.ts`:
-
-```mermaid
-graph TD
-    A[Spec text] --> B{T1: YAML frontmatter}
-    B -->|execution_plan present| C[Return phases]
-    B -->|not present| D{T2: Markdown headings}
-    D -->|## Phase N: Name| C
-    D -->|## Execution Plan + list| C
-    D -->|not detected| E{T3: Heuristic fallback}
-    E -->|Phase/Step N patterns| C
-    E -->|no match| F[Return null]
-```
-
-**Tier 1 — Frontmatter**: Parses `---` delimited YAML for an `execution_plan` key (array or string).
-
-**Tier 2 — Headings**: Matches `## Phase/Fase N: Name` (English and Portuguese) or `## Execution Plan / Plano de Execução` followed by a numbered list. Supports h2–h4 headings and multiple separators (`:`, `—`, `–`, `-`, `.`, `)`).
-
-**Tier 3 — Heuristics**: Searches for `Phase/Fase/Step/Etapa N` patterns anywhere in the document.
-
-If all tiers return null, phase analysis is bypassed and the workflow proceeds directly to implementation.
+- **Specialists are real subagents** — each runs in its own session with its own system prompt, injected at delegation time.
+- **State is file-based** — SQLite plus Markdown artifacts in `.mesa/`. No external services.
+- **The Manager never generates domain content** — it orchestrates. It judges process convergence (WHETHER), never content merit (WHO).
+- **Consensus is emergent** — specialists declare POSITION blocks; a declared `disagree` vetoes `converged`; decisions must cite evidence paths.
+- **The plan is the contract** — intention (file), fact (state pointer), trace (`rounds[]`). Silent replanning is detectable via version bumps and audit entries.
+- **Human approval gates** — briefing, team, plan, and deliverables each have a tool-mediated gate (K3). Verbal approval is never sufficient.
