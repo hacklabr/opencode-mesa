@@ -37,7 +37,16 @@ export const PLUGIN_STATE_DIR = ".mesa"
 
 export const DEFAULT_MAX_TURNS = 2
 
-export const CURRENT_STATE_VERSION = 11
+/**
+ * Circuit breakers (spec D6 — the spirit of profiles.ts Tier 1 without the
+ * tier apparatus). Values match the legacy "standard" rigor semantics.
+ * Overrides require a human-authorized, audited record_decision.
+ */
+export const MAX_ROUNDS_PER_SESSION = 12
+export const MAX_ANALYSES_PER_ROUND = 40
+export const PEER_CONSULTATION_CAP = 2
+
+export const CURRENT_STATE_VERSION = 14
 
 import type { DiscussionState } from "./types.js"
 
@@ -82,6 +91,10 @@ export function createInitialState(workspaceId: string): DiscussionState {
     specification: { path: null, overviewPath: null, status: "pending" },
     appendices: [],
     phases: ["PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION"],
+    // State v14 (spec D2/D4)
+    rounds: [],
+    deliverables: [],
+    plan: null,
     sessionFolder: null,
     createdAt: now,
     updatedAt: now,

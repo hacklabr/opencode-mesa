@@ -7,6 +7,7 @@ export interface AuditEntry {
   action: string
   phase: string
   actor?: string
+  planVersion?: number      // v14 (spec D2): plan version this decision belongs to
   details?: Record<string, unknown>
 }
 
@@ -22,7 +23,8 @@ export async function logAction(
   directory: string,
   action: string,
   phase: string,
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>,
+  planVersion?: number
 ): Promise<void> {
   const logDir = join(directory, PLUGIN_STATE_DIR)
   await mkdir(logDir, { recursive: true })
@@ -31,6 +33,7 @@ export async function logAction(
     timestamp: new Date().toISOString(),
     action,
     phase,
+    ...(planVersion !== undefined ? { planVersion } : {}),
     ...(details ? { details } : {}),
   }
 

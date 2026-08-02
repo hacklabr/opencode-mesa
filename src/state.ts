@@ -3,7 +3,7 @@ import { mkdirSync, existsSync, readFileSync, renameSync, readdirSync, rmdirSync
 import { join, dirname, basename, isAbsolute } from "node:path"
 import { hostname } from "node:os"
 import { z, ZodError } from "zod"
-import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, DiscussionMode } from "./types.js"
+import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, DiscussionMode, Round, Deliverable, PlanPointer } from "./types.js"
 import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config.js"
 import { buildSessionFolderPath } from "./utils/paths.js"
 import { reconcileMemories, purgeStaleMemoryFiles } from "./tools/memory-sync.js"
@@ -126,12 +126,43 @@ const AnalysisEntrySchema = z.object({
   turn: z.number(),
   turnType: AnalysisTurnTypeEnum.default("analysis"),
   round: z.number().optional(),
+  roundId: z.string().optional(),
   positionInTurn: z.number().optional(),
   respondsTo: z.string().optional(),
   tensionsRaised: z.array(z.string()).optional(),
   registeredByManager: z.boolean().optional(),
   sessionResumed: z.boolean().optional(),
   timestamp: z.string(),
+})
+
+// v14 (spec D2/D4) — round primitive, deliverables, plan pointer
+const RoundOutcomeSchema = z.object({
+  decision: z.enum(["converged", "converged-with-open-tensions", "escalated"]),
+  summary: z.string(),
+  tensions: z.array(z.string()).default([]),
+  evidencePaths: z.array(z.string()).default([]),
+  positions: z.record(z.string(), z.string()).default({}),
+})
+const RoundSchema = z.object({
+  id: z.string(),
+  topic: z.string(),
+  participants: z.array(z.string()).default([]),
+  status: z.enum(["open", "closed"]),
+  openedAt: z.string(),
+  closedAt: z.string().optional(),
+  outcome: RoundOutcomeSchema.optional(),
+})
+const DeliverableSchema = z.object({
+  path: z.string(),
+  kind: z.string(),
+  status: z.enum(["draft", "approved", "rejected"]),
+  provenance: z.object({ roundIds: z.array(z.string()).default([]) }),
+})
+const PlanPointerSchema = z.object({
+  path: z.string(),
+  version: z.number(),
+  status: z.enum(["draft", "approved"]),
+  approvedAt: z.string().optional(),
 })
 
 const ConsensusVoteEntrySchema = z.object({
@@ -209,6 +240,10 @@ export const DiscussionStateSchema = z.object({
   }),
   appendices: z.array(z.string()).default([]),
   phases: z.array(z.string()).default(["PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION"]),
+  // v14 (spec D2/D4) — defaults keep legacy JSON states loadable
+  rounds: z.array(RoundSchema).default([]),
+  deliverables: z.array(DeliverableSchema).default([]),
+  plan: PlanPointerSchema.nullable().default(null),
   sessionFolder: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -245,6 +280,9 @@ CREATE TABLE IF NOT EXISTS mesa_state (
   rigor TEXT DEFAULT 'standard',
   analysis_mode TEXT DEFAULT 'parallel',
   deviations INTEGER DEFAULT 0,
+  rounds TEXT DEFAULT '[]',
+  deliverables TEXT DEFAULT '[]',
+  plan TEXT DEFAULT NULL,
   state_version INTEGER DEFAULT 5,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -273,6 +311,7 @@ CREATE TABLE IF NOT EXISTS mesa_analyses (
   kind TEXT DEFAULT 'full',
   turn_type TEXT DEFAULT 'analysis',
   round INTEGER,
+  round_id TEXT,
   position_in_turn INTEGER,
   responds_to TEXT,
   tensions_raised TEXT,
@@ -337,6 +376,9 @@ CREATE TABLE IF NOT EXISTS mesa_session_state (
   rigor TEXT DEFAULT 'standard',
   analysis_mode TEXT DEFAULT 'parallel',
   deviations INTEGER DEFAULT 0,
+  rounds TEXT DEFAULT '[]',
+  deliverables TEXT DEFAULT '[]',
+  plan TEXT DEFAULT NULL,
   session_folder TEXT,
   state_version INTEGER DEFAULT 5,
   created_at TEXT NOT NULL,
@@ -369,6 +411,7 @@ CREATE TABLE IF NOT EXISTS mesa_session_analyses (
   kind TEXT DEFAULT 'full',
   turn_type TEXT DEFAULT 'analysis',
   round INTEGER,
+  round_id TEXT,
   position_in_turn INTEGER,
   responds_to TEXT,
   tensions_raised TEXT,
@@ -562,8 +605,9 @@ function migrateFromJson(directory: string, db: IDatabase): void {
       specification_path, specification_overview_path, specification_status,
       phases, appendices,
       rigor, analysis_mode, deviations,
+      rounds, deliverables, plan,
       state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       wsId, state.currentPhase, state.previousPhase, state.status ?? "active",
       state.briefing.path, state.briefing.status, state.briefing.slug,
@@ -584,6 +628,8 @@ function migrateFromJson(directory: string, db: IDatabase): void {
       state.discussion.rigor ?? "standard",
       state.discussion.analysisMode ?? "parallel",
       state.discussion.deviations ?? 0,
+      JSON.stringify(state.rounds ?? []), JSON.stringify(state.deliverables ?? []),
+      state.plan ? JSON.stringify(state.plan) : null,
       state.stateVersion, state.createdAt, state.updatedAt,
     ]
   )
@@ -1053,6 +1099,170 @@ function migrate_v12_to_v13(db: IDatabase): void {
     if (!err.message.includes("duplicate column name")) throw e
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_memory_project_dedup ON mesa_memory(workspace_id, scope, category, content_hash)")
+}
+
+/**
+ * v13 → v14: Round primitive + deliverables + plan pointer (spec D2/D4/D9).
+ *
+ * ADDITIVE and IDEMPOTENT. Adds `rounds`/`deliverables`/`plan` JSON columns
+ * to both state tables and `round_id` to both analyses tables, then backfills:
+ *  - sessions with legacy analyses get a synthetic closed round
+ *    `legacy-round-1` (participants from the participants table, topic from
+ *    discussion_topic), and their analyses get round_id backfilled;
+ *  - sessions with a legacy specification_path get a Deliverable
+ *    (kind "specification"; legacy status "pending" maps to "draft").
+ *
+ * Legacy fields (discussion_*, specification_*, journey_workshop, appendices,
+ * phases) are NOT dropped — their consumers die in Phase 2. Re-running is a
+ * no-op: backfill only touches rows whose rounds/deliverables are still empty.
+ *
+ * TODO(Phase 2/5): mesa_votes / mesa_session_votes outlive this migration
+ * because their consumer (request_consensus) only dies in Phase 2. The drop
+ * plan: (1) export all vote rows to the audit log as `votes_exported` entries
+ * (preserves the deliberation trail), (2) DROP both tables, (3) remove the
+ * votes fields from DiscussionState + insert/load helpers. Do NOT drop the
+ * tables before the export ships — votes are the only record of legacy
+ * consensus outcomes.
+ *
+ * KNOWN LIMITATION (pre-v11 rows only): this backfill runs BEFORE
+ * migrateFiles_v10_to_v11 in the getDb pipeline, so for the tiny set of
+ * sessions that never went through the v10→v11 file relocation AND whose
+ * spec file still exists, deliverable.path captures the PRE-relocation
+ * location (the file is then moved to {sessionFolder}/specification.md).
+ * Sessions already at v11+ (session_folder set — the common case) are
+ * unaffected. The legacy specification_path column remains readable as the
+ * authoritative reference until Phase 2, and Phase 5 cleanup should reconcile
+ * any stale deliverable.path for pre-v11 rows.
+ */
+function migrate_v13_to_v14(db: IDatabase): void {
+  const tx = db.transaction(() => {
+    // 1. Additive columns (idempotent duplicate-column pattern).
+    for (const table of ["mesa_state", "mesa_session_state"]) {
+      for (const [col, def] of [
+        ["rounds", "TEXT DEFAULT '[]'"],
+        ["deliverables", "TEXT DEFAULT '[]'"],
+        ["plan", "TEXT DEFAULT NULL"],
+      ] as Array<[string, string]>) {
+        try {
+          db.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`)
+        } catch (e: unknown) {
+          const err = e as Error
+          if (!err.message.includes("duplicate column name")) throw e
+        }
+      }
+    }
+    for (const table of ["mesa_analyses", "mesa_session_analyses"]) {
+      try {
+        db.run(`ALTER TABLE ${table} ADD COLUMN round_id TEXT`)
+      } catch (e: unknown) {
+        const err = e as Error
+        if (!err.message.includes("duplicate column name")) throw e
+      }
+    }
+
+    // 2. Backfill rounds + deliverables for legacy sessions.
+    backfillV14(db, false) // unscoped legacy tables
+    backfillV14(db, true)  // session-scoped tables (the live ones)
+
+    // 3. Bump state version. Existing rows may sit at 12 (v12→v13 did not
+    //    bump state tables), so cover any value below 14.
+    db.run("UPDATE mesa_state SET state_version = 14 WHERE state_version < 14")
+    db.run("UPDATE mesa_session_state SET state_version = 14 WHERE state_version < 14")
+  })
+  tx()
+}
+
+const LEGACY_ROUND_ID = "legacy-round-1"
+
+/**
+ * Per-table backfill for migrate_v13_to_v14. `scoped` selects the
+ * session-scoped tables (live) vs the unscoped legacy tables (JSON-migration
+ * path). Idempotent: rows with non-empty rounds/deliverables are skipped.
+ */
+function backfillV14(db: IDatabase, scoped: boolean): void {
+  const stateTable = scoped ? "mesa_session_state" : "mesa_state"
+  const analysesTable = scoped ? "mesa_session_analyses" : "mesa_analyses"
+  const participantsTable = scoped ? "mesa_session_participants" : "mesa_participants"
+  const scopeCols = scoped ? "workspace_id, session_id" : "workspace_id"
+
+  const rows = db
+    .query(`SELECT ${scopeCols}, discussion_topic, specification_path, specification_status, rounds, deliverables, created_at, updated_at FROM ${stateTable}`)
+    .all() as Array<Record<string, unknown>>
+
+  for (const row of rows) {
+    const wsId = row.workspace_id as string
+    const sid = scoped ? (row.session_id as string) : null
+    const whereScope = scoped
+      ? "workspace_id = ? AND session_id = ?"
+      : "workspace_id = ?"
+    const scopeArgs: string[] = scoped ? [wsId, sid!] : [wsId]
+
+    // --- rounds backfill ---
+    const roundsRaw = (row.rounds as string | null) ?? "[]"
+    if (roundsRaw === "[]") {
+      const analysisCount = db
+        .query(`SELECT COUNT(*) AS c FROM ${analysesTable} WHERE ${whereScope}`)
+        .get(...scopeArgs) as { c: number }
+
+      if (analysisCount.c > 0) {
+        const participants = (
+          db
+            .query(`SELECT persona_id FROM ${participantsTable} WHERE ${whereScope} ORDER BY sort_order`)
+            .all(...scopeArgs) as Array<{ persona_id: string }>
+        ).map((p) => p.persona_id)
+
+        const legacyRound: Round = {
+          id: LEGACY_ROUND_ID,
+          topic: (row.discussion_topic as string) || "Legacy discussion",
+          participants,
+          status: "closed",
+          openedAt: row.created_at as string,
+          closedAt: row.updated_at as string,
+        }
+
+        db.run(
+          `UPDATE ${stateTable} SET rounds = ? WHERE ${whereScope}`,
+          [JSON.stringify([legacyRound]), ...scopeArgs]
+        )
+        db.run(
+          `UPDATE ${analysesTable} SET round_id = ? WHERE ${whereScope} AND round_id IS NULL`,
+          [LEGACY_ROUND_ID, ...scopeArgs]
+        )
+      }
+    }
+
+    // --- deliverables backfill ---
+    const deliverablesRaw = (row.deliverables as string | null) ?? "[]"
+    const specPath = row.specification_path as string | null
+    if (deliverablesRaw === "[]" && specPath) {
+      const specStatus = row.specification_status as string | null
+      const status: Deliverable["status"] =
+        specStatus === "approved" ? "approved" : specStatus === "rejected" ? "rejected" : "draft"
+
+      // Provenance: every round recorded for this session (post-backfill).
+      const roundsJson = (db
+        .query(`SELECT rounds FROM ${stateTable} WHERE ${whereScope}`)
+        .get(...scopeArgs) as { rounds: string | null }).rounds ?? "[]"
+      let roundIds: string[] = []
+      try {
+        const parsed = JSON.parse(roundsJson) as Array<{ id: string }>
+        if (Array.isArray(parsed)) roundIds = parsed.map((r) => r.id)
+      } catch {
+        // malformed rounds JSON — leave provenance empty
+      }
+
+      const deliverable: Deliverable = {
+        path: specPath,
+        kind: "specification",
+        status,
+        provenance: { roundIds },
+      }
+      db.run(
+        `UPDATE ${stateTable} SET deliverables = ? WHERE ${whereScope}`,
+        [JSON.stringify([deliverable]), ...scopeArgs]
+      )
+    }
+  }
 }
 
 /**
@@ -1750,6 +1960,7 @@ export function getDb(directory: string): IDatabase {
   migrate_v10_to_v11(db)
   migrate_v11_to_v12(db)
   migrate_v12_to_v13(db)
+  migrate_v13_to_v14(db)
   // File relocation (spec-6886df4f, TD5) — runs after schema migrations
   // (so the session_folder column exists) but before migrateFromJson
   // (so JSON-imported rows also get their files relocated on next open).
@@ -1774,11 +1985,11 @@ function insertChildRows(db: IDatabase, wsId: string, state: DiscussionState): v
 
   for (const a of state.discussion.analyses) {
     db.run(
-      `INSERT INTO mesa_analyses (workspace_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO mesa_analyses (workspace_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, round_id, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [wsId, a.agentId, a.agentName, a.content, a.turn, a.timestamp,
        a.filePath ?? null, a.kind ?? "full", a.turnType ?? "analysis",
-       a.round ?? null, a.positionInTurn ?? null,
+       a.round ?? null, a.roundId ?? null, a.positionInTurn ?? null,
        a.respondsTo ?? null,
        a.tensionsRaised ? JSON.stringify(a.tensionsRaised) : null,
        a.sessionResumed ? 1 : 0,
@@ -1813,11 +2024,11 @@ function insertSessionChildRows(db: IDatabase, wsId: string, sessionId: string, 
   for (const a of state.discussion.analyses) {
     const sr = a.sessionResumed ? 1 : 0
     db.run(
-      `INSERT INTO mesa_session_analyses (workspace_id, session_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO mesa_session_analyses (workspace_id, session_id, agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, round_id, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [wsId, sessionId, a.agentId, a.agentName, a.content, a.turn, a.timestamp,
        a.filePath ?? null, a.kind ?? "full", a.turnType ?? "analysis",
-       a.round ?? null, a.positionInTurn ?? null,
+       a.round ?? null, a.roundId ?? null, a.positionInTurn ?? null,
        a.respondsTo ?? null,
        a.tensionsRaised ? JSON.stringify(a.tensionsRaised) : null,
        sr,
@@ -1852,7 +2063,7 @@ function loadSessionState(db: IDatabase, wsId: string, sessionId: string): Discu
     .all(wsId, sessionId) as Array<{ persona_id: string; name: string; division: string; status: string }>
 
   const analyses = db
-    .query("SELECT agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ? ORDER BY turn")
+    .query("SELECT agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, round_id, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ? ORDER BY turn")
     .all(wsId, sessionId) as Array<Record<string, unknown>>
 
   const votes = db
@@ -1883,6 +2094,7 @@ function mapAnalysisRow(a: AnalysisRow): AnalysisEntry {
     turn: a.turn as number,
     turnType: ((a.turn_type as string) || "analysis") as AnalysisTurnType,
     round: a.round != null ? (a.round as number) : undefined,
+    roundId: (a.round_id as string | null) ?? undefined,
     positionInTurn: a.position_in_turn != null ? (a.position_in_turn as number) : undefined,
     respondsTo: (a.responds_to as string | undefined) ?? undefined,
     tensionsRaised,
@@ -1960,6 +2172,33 @@ function rowToState(
     }
   }
 
+  // v14 fields may be absent on legacy rows; parse defensively.
+  let rounds: Round[] = []
+  try {
+    const parsed = JSON.parse((row.rounds as string) || "[]")
+    if (Array.isArray(parsed)) rounds = parsed
+  } catch {
+    // keep [] on malformed JSON
+  }
+
+  let deliverables: Deliverable[] = []
+  try {
+    const parsed = JSON.parse((row.deliverables as string) || "[]")
+    if (Array.isArray(parsed)) deliverables = parsed
+  } catch {
+    // keep [] on malformed JSON
+  }
+
+  let plan: PlanPointer | null = null
+  const rawPlan = row.plan as string | null | undefined
+  if (rawPlan) {
+    try {
+      plan = JSON.parse(rawPlan) as PlanPointer
+    } catch {
+      // keep null on malformed JSON
+    }
+  }
+
   return {
     workspaceId: row.workspace_id as string,
     currentPhase: row.current_phase as string as DiscussionState["currentPhase"],
@@ -2007,6 +2246,9 @@ function rowToState(
     },
     appendices: JSON.parse((row.appendices as string) || '[]'),
     phases: JSON.parse((row.phases as string) || '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]'),
+    rounds,
+    deliverables,
+    plan,
     sessionFolder: (row.session_folder as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -2158,9 +2400,10 @@ export async function saveState(directory: string, state: DiscussionState, openc
           specification_path, specification_overview_path, specification_status,
           phases, appendices,
           rigor, analysis_mode, deviations,
+          rounds, deliverables, plan,
           session_folder,
           state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           state.workspaceId, sessionId, state.currentPhase, state.previousPhase, state.status ?? "active",
           state.briefing.path, state.briefing.status, state.briefing.slug,
@@ -2175,6 +2418,8 @@ export async function saveState(directory: string, state: DiscussionState, openc
           state.discussion.rigor ?? "standard",
           state.discussion.analysisMode ?? "parallel",
           state.discussion.deviations ?? 0,
+          JSON.stringify(state.rounds ?? []), JSON.stringify(state.deliverables ?? []),
+          state.plan ? JSON.stringify(state.plan) : null,
           state.sessionFolder ?? null,
           state.stateVersion, state.createdAt, state.updatedAt,
         ]

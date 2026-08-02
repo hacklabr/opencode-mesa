@@ -26,8 +26,9 @@ describe("v1 state migration", () => {
     const mesaDir = join(TEST_DIR, ".mesa")
     await fs.mkdir(mesaDir, { recursive: true })
 
-    // Create a v1 state JSON without the appendices field
-    const v1State: Omit<DiscussionState, "appendices"> = {
+    // Create a v1 state JSON without the appendices field (nor the v14 fields —
+    // the Zod schema defaults cover both on parse)
+    const v1State: Omit<DiscussionState, "appendices" | "rounds" | "deliverables" | "plan"> = {
       workspaceId: TEST_DIR,
       currentPhase: "EXECUTION",
       briefing: {

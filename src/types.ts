@@ -106,12 +106,81 @@ export interface AnalysisEntry {
   turn: number
   turnType?: AnalysisTurnType  // discriminator: analysis vs discussion
   round?: number               // discussion round (turnType="discussion" only)
+  roundId?: string             // v14: FK to Round.id (spec D2). Absent on legacy rows until backfilled.
   positionInTurn?: number      // speaking order (turnType="discussion" only)
   respondsTo?: string          // optional, discussion only
   tensionsRaised?: string[]    // optional, discussion only
   sessionResumed?: boolean     // memory-integrity audit flag
   registeredByManager?: boolean // true when Manager registered on behalf of specialist
   timestamp: string
+}
+
+// ---------------------------------------------------------------------------
+// State v14 (spec D2/D4) — round primitive, deliverables, plan pointer.
+// Additive: legacy fields (discussion, specification, journeyWorkshop,
+// appendices, phases) remain readable-but-deprecated until Phase 2 removes
+// their consumers.
+// ---------------------------------------------------------------------------
+
+export type RoundStatus = "open" | "closed"
+
+export type RoundDecision =
+  | "converged"
+  | "converged-with-open-tensions"
+  | "escalated"
+
+/**
+ * Outcome recorded when a round closes (spec D3). The Manager tabulates
+ * declared positions; it never infers them. `positions` maps agentId → the
+ * verbatim POSITION declared in the specialist's final artifact.
+ */
+export interface RoundOutcome {
+  decision: RoundDecision
+  summary: string
+  tensions: string[]
+  evidencePaths: string[]
+  positions: Record<string, string>
+}
+
+/**
+ * Universal discussion primitive (spec D2). Journey workshop, phase analysis,
+ * conflict resolution — all become rounds with different labels/topics.
+ * `rounds[]` is the execution TRACE: it records executed rounds, never the
+ * planned graph (the plan lives in workflow-plan.md, spec D4).
+ */
+export interface Round {
+  id: string                   // "r1", "r2", ... — "legacy-round-1" for v14 backfill
+  topic: string
+  participants: string[]       // ⊆ team (hard error at open)
+  status: RoundStatus
+  openedAt: string
+  closedAt?: string
+  outcome?: RoundOutcome
+}
+
+export type DeliverableStatus = "draft" | "approved" | "rejected"
+
+/**
+ * Generalizes specification/appendices/journeys (spec D2). `kind` is
+ * open-ended ("specification", "overview", "appendix", "journeys", ...).
+ */
+export interface Deliverable {
+  path: string                 // canonical, inside sessionFolder (K2)
+  kind: string
+  status: DeliverableStatus
+  provenance: { roundIds: string[] }
+}
+
+/**
+ * Pointer to the workflow plan document (spec D4, layer 2 — FATO).
+ * The plan text itself lives in workflow-plan.md (layer 1 — INTENÇÃO);
+ * the state stores only this resumable, data-checkable pointer.
+ */
+export interface PlanPointer {
+  path: string
+  version: number
+  status: "draft" | "approved"
+  approvedAt?: string
 }
 
 export interface ConsensusVoteEntry {
@@ -173,6 +242,11 @@ export interface DiscussionState {
   }
   appendices: string[]
   phases: string[]
+  // --- State v14 (spec D2/D4) — additive; legacy fields above are
+  // readable-but-deprecated until Phase 2 removes their consumers. ---
+  rounds: Round[]
+  deliverables: Deliverable[]
+  plan: PlanPointer | null
   /**
    * Session-scoped folder path (relative to workspace) where all artifacts for
    * this session live. Populated lazily on first tool invocation that needs it
