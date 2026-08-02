@@ -1,22 +1,32 @@
 // Migration v13 → v14 tests (spec D2/D4/D9).
 //
 // Covers: legacy backfill mapping (synthetic `legacy-round-1` from
-// discussion.analyses; deliverable from legacy specification), idempotency
-// (running the migration on every getDb must be a no-op after the first
-// pass), and the v14 field round-trip through saveState/loadState.
-// Follows the patterns of state-migration.test.ts.
+// discussion.analyses; deliverable from the legacy specification_path
+// COLUMN), idempotency (running the migration on every getDb must be a
+// no-op after the first pass), and the v14 field round-trip through
+// saveState/loadState.
+//
+// Post-v15 note: `specification` no longer exists on DiscussionState, so
+// legacy rows are simulated by writing the specification_path/status
+// columns directly via SQL (they remain in the DB schema as legacy
+// columns — only the in-memory field was removed).
 
 import { describe, expect, test, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { loadState, saveState, closeStorage } from "../state.js"
-import { createInitialState, CURRENT_STATE_VERSION } from "../config.js"
+import { createInitialState, CURRENT_STATE_VERSION, PLUGIN_STATE_DIR } from "../config.js"
+import { openDatabase } from "../db/driver.js"
 import type { DiscussionState } from "../types.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "state-migration-v14")
 const SESSION_ID = "test-session"
 
-function legacyState(mutate?: (s: DiscussionState) => void): DiscussionState {
+/** Seed a legacy session: analyses/participants via saveState, spec via SQL. */
+async function seedLegacy(opts: {
+  analyses?: boolean
+  specStatus?: "approved" | "pending" | null
+}): Promise<void> {
   const state = createInitialState(TEST_DIR)
   state.currentPhase = "DISCUSSION"
   // Non-null sessionFolder models the common production case (sessions already
@@ -24,30 +34,39 @@ function legacyState(mutate?: (s: DiscussionState) => void): DiscussionState {
   // the v14 backfill is exercised in isolation.
   state.sessionFolder = ".mesa/sessions/202607131534_test_legacy"
   state.discussion.topic = "Legacy topic"
-  state.discussion.participants = ["eng-1", "design-1"]
-  state.discussion.analyses = [
-    {
-      agentId: "eng-1",
-      agentName: "Engineer",
-      content: "analysis 1",
-      turn: 1,
-      timestamp: new Date().toISOString(),
-    },
-    {
-      agentId: "design-1",
-      agentName: "Designer",
-      content: "analysis 2",
-      turn: 1,
-      timestamp: new Date().toISOString(),
-    },
-  ]
-  state.specification = {
-    path: ".mesa/sessions/legacy/spec.md",
-    overviewPath: null,
-    status: "approved",
+  if (opts.analyses !== false) {
+    state.discussion.participants = ["eng-1", "design-1"]
+    state.discussion.analyses = [
+      {
+        agentId: "eng-1",
+        agentName: "Engineer",
+        content: "analysis 1",
+        turn: 1,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        agentId: "design-1",
+        agentName: "Designer",
+        content: "analysis 2",
+        turn: 1,
+        timestamp: new Date().toISOString(),
+      },
+    ]
   }
-  if (mutate) mutate(state)
-  return state
+  await saveState(TEST_DIR, state, SESSION_ID)
+
+  if (opts.specStatus) {
+    const dbPath = join(TEST_DIR, PLUGIN_STATE_DIR, "state.db")
+    const db = openDatabase(dbPath)
+    try {
+      db.run(
+        "UPDATE mesa_session_state SET specification_path = ?, specification_status = ? WHERE session_id = ?",
+        [".mesa/sessions/legacy/spec.md", opts.specStatus, SESSION_ID]
+      )
+    } finally {
+      db.close()
+    }
+  }
 }
 
 afterEach(async () => {
@@ -57,7 +76,7 @@ afterEach(async () => {
 
 describe("v14 backfill — legacy mapping", () => {
   test("synthesizes legacy-round-1 from discussion.analyses and maps the specification to a deliverable", async () => {
-    await saveState(TEST_DIR, legacyState(), SESSION_ID)
+    await seedLegacy({ specStatus: "approved" })
 
     // Force a fresh DB open so the migration pass runs over the seeded row.
     closeStorage(TEST_DIR)
@@ -91,17 +110,11 @@ describe("v14 backfill — legacy mapping", () => {
     expect(loaded.plan).toBeNull()
 
     // version bumped
-    expect(loaded.stateVersion).toBe(14)
+    expect(loaded.stateVersion).toBe(CURRENT_STATE_VERSION)
   })
 
   test("legacy specification status 'pending' maps to deliverable 'draft'", async () => {
-    await saveState(
-      TEST_DIR,
-      legacyState((s) => {
-        s.specification.status = "pending"
-      }),
-      SESSION_ID
-    )
+    await seedLegacy({ specStatus: "pending" })
 
     closeStorage(TEST_DIR)
     const loaded = await loadState(TEST_DIR, SESSION_ID)
@@ -111,14 +124,7 @@ describe("v14 backfill — legacy mapping", () => {
   })
 
   test("deliverable without analyses gets empty provenance (no synthetic round)", async () => {
-    await saveState(
-      TEST_DIR,
-      legacyState((s) => {
-        s.discussion.analyses = []
-        s.discussion.participants = []
-      }),
-      SESSION_ID
-    )
+    await seedLegacy({ analyses: false, specStatus: "approved" })
 
     closeStorage(TEST_DIR)
     const loaded = await loadState(TEST_DIR, SESSION_ID)
@@ -129,15 +135,7 @@ describe("v14 backfill — legacy mapping", () => {
   })
 
   test("session with neither analyses nor specification stays empty", async () => {
-    await saveState(
-      TEST_DIR,
-      legacyState((s) => {
-        s.discussion.analyses = []
-        s.discussion.participants = []
-        s.specification = { path: null, overviewPath: null, status: "pending" }
-      }),
-      SESSION_ID
-    )
+    await seedLegacy({ analyses: false, specStatus: null })
 
     closeStorage(TEST_DIR)
     const loaded = await loadState(TEST_DIR, SESSION_ID)
@@ -145,13 +143,13 @@ describe("v14 backfill — legacy mapping", () => {
     expect(loaded.rounds).toEqual([])
     expect(loaded.deliverables).toEqual([])
     expect(loaded.plan).toBeNull()
-    expect(loaded.stateVersion).toBe(14)
+    expect(loaded.stateVersion).toBe(CURRENT_STATE_VERSION)
   })
 })
 
 describe("v14 backfill — idempotency", () => {
   test("running the migration repeatedly produces identical results (no duplicated rounds/deliverables)", async () => {
-    await saveState(TEST_DIR, legacyState(), SESSION_ID)
+    await seedLegacy({ specStatus: "approved" })
 
     closeStorage(TEST_DIR)
     const first = await loadState(TEST_DIR, SESSION_ID)
@@ -173,31 +171,31 @@ describe("v14 backfill — idempotency", () => {
 
 describe("v14 fields — save/load round-trip", () => {
   test("rounds, deliverables and plan persist through saveState/loadState untouched", async () => {
-    const state = legacyState((s) => {
-      s.rounds = [
-        {
-          id: "r1",
-          topic: "Designed round",
-          participants: ["eng-1"],
-          status: "open",
-          openedAt: new Date().toISOString(),
-        },
-      ]
-      s.deliverables = [
-        {
-          path: ".mesa/sessions/x/outline.md",
-          kind: "outline",
-          status: "draft",
-          provenance: { roundIds: ["r1"] },
-        },
-      ]
-      s.plan = {
-        path: ".mesa/sessions/x/workflow-plan.md",
-        version: 2,
-        status: "approved",
-        approvedAt: new Date().toISOString(),
-      }
-    })
+    const state = createInitialState(TEST_DIR)
+    state.sessionFolder = ".mesa/sessions/202607131534_test_legacy"
+    state.rounds = [
+      {
+        id: "r1",
+        topic: "Designed round",
+        participants: ["eng-1"],
+        status: "open",
+        openedAt: new Date().toISOString(),
+      },
+    ]
+    state.deliverables = [
+      {
+        path: ".mesa/sessions/x/outline.md",
+        kind: "outline",
+        status: "draft",
+        provenance: { roundIds: ["r1"] },
+      },
+    ]
+    state.plan = {
+      path: ".mesa/sessions/x/workflow-plan.md",
+      version: 2,
+      status: "approved",
+      approvedAt: new Date().toISOString(),
+    }
     await saveState(TEST_DIR, state, SESSION_ID)
 
     closeStorage(TEST_DIR)
@@ -220,6 +218,6 @@ describe("v14 fields — save/load round-trip", () => {
     expect(state.deliverables).toEqual([])
     expect(state.plan).toBeNull()
     expect(state.stateVersion).toBe(CURRENT_STATE_VERSION)
-    expect(CURRENT_STATE_VERSION).toBe(14)
+    expect(CURRENT_STATE_VERSION).toBe(15)
   })
 })

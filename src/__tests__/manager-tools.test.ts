@@ -3,14 +3,8 @@ import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { loadState, saveState, closeStorage } from "../state.js"
 import { createInitialState } from "../config.js"
-import {
-  analyzeBriefingTool,
-  proposeTeamTool,
-  summonTeamTool,
-  delegateTaskTool,
-  definePhasesTool,
-  replanImplementationTeamTool,
-} from "../tools/manager-tools.js"
+import { proposeTeamTool, summonTeamTool } from "../tools/manager-tools.js"
+import type { DiscussionState } from "../types.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "manager-tools")
 
@@ -27,57 +21,12 @@ function makeContext() {
   }
 }
 
-describe("analyze_briefing tool", () => {
-  beforeEach(async () => {
-    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
-  })
-
-  afterEach(async () => {
-    closeStorage(TEST_DIR)
-    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
-  })
-
-  test("returns briefing content with valid briefing in PLANNING phase", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    state.briefing.path = join(TEST_DIR, ".mesa", "briefings", "test.md")
-    state.briefing.slug = "test"
-    state.briefing.status = "approved"
-    await fs.mkdir(join(TEST_DIR, ".mesa", "briefings"), { recursive: true })
-    await fs.writeFile(state.briefing.path, "# Test Briefing\n\nContent here.", "utf-8")
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await analyzeBriefingTool.execute({}, makeContext())
-
-    expect(result).toHaveProperty("title", "Briefing Analysis")
-    const output = (result as { output: string }).output
-    expect(output).toContain("Test Briefing")
-    expect(output).toContain("Content here.")
-  })
-
-  test("returns error when no briefing found", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    state.briefing.path = null
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await analyzeBriefingTool.execute({}, makeContext())
-
-    expect(typeof result).toBe("string")
-    expect(result).toContain("No briefing found")
-  })
-
-  test("returns error when not in PLANNING phase", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "DISCUSSION"
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await analyzeBriefingTool.execute({}, makeContext())
-
-    expect(typeof result).toBe("string")
-    expect(result).toContain("DISCUSSION")
-  })
-})
+function seedWithApprovedBriefing(mutate?: (s: DiscussionState) => void): DiscussionState {
+  const state = createInitialState(TEST_DIR)
+  state.briefing.status = "approved"
+  if (mutate) mutate(state)
+  return state
+}
 
 describe("propose_team tool", () => {
   beforeEach(async () => {
@@ -89,10 +38,8 @@ describe("propose_team tool", () => {
     await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
   })
 
-  test("proposes valid specialists in PLANNING phase", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state, "test-session")
+  test("proposes valid specialists against an approved briefing", async () => {
+    await saveState(TEST_DIR, seedWithApprovedBriefing(), "test-session")
 
     const result = await proposeTeamTool.execute(
       {
@@ -120,9 +67,7 @@ describe("propose_team tool", () => {
   })
 
   test("returns error for invalid persona ID", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state, "test-session")
+    await saveState(TEST_DIR, seedWithApprovedBriefing(), "test-session")
 
     const result = await proposeTeamTool.execute(
       {
@@ -142,9 +87,8 @@ describe("propose_team tool", () => {
     expect(result).toContain("nonexistent-persona-12345")
   })
 
-  test("returns error when not in PLANNING phase", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "DISCUSSION"
+  test("requires an approved briefing (data precondition, not phase)", async () => {
+    const state = createInitialState(TEST_DIR) // briefing: draft
     await saveState(TEST_DIR, state, "test-session")
 
     const result = await proposeTeamTool.execute(
@@ -162,7 +106,8 @@ describe("propose_team tool", () => {
     )
 
     expect(typeof result).toBe("string")
-    expect(result).toContain("DISCUSSION")
+    expect(result).toContain("approved briefing")
+    expect(result).toContain("approve_briefing")
   })
 })
 
@@ -177,13 +122,12 @@ describe("summon_team tool", () => {
   })
 
   test("successfully summons proposed team", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    state.briefing.status = "delivered"
-    state.team = [
-      { personaId: "eng-1", name: "Eng One", division: "engineering", status: "proposed" },
-      { personaId: "prod-1", name: "Prod One", division: "product", status: "proposed" },
-    ]
+    const state = seedWithApprovedBriefing((s) => {
+      s.team = [
+        { personaId: "eng-1", name: "Eng One", division: "engineering", status: "proposed" },
+        { personaId: "prod-1", name: "Prod One", division: "product", status: "proposed" },
+      ]
+    })
     await saveState(TEST_DIR, state, "test-session")
 
     const result = await summonTeamTool.execute({}, makeContext())
@@ -199,11 +143,7 @@ describe("summon_team tool", () => {
   })
 
   test("returns error when no proposed team exists", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    state.briefing.status = "delivered"
-    state.team = []
-    await saveState(TEST_DIR, state, "test-session")
+    await saveState(TEST_DIR, seedWithApprovedBriefing(), "test-session")
 
     const result = await summonTeamTool.execute({}, makeContext())
 
@@ -211,10 +151,8 @@ describe("summon_team tool", () => {
     expect(result).toContain("No proposed specialists found")
   })
 
-  test("returns error when briefing not approved or delivered", async () => {
+  test("requires an approved briefing", async () => {
     const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    state.briefing.status = "draft"
     state.team = [
       { personaId: "eng-1", name: "Eng", division: "engineering", status: "proposed" },
     ]
@@ -223,218 +161,6 @@ describe("summon_team tool", () => {
     const result = await summonTeamTool.execute({}, makeContext())
 
     expect(typeof result).toBe("string")
-    expect(result).toContain("approved or delivered")
-  })
-})
-
-describe("delegate_task tool", () => {
-  beforeEach(async () => {
-    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
-  })
-
-  afterEach(async () => {
-    closeStorage(TEST_DIR)
-    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
-  })
-
-  test("delegates task to specialist in team during EXECUTION phase", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "EXECUTION"
-    state.team = [
-      { personaId: "engineering-backend-architect", name: "Backend Architect", division: "engineering", status: "summoned" },
-    ]
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await delegateTaskTool.execute(
-      {
-        personaId: "engineering-backend-architect",
-        task: "Review the database schema",
-        context_info: "See docs/schema.md",
-      },
-      makeContext()
-    )
-
-    expect(result).toHaveProperty("title")
-    expect((result as { title: string }).title).toContain("Backend Architect")
-    const output = (result as { output: string }).output
-    expect(output).toContain("Review the database schema")
-    expect(output).toContain("docs/schema.md")
-  })
-
-  test("adds specialist from catalog if not in team (catalog fallback)", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "EXECUTION"
-    state.team = []
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await delegateTaskTool.execute(
-      {
-        personaId: "software-development-backend-architect",
-        task: "Do something",
-      },
-      makeContext()
-    )
-
-    expect(result).toHaveProperty("title")
-    const output = (result as { output: string }).output
-    expect(output).toContain("Do something")
-
-    const loaded = await loadState(TEST_DIR, "test-session")
-    expect(loaded.team.length).toBe(1)
-    expect(loaded.team[0].personaId).toBe("software-development-backend-architect")
-    expect(loaded.team[0].status).toBe("delegated")
-  })
-
-  test("returns error for non-existent specialist not in catalog", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "EXECUTION"
-    state.team = []
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await delegateTaskTool.execute(
-      {
-        personaId: "totally-nonexistent-specialist-xyz",
-        task: "Do something",
-      },
-      makeContext()
-    )
-
-    expect(typeof result).toBe("string")
-    expect(result).toContain("not found")
-  })
-
-  test("returns error when not in EXECUTION phase", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await delegateTaskTool.execute(
-      { personaId: "eng-1", task: "task" },
-      makeContext()
-    )
-
-    expect(typeof result).toBe("string")
-    expect(result).toContain("not allowed in PLANNING")
-  })
-})
-
-describe("define_phases tool", () => {
-  beforeEach(async () => {
-    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
-  })
-
-  afterEach(async () => {
-    closeStorage(TEST_DIR)
-    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
-  })
-
-  test("defines valid phases", async () => {
-    const state = createInitialState(TEST_DIR)
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await definePhasesTool.execute(
-      { phases: ["PLANNING", "DISCUSSION", "DISCUSSION"] },
-      makeContext()
-    )
-
-    expect(result).toHaveProperty("title", "Workflow Phases Defined")
-    const output = (result as { output: string }).output
-    expect(output).toContain("PLANNING → DISCUSSION → DISCUSSION")
-
-    const loaded = await loadState(TEST_DIR, "test-session")
-    expect(loaded.phases).toEqual(["PLANNING", "DISCUSSION", "DISCUSSION"])
-  })
-
-  test("returns error for invalid phase names", async () => {
-    const state = createInitialState(TEST_DIR)
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await definePhasesTool.execute(
-      { phases: ["PLANNING", "INVALID_PHASE", "ANOTHER_BAD"] },
-      makeContext()
-    )
-
-    expect(typeof result).toBe("string")
-    expect(result).toContain("INVALID_PHASE")
-    expect(result).toContain("ANOTHER_BAD")
-  })
-
-  test("accepts all six valid active phases", async () => {
-    const state = createInitialState(TEST_DIR)
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await definePhasesTool.execute(
-      { phases: ["PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION", "SPECIFICATION", "EXECUTION"] },
-      makeContext()
-    )
-
-    expect(result).toHaveProperty("title", "Workflow Phases Defined")
-  })
-})
-
-describe("replan_implementation_team tool", () => {
-  beforeEach(async () => {
-    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
-  })
-
-  afterEach(async () => {
-    closeStorage(TEST_DIR)
-    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
-  })
-
-  test("resets EXECUTION to PLANNING and clears team/discussion state", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "EXECUTION"
-    state.briefing.status = "approved"
-    state.specification.status = "approved"
-    state.team = [
-      { personaId: "arch-1", name: "Architect", division: "engineering", status: "summoned" },
-    ]
-    state.discussion.analyses = [
-      {
-        agentId: "arch-1",
-        agentName: "Architect",
-        content: "analysis",
-        filePath: null,
-        kind: "full",
-        turn: 1,
-        turnType: "analysis",
-        timestamp: new Date().toISOString(),
-      },
-    ]
-    state.discussion.votes = [
-      { agentId: "arch-1", agentName: "Architect", vote: 1, reason: "agree", round: 1 },
-    ]
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await replanImplementationTeamTool.execute(
-      { reason: "Need implementation engineers instead of architects" },
-      makeContext()
-    )
-
-    expect(result).toHaveProperty("title", "Implementation Team Replan — Ready for New Team Proposal")
-
-    const loaded = await loadState(TEST_DIR, "test-session")
-    expect(loaded.currentPhase).toBe("PLANNING")
-    expect(loaded.team).toEqual([])
-    expect(loaded.discussion.analyses).toEqual([])
-    expect(loaded.discussion.votes).toEqual([])
-    expect(loaded.discussion.participants).toEqual([])
-    expect(loaded.specification.status).toBe("approved")
-    expect(loaded.briefing.status).toBe("approved")
-  })
-
-  test("returns error when not in EXECUTION phase", async () => {
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    await saveState(TEST_DIR, state, "test-session")
-
-    const result = await replanImplementationTeamTool.execute(
-      { reason: "test" },
-      makeContext()
-    )
-
-    expect(typeof result).toBe("string")
-    expect(result).toContain("not allowed in PLANNING")
+    expect(result).toContain("approved briefing")
   })
 })

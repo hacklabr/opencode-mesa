@@ -1,9 +1,9 @@
 import { openDatabase, type IDatabase } from "./db/driver.js"
-import { mkdirSync, existsSync, readFileSync, renameSync, readdirSync, rmdirSync } from "node:fs"
+import { mkdirSync, existsSync, readFileSync, renameSync, readdirSync, rmdirSync, appendFileSync } from "node:fs"
 import { join, dirname, basename, isAbsolute } from "node:path"
 import { hostname } from "node:os"
 import { z, ZodError } from "zod"
-import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, DiscussionMode, Round, Deliverable, PlanPointer } from "./types.js"
+import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, Round, Deliverable, PlanPointer } from "./types.js"
 import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config.js"
 import { buildSessionFolderPath } from "./utils/paths.js"
 import { reconcileMemories, purgeStaleMemoryFiles } from "./tools/memory-sync.js"
@@ -77,7 +77,6 @@ const DiscussionPhaseEnum = z.enum([
 ])
 
 const DiscussionStatusEnum = z.enum(["active", "paused", "cancelled"])
-const DiscussionModeEnum = z.enum(["analysis", "debate", "voting"])
 
 const BriefingStatusEnum = z.enum(["draft", "approved", "delivered"])
 const ScopeMagnitudeEnum = z.enum(["simple", "composite"])
@@ -99,23 +98,8 @@ const BriefingMetadataSchema = z.object({
   nonTechnicalFlag: z.boolean(),
 })
 const SpecialistStatusEnum = z.enum(["proposed", "summoned", "active", "dismissed", "delegated"])
-const JourneyWorkshopStatusEnum = z.enum([
-  "not_started", "pending_human_decision", "needed", "in_progress", "completed", "skipped",
-])
-const JourneyWorkshopModeEnum = z.enum(["guided", "automatic"])
-const SpecificationStatusEnum = z.enum(["pending", "draft", "approved", "rejected"])
-const ConsensusVoteEnum = z.union([z.literal(0), z.literal(1), z.literal(2)])
 
 const AnalysisTurnTypeEnum = z.enum(["analysis", "discussion"])
-const RigorProfileEnum = z.enum(["light", "standard", "deep"])
-const AnalysisModeEnum = z.enum(["parallel", "sequential", "hybrid"])
-
-const DiscussionProgressSchema = z.object({
-  currentTurn: z.number().default(0),
-  completedParticipants: z.array(z.string()).default([]),
-  activeProfile: z.string().default("standard"),
-  deviations: z.number().default(0),
-})
 
 const AnalysisEntrySchema = z.object({
   agentId: z.string(),
@@ -165,31 +149,11 @@ const PlanPointerSchema = z.object({
   approvedAt: z.string().optional(),
 })
 
-const ConsensusVoteEntrySchema = z.object({
-  agentId: z.string(),
-  agentName: z.string(),
-  vote: ConsensusVoteEnum,
-  reason: z.string(),
-  round: z.number(),
-})
-
 const SpecialistEntrySchema = z.object({
   personaId: z.string(),
   name: z.string(),
   division: z.string(),
   status: SpecialistStatusEnum,
-})
-
-const JourneyWorkshopSchema = z.object({
-  status: JourneyWorkshopStatusEnum,
-  mode: JourneyWorkshopModeEnum.nullable().optional(),
-  detectedAt: z.string(),
-  signals: z.array(z.string()).default([]),
-  suggestedJourneys: z.array(z.string()).default([]),
-  confidence: z.enum(["high", "medium", "low"]).default("low"),
-  briefingPath: z.string().nullable().optional(),
-  journeysFilePath: z.string().nullable().optional(),
-  observations: z.string().optional(),
 })
 
 export const DiscussionStateSchema = z.object({
@@ -202,44 +166,14 @@ export const DiscussionStateSchema = z.object({
     slug: z.string().nullable(),
     metadata: BriefingMetadataSchema.nullable().default(null),
   }),
-  journeyWorkshop: JourneyWorkshopSchema.default({
-    status: "not_started",
-    detectedAt: new Date().toISOString(),
-    signals: [],
-    suggestedJourneys: [],
-    confidence: "low",
-  }),
   team: z.array(SpecialistEntrySchema),
   discussion: z.object({
     topic: z.string(),
     currentTurn: z.number(),
     maxTurns: z.number(),
     analyses: z.array(AnalysisEntrySchema),
-    votes: z.array(ConsensusVoteEntrySchema),
-    consensusRound: z.number(),
     participants: z.array(z.string()).default([]),
-    debateNeeded: z.boolean().default(false),
-    mode: DiscussionModeEnum.default("analysis"),
-    maxConsensusRounds: z.number().default(2),
-    // Governance fields (spec-4dcc492f) — defaults ensure backward-compat on load
-    rigor: RigorProfileEnum.default("standard"),
-    analysisMode: AnalysisModeEnum.default("parallel"),
-    deviations: z.number().default(0),
-    // Observability (spec-4dcc492f, Decision 3, Requirement 1)
-    progress: DiscussionProgressSchema.default({
-      currentTurn: 0,
-      completedParticipants: [],
-      activeProfile: "standard",
-      deviations: 0,
-    }),
   }),
-  specification: z.object({
-    path: z.string().nullable(),
-    overviewPath: z.string().nullable().default(null),
-    status: SpecificationStatusEnum,
-  }),
-  appendices: z.array(z.string()).default([]),
-  phases: z.array(z.string()).default(["PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION"]),
   // v14 (spec D2/D4) — defaults keep legacy JSON states loadable
   rounds: z.array(RoundSchema).default([]),
   deliverables: z.array(DeliverableSchema).default([]),
@@ -248,7 +182,6 @@ export const DiscussionStateSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   stateVersion: z.number().default(1),
-  previousPhase: DiscussionPhaseEnum.nullable().default(null),
 })
 
 // ---------------------------------------------------------------------------
@@ -320,18 +253,6 @@ CREATE TABLE IF NOT EXISTS mesa_analyses (
   UNIQUE(workspace_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_analyses_turn ON mesa_analyses(workspace_id, turn);
-
-CREATE TABLE IF NOT EXISTS mesa_votes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  workspace_id TEXT NOT NULL REFERENCES mesa_state(workspace_id) ON DELETE CASCADE,
-  agent_id TEXT NOT NULL,
-  agent_name TEXT,
-  vote INTEGER CHECK(vote IN (0,1,2)),
-  reason TEXT,
-  round INTEGER,
-  UNIQUE(workspace_id, agent_id, round)
-);
-CREATE INDEX IF NOT EXISTS idx_votes_round ON mesa_votes(workspace_id, round);
 
 CREATE TABLE IF NOT EXISTS mesa_participants (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -420,19 +341,6 @@ CREATE TABLE IF NOT EXISTS mesa_session_analyses (
   UNIQUE(workspace_id, session_id, agent_id, turn, turn_type)
 );
 CREATE INDEX IF NOT EXISTS idx_session_analyses_turn ON mesa_session_analyses(workspace_id, session_id, turn);
-
-CREATE TABLE IF NOT EXISTS mesa_session_votes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  workspace_id TEXT NOT NULL,
-  session_id TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
-  agent_name TEXT,
-  vote INTEGER CHECK(vote IN (0,1,2)),
-  reason TEXT,
-  round INTEGER,
-  UNIQUE(workspace_id, session_id, agent_id, round)
-);
-CREATE INDEX IF NOT EXISTS idx_session_votes_round ON mesa_session_votes(workspace_id, session_id, round);
 
 CREATE TABLE IF NOT EXISTS mesa_session_participants (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -596,38 +504,17 @@ function migrateFromJson(directory: string, db: IDatabase): void {
 
   db.run(
     `INSERT OR REPLACE INTO mesa_state (
-      workspace_id, current_phase, previous_phase, status,
+      workspace_id, current_phase, status,
       briefing_path, briefing_status, briefing_slug, briefing_metadata,
-      journey_workshop,
       discussion_topic, discussion_current_turn, discussion_max_turns,
-      discussion_consensus_round, discussion_debate_needed, discussion_progress,
-      discussion_mode, discussion_max_consensus_rounds,
-      specification_path, specification_overview_path, specification_status,
-      phases, appendices,
-      rigor, analysis_mode, deviations,
       rounds, deliverables, plan,
       state_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      wsId, state.currentPhase, state.previousPhase, state.status ?? "active",
+      wsId, state.currentPhase, state.status ?? "active",
       state.briefing.path, state.briefing.status, state.briefing.slug,
       JSON.stringify(state.briefing.metadata ?? null),
-      JSON.stringify(state.journeyWorkshop ?? {
-        status: "not_started",
-        detectedAt: new Date().toISOString(),
-        signals: [],
-        suggestedJourneys: [],
-        confidence: "low",
-      }),
       state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
-      state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
-      JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
-      state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
-      state.specification.path, state.specification.overviewPath, state.specification.status,
-      JSON.stringify(state.phases), JSON.stringify(state.appendices),
-      state.discussion.rigor ?? "standard",
-      state.discussion.analysisMode ?? "parallel",
-      state.discussion.deviations ?? 0,
       JSON.stringify(state.rounds ?? []), JSON.stringify(state.deliverables ?? []),
       state.plan ? JSON.stringify(state.plan) : null,
       state.stateVersion, state.createdAt, state.updatedAt,
@@ -1263,6 +1150,120 @@ function backfillV14(db: IDatabase, scoped: boolean): void {
       )
     }
   }
+}
+
+/**
+ * v14 → v15: kernel cleanup (spec D5/D6/D9).
+ *
+ * 1. VOTES EXPORT + DROP: mesa_votes / mesa_session_votes rows are exported
+ *    to `.mesa/audit.log` as `vote_exported` entries (preserves the
+ *    deliberation trail) BEFORE the tables are dropped. The votes' consumer
+ *    (request_consensus) died with the recipe-tool purge.
+ * 2. ANALYSES UNIQUE CONSTRAINT: recreated to include round_id —
+ *    `UNIQUE(..., agent_id, turn, turn_type)` made multi-round registration
+ *    impossible (same agent + turn 1 in r1 and r2 collided). NULL round_id
+ *    backfilled to 'legacy-round-1' first so the constraint is meaningful.
+ * 3. Version bump → 15.
+ *
+ * Idempotent: votes export only runs when the tables still exist; the
+ * analyses recreation is detected via the table SQL containing the new
+ * constraint; both are no-ops on re-run.
+ */
+function migrate_v14_to_v15(db: IDatabase, directory: string): void {
+  const tx = db.transaction(() => {
+    // 1. Votes: export then drop.
+    for (const table of ["mesa_votes", "mesa_session_votes"]) {
+      const exists = db
+        .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table)
+      if (!exists) continue
+
+      const rows = db.query(`SELECT * FROM ${table}`).all() as Array<Record<string, unknown>>
+      if (rows.length > 0) {
+        const logPath = join(directory, PLUGIN_STATE_DIR, "audit.log")
+        for (const row of rows) {
+          appendFileSync(
+            logPath,
+            JSON.stringify({
+              timestamp: new Date().toISOString(),
+              action: "vote_exported",
+              phase: "MIGRATION",
+              details: row,
+            }) + "\n",
+            "utf-8"
+          )
+        }
+      }
+      db.exec(`DROP TABLE IF EXISTS ${table}`)
+    }
+
+    // 2. Analyses: recreate with round_id in the UNIQUE constraint.
+    for (const table of ["mesa_analyses", "mesa_session_analyses"]) {
+      const sqlRow = db
+        .query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table) as { sql: string } | null
+      if (!sqlRow) continue
+      if (sqlRow.sql.includes("turn_type, round_id")) continue // already migrated
+
+      // Ensure round_id exists (v14 added it; defensive for odd histories).
+      try {
+        db.run(`ALTER TABLE ${table} ADD COLUMN round_id TEXT`)
+      } catch (e: unknown) {
+        const err = e as Error
+        if (!err.message.includes("duplicate column name")) throw e
+      }
+      db.run(`UPDATE ${table} SET round_id = 'legacy-round-1' WHERE round_id IS NULL`)
+
+      const isScoped = table === "mesa_session_analyses"
+      const scopedCols = isScoped ? "session_id TEXT NOT NULL," : ""
+      const uniqueCols = isScoped
+        ? "UNIQUE(workspace_id, session_id, agent_id, turn, turn_type, round_id)"
+        : "UNIQUE(workspace_id, agent_id, turn, turn_type, round_id)"
+      const allCols =
+        "id, workspace_id, " + (isScoped ? "session_id, " : "") +
+        "agent_id, agent_name, content, turn, timestamp, file_path, kind, " +
+        "turn_type, round, round_id, position_in_turn, responds_to, " +
+        "tensions_raised, session_resumed, registered_by_manager"
+
+      const tempName = `${table}__v15_new`
+      db.exec(`DROP TABLE IF EXISTS ${tempName}`)
+      db.exec(`CREATE TABLE ${tempName} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspace_id TEXT NOT NULL,
+        ${scopedCols}
+        agent_id TEXT NOT NULL,
+        agent_name TEXT,
+        content TEXT,
+        turn INTEGER,
+        timestamp TEXT,
+        file_path TEXT,
+        kind TEXT DEFAULT 'full',
+        turn_type TEXT DEFAULT 'analysis',
+        round INTEGER,
+        round_id TEXT,
+        position_in_turn INTEGER,
+        responds_to TEXT,
+        tensions_raised TEXT,
+        session_resumed INTEGER,
+        registered_by_manager INTEGER DEFAULT 0,
+        ${uniqueCols}
+      )`)
+
+      db.run(`INSERT INTO ${tempName} (${allCols}) SELECT ${allCols} FROM ${table}`)
+      db.exec(`DROP TABLE ${table}`)
+      db.exec(`ALTER TABLE ${tempName} RENAME TO ${table}`)
+      db.exec(
+        isScoped
+          ? `CREATE INDEX IF NOT EXISTS idx_session_analyses_turn ON ${table}(workspace_id, session_id, turn)`
+          : `CREATE INDEX IF NOT EXISTS idx_analyses_turn ON ${table}(workspace_id, turn)`
+      )
+    }
+
+    // 3. Version bump.
+    db.run("UPDATE mesa_state SET state_version = 15 WHERE state_version < 15")
+    db.run("UPDATE mesa_session_state SET state_version = 15 WHERE state_version < 15")
+  })
+  tx()
 }
 
 /**
@@ -1961,6 +1962,7 @@ export function getDb(directory: string): IDatabase {
   migrate_v11_to_v12(db)
   migrate_v12_to_v13(db)
   migrate_v13_to_v14(db)
+  migrate_v14_to_v15(db, directory)
   // File relocation (spec-6886df4f, TD5) — runs after schema migrations
   // (so the session_folder column exists) but before migrateFromJson
   // (so JSON-imported rows also get their files relocated on next open).
@@ -1997,13 +1999,6 @@ function insertChildRows(db: IDatabase, wsId: string, state: DiscussionState): v
     )
   }
 
-  for (const v of state.discussion.votes) {
-    db.run(
-      "INSERT INTO mesa_votes (workspace_id, agent_id, agent_name, vote, reason, round) VALUES (?, ?, ?, ?, ?, ?)",
-      [wsId, v.agentId, v.agentName, v.vote, v.reason, v.round]
-    )
-  }
-
   for (let i = 0; i < state.discussion.participants.length; i++) {
     db.run(
       "INSERT INTO mesa_participants (workspace_id, persona_id, sort_order) VALUES (?, ?, ?)",
@@ -2036,13 +2031,6 @@ function insertSessionChildRows(db: IDatabase, wsId: string, sessionId: string, 
     )
   }
 
-  for (const v of state.discussion.votes) {
-    db.run(
-      "INSERT INTO mesa_session_votes (workspace_id, session_id, agent_id, agent_name, vote, reason, round) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [wsId, sessionId, v.agentId, v.agentName, v.vote, v.reason, v.round]
-    )
-  }
-
   for (let i = 0; i < state.discussion.participants.length; i++) {
     db.run(
       "INSERT INTO mesa_session_participants (workspace_id, session_id, persona_id, sort_order) VALUES (?, ?, ?, ?)",
@@ -2066,15 +2054,11 @@ function loadSessionState(db: IDatabase, wsId: string, sessionId: string): Discu
     .query("SELECT agent_id, agent_name, content, turn, timestamp, file_path, kind, turn_type, round, round_id, position_in_turn, responds_to, tensions_raised, session_resumed, registered_by_manager FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ? ORDER BY turn")
     .all(wsId, sessionId) as Array<Record<string, unknown>>
 
-  const votes = db
-    .query("SELECT agent_id, agent_name, vote, reason, round FROM mesa_session_votes WHERE workspace_id = ? AND session_id = ? ORDER BY round")
-    .all(wsId, sessionId) as Array<{ agent_id: string; agent_name: string; vote: number; reason: string; round: number }>
-
   const participants = db
     .query("SELECT persona_id FROM mesa_session_participants WHERE workspace_id = ? AND session_id = ? ORDER BY sort_order")
     .all(wsId, sessionId) as Array<{ persona_id: string }>
 
-  return rowToState(row, team, analyses, votes, participants)
+  return rowToState(row, team, analyses, participants)
 }
 
 type AnalysisRow = Record<string, unknown>
@@ -2108,31 +2092,8 @@ function rowToState(
   row: Record<string, unknown>,
   team: Array<{ persona_id: string; name: string; division: string; status: string }>,
   analyses: Array<AnalysisRow>,
-  votes: Array<{ agent_id: string; agent_name: string; vote: number; reason: string; round: number }>,
   participants: Array<{ persona_id: string }>
 ): DiscussionState {
-  // discussion.progress may be absent on legacy rows; parse defensively.
-  let progress: DiscussionState["discussion"]["progress"] = {
-    currentTurn: 0,
-    completedParticipants: [],
-    activeProfile: "standard",
-    deviations: 0,
-  }
-  const rawProgress = row.discussion_progress as string | undefined
-  if (rawProgress) {
-    try {
-      const parsed = JSON.parse(rawProgress) as Partial<DiscussionState["discussion"]["progress"]>
-      progress = {
-        currentTurn: typeof parsed.currentTurn === "number" ? parsed.currentTurn : 0,
-        completedParticipants: Array.isArray(parsed.completedParticipants) ? parsed.completedParticipants : [],
-        activeProfile: typeof parsed.activeProfile === "string" ? parsed.activeProfile : "standard",
-        deviations: typeof parsed.deviations === "number" ? parsed.deviations : 0,
-      }
-    } catch {
-      // keep defaults on malformed JSON
-    }
-  }
-
   // briefing.metadata may be absent on legacy rows; parse defensively.
   let metadata: DiscussionState["briefing"]["metadata"] = null
   const rawMetadata = row.briefing_metadata as string | undefined
@@ -2141,34 +2102,6 @@ function rowToState(
       metadata = JSON.parse(rawMetadata) as DiscussionState["briefing"]["metadata"]
     } catch {
       // keep null on malformed JSON
-    }
-  }
-
-  // journeyWorkshop may be absent on legacy rows; parse defensively.
-  let journeyWorkshop: DiscussionState["journeyWorkshop"] = {
-    status: "not_started",
-    detectedAt: new Date().toISOString(),
-    signals: [],
-    suggestedJourneys: [],
-    confidence: "low",
-  }
-  const rawJourneyWorkshop = row.journey_workshop as string | undefined
-  if (rawJourneyWorkshop) {
-    try {
-      const parsed = JSON.parse(rawJourneyWorkshop) as Partial<DiscussionState["journeyWorkshop"]>
-      journeyWorkshop = {
-        status: (parsed.status as DiscussionState["journeyWorkshop"]["status"]) ?? "not_started",
-        mode: parsed.mode as DiscussionState["journeyWorkshop"]["mode"] ?? null,
-        detectedAt: typeof parsed.detectedAt === "string" ? parsed.detectedAt : new Date().toISOString(),
-        signals: Array.isArray(parsed.signals) ? parsed.signals : [],
-        suggestedJourneys: Array.isArray(parsed.suggestedJourneys) ? parsed.suggestedJourneys : [],
-        confidence: (parsed.confidence as DiscussionState["journeyWorkshop"]["confidence"]) ?? "low",
-        briefingPath: (parsed.briefingPath as string | null | undefined) ?? null,
-        journeysFilePath: (parsed.journeysFilePath as string | null | undefined) ?? null,
-        observations: typeof parsed.observations === "string" ? parsed.observations : undefined,
-      }
-    } catch {
-      // keep defaults on malformed JSON
     }
   }
 
@@ -2203,14 +2136,12 @@ function rowToState(
     workspaceId: row.workspace_id as string,
     currentPhase: row.current_phase as string as DiscussionState["currentPhase"],
     status: ((row.status as string) || "active") as DiscussionState["status"],
-    previousPhase: (row.previous_phase as string | null) as DiscussionState["previousPhase"],
     briefing: {
       path: row.briefing_path as string | null,
       status: row.briefing_status as DiscussionState["briefing"]["status"],
       slug: row.briefing_slug as string | null,
       metadata,
     },
-    journeyWorkshop,
     team: team.map((t) => ({
       personaId: t.persona_id,
       name: t.name,
@@ -2222,30 +2153,8 @@ function rowToState(
       currentTurn: (row.discussion_current_turn as number) ?? 0,
       maxTurns: (row.discussion_max_turns as number) ?? 2,
       analyses: analyses.map(mapAnalysisRow),
-      votes: votes.map((v) => ({
-        agentId: v.agent_id,
-        agentName: v.agent_name,
-        vote: v.vote as 0 | 1 | 2,
-        reason: v.reason,
-        round: v.round,
-      })),
-      consensusRound: (row.discussion_consensus_round as number) ?? 0,
       participants: participants.map((p) => p.persona_id),
-      debateNeeded: !!(row.discussion_debate_needed as number),
-      mode: ((row.discussion_mode as string) || "analysis") as DiscussionMode,
-      maxConsensusRounds: (row.discussion_max_consensus_rounds as number) ?? 2,
-      rigor: ((row.rigor as string) || "standard") as DiscussionState["discussion"]["rigor"],
-      analysisMode: ((row.analysis_mode as string) || "parallel") as DiscussionState["discussion"]["analysisMode"],
-      deviations: (row.deviations as number) ?? 0,
-      progress,
     },
-    specification: {
-      path: row.specification_path as string | null,
-      overviewPath: row.specification_overview_path as string | null,
-      status: row.specification_status as DiscussionState["specification"]["status"],
-    },
-    appendices: JSON.parse((row.appendices as string) || '[]'),
-    phases: JSON.parse((row.phases as string) || '["PLANNING","DISCUSSION","SPECIFICATION","EXECUTION"]'),
     rounds,
     deliverables,
     plan,
@@ -2391,33 +2300,18 @@ export async function saveState(directory: string, state: DiscussionState, openc
 
       db.run(
         `INSERT OR REPLACE INTO mesa_session_state (
-          workspace_id, session_id, current_phase, previous_phase, status,
+          workspace_id, session_id, current_phase, status,
           briefing_path, briefing_status, briefing_slug, briefing_metadata,
-          journey_workshop,
           discussion_topic, discussion_current_turn, discussion_max_turns,
-          discussion_consensus_round, discussion_debate_needed, discussion_progress,
-          discussion_mode, discussion_max_consensus_rounds,
-          specification_path, specification_overview_path, specification_status,
-          phases, appendices,
-          rigor, analysis_mode, deviations,
           rounds, deliverables, plan,
           session_folder,
           state_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          state.workspaceId, sessionId, state.currentPhase, state.previousPhase, state.status ?? "active",
+          state.workspaceId, sessionId, state.currentPhase, state.status ?? "active",
           state.briefing.path, state.briefing.status, state.briefing.slug,
           JSON.stringify(state.briefing.metadata ?? null),
-          JSON.stringify(state.journeyWorkshop),
           state.discussion.topic, state.discussion.currentTurn, state.discussion.maxTurns,
-          state.discussion.consensusRound, state.discussion.debateNeeded ? 1 : 0,
-          JSON.stringify(state.discussion.progress ?? { currentTurn: 0, completedParticipants: [], activeProfile: "standard", deviations: 0 }),
-          state.discussion.mode ?? "analysis", state.discussion.maxConsensusRounds ?? 2,
-          state.specification.path, state.specification.overviewPath, state.specification.status,
-          JSON.stringify(state.phases), JSON.stringify(state.appendices),
-          state.discussion.rigor ?? "standard",
-          state.discussion.analysisMode ?? "parallel",
-          state.discussion.deviations ?? 0,
           JSON.stringify(state.rounds ?? []), JSON.stringify(state.deliverables ?? []),
           state.plan ? JSON.stringify(state.plan) : null,
           state.sessionFolder ?? null,
@@ -2427,7 +2321,6 @@ export async function saveState(directory: string, state: DiscussionState, openc
 
       db.run("DELETE FROM mesa_session_team WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
       db.run("DELETE FROM mesa_session_analyses WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
-      db.run("DELETE FROM mesa_session_votes WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
       db.run("DELETE FROM mesa_session_participants WHERE workspace_id = ? AND session_id = ?", [state.workspaceId, sessionId])
 
       insertSessionChildRows(db, state.workspaceId, sessionId, state)

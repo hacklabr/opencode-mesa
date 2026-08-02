@@ -11,20 +11,23 @@ export const mesaStatusTool = tool({
       const state = await loadState(context.directory, context.sessionID)
 
       const updated = new Date(state.updatedAt).toLocaleString()
+      const openRound = state.rounds.find((r) => r.status === "open")
       const summary = [
-        `Mesa v${PLUGIN_VERSION} | Phase: ${state.currentPhase} | Updated: ${updated}`,
-        `Briefing: ${state.briefing.status} | Team: ${state.team.length} specialists | Analyses: ${state.discussion.analyses.length} | Votes: ${state.discussion.votes.length}`,
-        `Specification: ${state.specification.status}`,
+        `Mesa v${PLUGIN_VERSION} | Status: ${state.status} | Updated: ${updated}`,
+        `Briefing: ${state.briefing.status} | Team: ${state.team.length} specialists | Analyses: ${state.discussion.analyses.length}`,
+        `Rounds: ${state.rounds.length} (${openRound ? `open: ${openRound.id}` : "none open"}) | Deliverables: ${state.deliverables.length} | Plan: ${state.plan ? `v${state.plan.version} ${state.plan.status}` : "none"}`,
       ].join("\n")
 
       return successResponse("Mesa Status", summary, {
         version: PLUGIN_VERSION,
-        phase: state.currentPhase,
+        status: state.status,
         briefingStatus: state.briefing.status,
         teamSize: state.team.length,
         analysesCount: state.discussion.analyses.length,
-        votesCount: state.discussion.votes.length,
-        specificationStatus: state.specification.status,
+        roundsCount: state.rounds.length,
+        openRoundId: openRound?.id ?? null,
+        deliverablesCount: state.deliverables.length,
+        plan: state.plan,
         updatedAt: state.updatedAt,
       })
     } catch (err) {

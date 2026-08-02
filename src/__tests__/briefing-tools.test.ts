@@ -6,7 +6,6 @@ import { createInitialState } from "../config.js"
 import {
   createBriefingTool,
   approveBriefingTool,
-  deliverBriefingTool,
   importBriefingTool,
 } from "../tools/briefing-tools.js"
 
@@ -172,61 +171,6 @@ describe("approve_briefing tool", () => {
   })
 })
 
-describe("deliver_briefing tool", () => {
-  beforeEach(async () => {
-    await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
-  })
-
-  afterEach(async () => {
-    closeStorage(TEST_DIR)
-    await fs.rm(join(TEST_DIR, ".mesa"), { recursive: true, force: true })
-  })
-
-  async function setupApprovedBriefing() {
-    await createBriefingTool.execute(
-      { slug: "deliver-test", title: "Deliver Test", content: "# Content" },
-      makeContext()
-    )
-    await approveBriefingTool.execute({}, makeContext())
-  }
-
-  test("successfully delivers approved briefing", async () => {
-    await setupApprovedBriefing()
-
-    const result = await deliverBriefingTool.execute({}, makeContext())
-
-    expect(result).toHaveProperty("title", "Briefing Delivered to Manager")
-    const output = (result as { output: string }).output
-    // Decision M4 (spec-6886df4f): deliver_briefing no longer creates
-    // briefing-current-{sessionId}.md. The Manager reads briefing.md
-    // directly from the session folder.
-    expect(output).toContain("ready for the Manager")
-
-    const state = await loadState(TEST_DIR, "test-session")
-    expect(state.briefing.status).toBe("delivered")
-    expect(state.currentPhase).toBe("PLANNING")
-
-    // The briefing content is read directly from the session folder (M4).
-    const delivered = await fs.readFile(
-      join(TEST_DIR, state.briefing.path!),
-      "utf-8"
-    )
-    expect(delivered).toContain("# Content")
-  })
-
-  test("returns error when briefing not approved", async () => {
-    await createBriefingTool.execute(
-      { slug: "not-approved", title: "Test", content: "Draft" },
-      makeContext()
-    )
-
-    const result = await deliverBriefingTool.execute({}, makeContext())
-
-    expect(typeof result).toBe("string")
-    expect(result).toContain("must be approved before delivery")
-  })
-})
-
 describe("import_briefing tool", () => {
   beforeEach(async () => {
     await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
@@ -323,15 +267,16 @@ describe("import_briefing tool", () => {
     expect(result).toContain("already exists")
   })
 
-  test("resets discussion and specification state on import", async () => {
+  test("resets discussion and workflow state on import", async () => {
     const state = createInitialState(TEST_DIR)
     state.currentPhase = "DISCUSSION"
     state.discussion.analyses = [
       { agentId: "a", agentName: "A", content: "c", turn: 1, timestamp: new Date().toISOString() },
     ]
-    state.discussion.votes = [
-      { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
+    state.rounds = [
+      { id: "r1", topic: "old", participants: ["a"], status: "closed", openedAt: new Date().toISOString() },
     ]
+    state.plan = { path: ".mesa/x/workflow-plan.md", version: 1, status: "approved" }
     await saveState(TEST_DIR, state, "test-session")
 
     const importsDir = join(TEST_DIR, "imports")
@@ -347,7 +292,8 @@ describe("import_briefing tool", () => {
     const loaded = await loadState(TEST_DIR, "test-session")
     expect(loaded.currentPhase).toBe("PLANNING")
     expect(loaded.discussion.analyses).toEqual([])
-    expect(loaded.discussion.votes).toEqual([])
-    expect(loaded.specification.status).toBe("pending")
+    expect(loaded.rounds).toEqual([])
+    expect(loaded.deliverables).toEqual([])
+    expect(loaded.plan).toBeNull()
   })
 })

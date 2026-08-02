@@ -1,38 +1,30 @@
 import { tool } from "@opencode-ai/plugin/tool"
 import { loadState, saveState, getSessionId, getDb, findRootSessionId } from "../state.js"
-import type { DiscussionPhase, ConsensusVote, AnalysisEntry, ConsensusVoteEntry, AnalysisKind, AnalysisTurnType } from "../types.js"
-import { canTransition, VALID_TRANSITIONS, requirePhase, requireMode, formatPhaseHeader, ALL_PHASES } from "../workflow/transitions.js"
-import { getProfile, DEVIATION_RATE_CAP, type RigorProfile } from "../workflow/profiles.js"
+import type { AnalysisEntry, AnalysisKind, AnalysisTurnType } from "../types.js"
+import { formatPhaseHeader } from "../workflow/transitions.js"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { logAction } from "../audit.js"
 import { successResponse, errorResponse } from "../utils/responses.js"
 import {
   buildAnalysisPath,
-  buildBriefingPath,
-  buildSpecificationPath,
-  buildOverviewPath,
   ensureSessionInput,
-  resolveAbsolutePath,
   validateWorkspacePath,
 } from "../utils/paths.js"
-import { recordAgentSession, resetPeerConsultations } from "./peer-tools.js"
-import { PhaseError, MesaError } from "../errors.js"
+import { recordAgentSession } from "./peer-tools.js"
+import { MesaError } from "../errors.js"
+import { MAX_ANALYSES_PER_ROUND } from "../config.js"
 
-const MAX_TOTAL_CHARS = 400000
-const MAX_OVERVIEW_CHARS = 10000
+/**
+ * Surviving discussion kernel tools (spec D5): register_analysis,
+ * get_peer_analyses, pause/resume/cancel. Data preconditions only (D6).
+ */
 
-function transitionPhase(
-  current: DiscussionPhase,
-  target: DiscussionPhase
-): { ok: true; phase: DiscussionPhase } | { ok: false; error: string } {
-  if (!canTransition(current, target)) {
-    return {
-      ok: false,
-      error: `Invalid transition: ${current} → ${target}. Allowed: ${VALID_TRANSITIONS[current]?.join(", ") ?? "none"}`,
-    }
+function statusGuard(state: { status: string }): string | null {
+  if (state.status !== "active") {
+    return `Operation not allowed when discussion status is "${state.status}". Resume the discussion before proceeding.`
   }
-  return { ok: true, phase: target }
+  return null
 }
 
 /**
@@ -46,199 +38,9 @@ function matchParticipant(agentId: string, participants: string[]): string | nul
   return match ?? null
 }
 
-export const openAnalysisRoundTool = tool({
-  description:
-    "Opens a structured analysis round. The Manager defines the topic, participants (ordered), max turns, and the briefing content to analyze.",
-  args: {
-    topic: tool.schema.string().describe("The discussion topic"),
-    participants: tool.schema
-      .array(tool.schema.string())
-      .describe("Ordered array of specialist persona IDs participating in the round"),
-    max_turns: tool.schema
-      .number()
-      .optional()
-      .describe("Maximum number of turns per specialist (default: 2)"),
-    briefing_content: tool.schema
-      .string()
-      .optional()
-      .describe("Briefing content for specialists to analyze"),
-    force: tool.schema
-      .boolean()
-      .optional()
-      .describe("Force re-open even if analyses already exist (default: false)"),
-  },
-  async execute(args, context) {
-    try {
-      const state = await loadState(context.directory, context.sessionID)
-      const sessionId = getSessionId(context.directory, context.sessionID)
-      if (!sessionId) {
-        throw new Error("No active session. Ensure loadState() was called.")
-      }
-
-      const phaseError = requirePhase(state, "PLANNING")
-      if (phaseError) throw new PhaseError(phaseError)
-
-      // Resolve session folder input for session-scoped paths (spec-6886df4f).
-      const sessionInput = await ensureSessionInput(
-        context.directory, state, sessionId, getDb
-      )
-
-      // BUG-12: Clean up orphan briefing file from previous round.
-      // The enriched briefing lives inside the session folder as
-      // briefing-for-discussion.md (decision M5, spec-6886df4f).
-      const oldBriefingPath = join(
-        context.directory,
-        buildBriefingPath(sessionInput).replace(/briefing\.md$/, "briefing-for-discussion.md")
-      )
-      try {
-        await fs.unlink(oldBriefingPath)
-      } catch {
-        // file may not exist — that's fine
-      }
-
-      const existingAnalyses = state.discussion.analyses.length
-      const existingVotes = state.discussion.votes.length
-      if ((existingAnalyses > 0 || existingVotes > 0) && !args.force) {
-        return errorResponse(
-          `Warning: This will clear ${existingAnalyses} existing analyses and ${existingVotes} votes. Set force=true to proceed.`
-        )
-      }
-
-      // BUG-08: Validate participants against summoned team
-      const unknownParticipants = args.participants.filter(
-        (id) => !state.team.some((t) => t.personaId === id)
-      )
-      if (unknownParticipants.length > 0) {
-        return errorResponse(
-          `Unknown participants not in team: ${unknownParticipants.join(", ")}. ` +
-          `Summon them first with summon_team.`
-        )
-      }
-
-      const result = transitionPhase(state.currentPhase, "DISCUSSION")
-      if (!result.ok) throw new PhaseError(result.error)
-
-      state.currentPhase = result.phase
-      // Entering DISCUSSION resets the sub-state to independent analysis
-      // (spec-4dcc492f, Decision 3 — analysis-vs-consensus distinction lives in mode).
-      state.discussion.mode = "analysis"
-      state.discussion.topic = args.topic
-      state.discussion.currentTurn = 1
-      state.discussion.maxTurns = args.max_turns ?? 2
-
-      if (args.force && (existingAnalyses > 0 || existingVotes > 0)) {
-        await logAction(context.directory, "analysis_round_force_cleared", state.currentPhase, {
-          clearedAnalyses: existingAnalyses,
-          clearedVotes: existingVotes,
-          newTopic: args.topic,
-        })
-      }
-
-      state.discussion.analyses = []
-      state.discussion.votes = []
-      state.discussion.consensusRound = 0
-      state.discussion.participants = args.participants
-      state.discussion.debateNeeded = false
-      state.specification = { path: null, overviewPath: null, status: "pending" }
-
-      if (args.briefing_content) {
-        // Write the enriched briefing into the session folder (decision M5,
-        // spec-6886df4f). Stored as briefing-for-discussion.md alongside
-        // briefing.md so both are co-located.
-        const briefingForDiscussionRel = buildBriefingPath(sessionInput).replace(
-          /briefing\.md$/,
-          "briefing-for-discussion.md"
-        )
-        const briefingFile = join(context.directory, briefingForDiscussionRel)
-        await fs.mkdir(join(briefingFile, ".."), { recursive: true })
-        await fs.writeFile(briefingFile, args.briefing_content, "utf-8")
-        await logAction(context.directory, "briefing_for_discussion_written", state.currentPhase, { path: briefingForDiscussionRel })
-      }
-
-      await saveState(context.directory, state, context.sessionID)
-      await logAction(context.directory, "analysis_round_opened", state.currentPhase, { topic: args.topic })
-
-      // New round = fresh per-turn consultation budget (D6), but agent session
-      // mappings MUST survive: ask_peer routing depends on them across rounds
-      // (spec D10.1). Session cleanup happens only via clearAgentSessions()
-      // at process/test teardown — there is no per-session-end plugin hook.
-      resetPeerConsultations()
-
-      const participantsWithNames = args.participants.map((id) => {
-        const name = state.team.find((t) => t.personaId === id)?.name ?? id
-        return { id, name }
-      })
-
-      // Compute the relative path of the enriched briefing (if written) for
-      // display. The Manager and specialists read this file directly.
-      const briefingFilePath = args.briefing_content
-        ? buildBriefingPath(sessionInput).replace(/briefing\.md$/, "briefing-for-discussion.md")
-        : null
-
-      const participantList = participantsWithNames
-        .map((p) => `  ${p.name} (subagent_type="mesa/specialist", task_id="mesa-${p.id}")`)
-        .join("\n")
-
-      const briefingInstruction = briefingFilePath
-        ? `Briefing file: **${briefingFilePath}** — tell each specialist to READ this file. NEVER summarize or excerpt the briefing. Pass the file path so the specialist reads it in full.`
-        : `No briefing file provided. Pass relevant context directly to each specialist.`
-
-      const taskInstructions = participantsWithNames
-        .map(
-          (p, i) =>
-            `${i + 1}. Invoke **${p.name}**:\n   \`task(subagent_type="mesa/specialist", task_id="mesa-${p.id}", prompt="Read the FULL briefing at ${briefingFilePath}. Analyze it from your ${p.name} perspective for: ${args.topic}. Do NOT ask for a summary — read the file yourself.", description="${p.name} analysis")\``
-        )
-        .join("\n\n")
-
-      const memoryNote = [
-        ``,
-        `### Memory Across Turns`,
-        `Use \`task_id="mesa-{personaId}"\` when invoking every specialist. This creates a named session that persists across turns.`,
-        `When a specialist is invoked again in Turn 2+, the same task_id resumes their session — they recall their prior analysis automatically.`,
-        `If the task tool returns a \`ses_...\` session ID instead of accepting the slug, save that ID and pass it as task_id in subsequent turns to preserve memory.`,
-      ].join("\n")
-
-      const sessionIdNote = [
-        ``,
-        `### Session folder handling`,
-        `Mesa automatically resolves the Manager's session from a subagent's parent session chain, so analyses are stored in the shared session folder by default.`,
-        `If a specialist explicitly wants to override this, they may pass \`session_id: "${context.sessionID}"\` to \`register_analysis\`.`,
-      ].join("\n")
-
-      return successResponse(
-        "Analysis Round Opened",
-        [
-          `${formatPhaseHeader(state.currentPhase, { topic: args.topic, currentTurn: 1, maxTurns: state.discussion.maxTurns, participants: args.participants })}`,
-          ``,
-          `Topic: ${args.topic}`,
-          ``,
-          `Participants (in order):`,
-          participantList,
-          ``,
-          `Turns: ${state.discussion.maxTurns} | Phase: DISCUSSION | Mode: analysis`,
-          ``,
-          `## How to run this round`,
-          ``,
-          briefingInstruction,
-          ``,
-          `For each specialist, invoke them via the **task** tool with their persona ID as subagent_type.`,
-          `After each specialist returns their analysis, call \`register_analysis\` to record it.`,
-          ``,
-          taskInstructions,
-          memoryNote,
-          sessionIdNote,
-        ].join("\n")
-      )
-    } catch (err) {
-      if (err instanceof MesaError) return errorResponse(err.message)
-      return errorResponse(`Error opening analysis round: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  },
-})
-
 export const registerAnalysisTool = tool({
   description:
-    "Registers an analysis from a specialist in the current round. Call after each specialist completes their analysis. " +
+    "Registers an analysis from a specialist in the open round. Call after each specialist completes their analysis. " +
     "Accepts optional filePath (canonical .md location), kind (full|delta), and turnType (analysis|discussion). " +
     "Use registered_by_manager=true when the Manager must record the analysis because the specialist failed to self-register.",
   args: {
@@ -249,7 +51,7 @@ export const registerAnalysisTool = tool({
     file_path: tool.schema.string().optional().describe("Optional: workspace-relative path to the canonical .md file"),
     kind: tool.schema.enum(["full", "delta"]).optional().describe("Analysis kind: 'full' (default) or 'delta'. Delta requires a prior full for the same agent."),
     turn_type: tool.schema.enum(["analysis", "discussion"]).optional().describe("Turn type: 'analysis' (default) or 'discussion'"),
-    round: tool.schema.number().optional().describe("Discussion round (only when turn_type='discussion')"),
+    round: tool.schema.number().optional().describe("Legacy discussion-round number (only when turn_type='discussion')"),
     position_in_turn: tool.schema.number().optional().describe("Speaking order, 1-based (only when turn_type='discussion')"),
     responds_to: tool.schema.string().optional().describe("Agent ID being addressed (discussion only)"),
     session_resumed: tool.schema.boolean().optional().describe("Whether the specialist session was resumed (memory-integrity flag)"),
@@ -262,15 +64,13 @@ export const registerAnalysisTool = tool({
       ),
     registered_by_manager: tool.schema.boolean().optional().describe(
       "Set to true when the Manager registers the analysis because the specialist failed to call register_analysis. " +
-      "Disables ask_peer session capture for this entry and flags the entry as a fallback registration."
+      "Disables ask_peer session capture for this entry and flags the entry as a fallback registration. " +
+      "NOTE: such entries do NOT count as declared positions for close_round (spec D3)."
     ),
     reason: tool.schema
       .string()
       .optional()
-      .describe(
-        "Deviation reason — REQUIRED when registering an analysis turn beyond the profile's profileTurns (Tier 3 procedural deviation). " +
-        "Recording a reason increments the session deviation counter and is audit-logged."
-      ),
+      .describe("Optional free-form reason recorded in the audit log (e.g., extra turn beyond the plan)."),
   },
   async execute(args, context) {
     try {
@@ -300,93 +100,55 @@ export const registerAnalysisTool = tool({
           // Keep using the caller's own session ID — best-effort behavior.
         }
       }
-      const phaseError = requirePhase(state, "DISCUSSION", "EXECUTION")
-      if (phaseError) throw new PhaseError(phaseError)
 
-      // BUG-13: Agent ID suffix matching
-      const participants = state.discussion.participants
-      const matchedId = participants.length > 0
-        ? matchParticipant(args.agent_id, participants)
-        : args.agent_id
+      const statusError = statusGuard(state)
+      if (statusError) throw new MesaError(statusError, "INACTIVE_SESSION")
 
-      // BUG-05/08: Participant validation
-      if (participants.length > 0 && !matchedId) {
+      // Data precondition (D6): analyses belong to the OPEN round, and only
+      // round participants may register.
+      const openRound = state.rounds.find((r) => r.status === "open")
+      if (!openRound) {
         return errorResponse(
-          `${args.agent_name} (${args.agent_id}) is not a participant in this round. ` +
-          `Participants: ${participants.join(", ")}`
+          `No open round to register an analysis into. Open one with open_round first.`
         )
       }
 
-      // D4 (bug fix) + D2 (two-bound model): counters are INDEPENDENT.
-      // hardMaxTurns bounds ONLY turn_type="analysis"; maxConsensusRounds
-      // bounds ONLY turn_type="discussion". Derive turnType first.
-      const turnType: AnalysisTurnType = args.turn_type ?? "analysis"
-      const rigor: RigorProfile = state.discussion.rigor ?? "standard"
-      const profile = getProfile(rigor)
+      const participants = openRound.participants
+      const matchedId = matchParticipant(args.agent_id, participants)
+      if (!matchedId) {
+        return errorResponse(
+          `${args.agent_name} (${args.agent_id}) is not a participant in round ${openRound.id}. ` +
+          `Participants: ${participants.join(", ")}. ` +
+          `Only the human-approved cast of the round can speak — ask the human about changing the team.`
+        )
+      }
 
-      // BUG-01: validate turn progression
       if (args.turn < 1) {
         return errorResponse(`Turn must be 1 or greater. Got: ${args.turn}.`)
       }
 
-      if (turnType === "analysis") {
-        // Tier 1 hard ceiling — non-raisable without human authorization.
-        if (args.turn > profile.hardMaxTurns) {
-          return errorResponse(
-            `Analysis turn ${args.turn} exceeds hard ceiling (hardMaxTurns=${profile.hardMaxTurns}) ` +
-            `for the "${rigor}" profile. This is a Tier 1 invariant — only the human can authorize ` +
-            `turns beyond the ceiling.`
-          )
-        }
-        // Tier 2 soft bound — beyond profileTurns requires an auditable deviation reason.
-        if (args.turn > profile.profileTurns) {
-          if (!args.reason) {
-            return errorResponse(
-              `Analysis turn ${args.turn} exceeds profileTurns (${profile.profileTurns}) for the "${rigor}" profile. ` +
-              `Provide a 'reason' to register this as a Tier 3 procedural deviation. ` +
-              `(hardMaxTurns ceiling is ${profile.hardMaxTurns}.)`
-            )
-          }
-          // Rate-cap circuit breaker: >3 deviations/session → human escalation.
-          const nextDeviations = (state.discussion.deviations ?? 0) + 1
-          if (nextDeviations > DEVIATION_RATE_CAP) {
-            return errorResponse(
-              `Deviation rate cap exceeded: this would be deviation ${nextDeviations} (cap is ${DEVIATION_RATE_CAP}). ` +
-              `Human escalation required to authorize further procedural deviations or re-select the rigor profile.`
-            )
-          }
-          state.discussion.deviations = nextDeviations
-          await logAction(context.directory, "analysis_turn_deviation", state.currentPhase, {
-            agentId: matchedId ?? args.agent_id,
-            turn: args.turn,
-            profileTurns: profile.profileTurns,
-            hardMaxTurns: profile.hardMaxTurns,
-            rigor,
-            reason: args.reason,
-            deviationCount: nextDeviations,
-          })
-        }
-      } else {
-        // turn_type="discussion" — bounded by maxConsensusRounds, NOT by maxTurns.
-        const round = args.round ?? 1
-        const maxRounds = state.discussion.maxConsensusRounds ?? 2
-        if (round > maxRounds) {
-          return errorResponse(
-            `Discussion round ${round} exceeds maxConsensusRounds (${maxRounds}). ` +
-            `Escalate to the human with the open tensions enumerated.`
-          )
-        }
-      }
+      const turnType: AnalysisTurnType = args.turn_type ?? "analysis"
 
-      // Dedup check — include turnType to allow same agent+turn for different types
-      // (e.g., turn=3 analysis AND turn=3 discussion for the same agent)
-      const effectiveId = matchedId ?? args.agent_id
+      // Dedup — scoped to the open round (the v15 UNIQUE constraint includes round_id).
+      const effectiveId = matchedId
       const existing = state.discussion.analyses.find(
         (a) => a.agentId === effectiveId && a.turn === args.turn
           && (a.turnType ?? "analysis") === turnType
+          && a.roundId === openRound.id
       )
       if (existing) {
-        return errorResponse(`Analysis already registered for ${args.agent_name} turn ${args.turn} (${turnType}).`)
+        return errorResponse(`Analysis already registered for ${args.agent_name} turn ${args.turn} (${turnType}) in round ${openRound.id}.`)
+      }
+
+      // Circuit breaker (K4): per-round analysis budget.
+      const roundAnalysisCount = state.discussion.analyses.filter(
+        (a) => a.roundId === openRound.id
+      ).length
+      if (roundAnalysisCount >= MAX_ANALYSES_PER_ROUND) {
+        return errorResponse(
+          `Round analysis budget exhausted (${roundAnalysisCount}/${MAX_ANALYSES_PER_ROUND} in round ${openRound.id}). ` +
+          `This is a circuit breaker against runaway turns. Close the round or escalate to the human.`
+        )
       }
 
       // P1-T4: Path-traversal validation for file_path
@@ -410,7 +172,7 @@ export const registerAnalysisTool = tool({
         }
       }
 
-      // Determine kind (default "full"); turnType derived above (D4 fix).
+      // Determine kind (default "full").
       const kind: AnalysisKind = args.kind ?? "full"
 
       // P1-T3: Validation gate — kind="delta" requires a prior full for same agentId
@@ -435,19 +197,13 @@ export const registerAnalysisTool = tool({
         turn: args.turn,
         turnType,
         round: args.round,
-        // v14 (spec D2): link to the open kernel round when one exists.
-        // Legacy flows (no open round) leave roundId undefined — unaffected.
-        roundId: state.rounds?.find((r) => r.status === "open")?.id,
+        // v14 (spec D2): analyses always link to the open round.
+        roundId: openRound.id,
         positionInTurn: args.position_in_turn,
         respondsTo: args.responds_to,
         sessionResumed: args.session_resumed,
         registeredByManager: args.registered_by_manager ?? false,
         timestamp: new Date().toISOString(),
-      }
-
-      // P1-1: Set discussion mode to "debate" when a discussion-turn analysis is registered
-      if (turnType === "discussion") {
-        state.discussion.mode = "debate"
       }
 
       state.discussion.analyses.push(entry)
@@ -475,7 +231,6 @@ export const registerAnalysisTool = tool({
         roundId: entry.roundId ?? null,
         filePath: validatedFilePath,
         reason: args.reason,
-        deviationCount: state.discussion.deviations ?? 0,
         registeredByManager: args.registered_by_manager ?? false,
       })
 
@@ -487,20 +242,18 @@ export const registerAnalysisTool = tool({
         recordAgentSession(effectiveId, context.sessionID)
       }
 
-      // BUG-15: Calculate progress against participants, not team
-      const total = participants.length > 0
-        ? participants.length
-        : state.team.filter((s) => s.status === "summoned" || s.status === "active").length
-      const current = state.discussion.analyses.filter((a) => a.turn === args.turn).length
+      const total = participants.length
+      const current = state.discussion.analyses.filter(
+        (a) => a.roundId === openRound.id && a.turn === args.turn
+      ).length
 
       // BUG-20: Content preview for human observability
       const contentPreview = args.content.length > 300
         ? args.content.slice(0, 300) + "..."
         : args.content
 
-      // BUG-19: Enriched header
       const header = formatPhaseHeader(state.currentPhase, {
-        topic: state.discussion.topic,
+        topic: openRound.topic,
         currentTurn: args.turn,
         maxTurns: state.discussion.maxTurns,
         participants,
@@ -509,42 +262,32 @@ export const registerAnalysisTool = tool({
 
       // Soft warning for out-of-order registration
       let warning = ""
-      if (participants.length > 0) {
-        const participantIndex = participants.indexOf(effectiveId)
-        if (participantIndex > 0) {
-          const registeredThisTurn = new Set(
-            state.discussion.analyses
-              .filter((a) => a.turn === args.turn)
-              .map((a) => a.agentId)
-          )
-          const skipped = participants
-            .slice(0, participantIndex)
-            .filter((id) => !registeredThisTurn.has(id))
-            .map((id) => state.team.find((t) => t.personaId === id)?.name ?? id)
+      const participantIndex = participants.indexOf(effectiveId)
+      if (participantIndex > 0) {
+        const registeredThisTurn = new Set(
+          state.discussion.analyses
+            .filter((a) => a.roundId === openRound.id && a.turn === args.turn)
+            .map((a) => a.agentId)
+        )
+        const skipped = participants
+          .slice(0, participantIndex)
+          .filter((id) => !registeredThisTurn.has(id))
 
-          if (skipped.length > 0) {
-            warning = `\n\nNote: ${skipped.join(", ")} have not registered yet for turn ${args.turn}. Consider waiting for their analyses.`
-          }
+        if (skipped.length > 0) {
+          warning = `\n\nNote: ${skipped.join(", ")} have not registered yet for turn ${args.turn}. Consider waiting for their analyses.`
         }
       }
 
-      // Next-step hint — profileTurns is the soft bound (Tier 2); beyond it is a deviation.
-      let nextStep = ""
-      if (current < total) {
-        nextStep = `Next: Register analysis from the next specialist for turn ${args.turn}.`
-      } else if (args.turn < profile.profileTurns) {
-        nextStep = `Turn ${args.turn} complete! All ${total} analyses received. Proceed to turn ${args.turn + 1}.`
-      } else {
-        nextStep = `Profile turns complete (${args.turn}/${profile.profileTurns} for "${rigor}"). Call request_consensus to proceed.` +
-          (args.turn < profile.hardMaxTurns ? ` Further turns are allowed with a deviation reason (hard ceiling: ${profile.hardMaxTurns}).` : "")
-      }
+      const nextStep = current < total
+        ? `Next: Register analysis from the next participant for turn ${args.turn}.`
+        : `All ${total} participants registered for turn ${args.turn}. When the round has converged, call close_round with the outcome (each participant's final artifact must contain a POSITION block).`
 
       return successResponse(
         `Analysis Registered: ${args.agent_name}`,
         [
           header,
           ``,
-          `Specialist ${args.agent_name} completed turn ${args.turn}.`,
+          `Specialist ${args.agent_name} completed turn ${args.turn} in round ${openRound.id}.`,
           `Progress: ${current}/${total} analyses for turn ${args.turn}.`,
           warning,
           ``,
@@ -562,17 +305,18 @@ export const registerAnalysisTool = tool({
 })
 
 // ---------------------------------------------------------------------------
-// P1-T5: get_peer_analyses — read-only tool for discovering analysis file paths
+// get_peer_analyses — read-only tool for discovering analysis file paths
 // ---------------------------------------------------------------------------
 
 export const getPeerAnalysesTool = tool({
   description:
-    "Returns analysis file paths and metadata for the current discussion round. Read-only. " +
+    "Returns analysis file paths and metadata. Read-only. " +
     "Use this to discover which peer analyses exist and their file paths before constructing " +
-    "delegation prompts for turn 2+ specialists.",
+    "delegation prompts for subsequent turns or rounds.",
   args: {
     turn: tool.schema.number().optional().describe("Filter by turn number. If omitted, returns all turns."),
     agent_id: tool.schema.string().optional().describe("Filter by specialist agent ID."),
+    round_id: tool.schema.string().optional().describe("Filter by round ID (e.g. 'r1'). Defaults to the open round when one exists, otherwise all rounds."),
   },
   async execute(args, context) {
     try {
@@ -580,6 +324,10 @@ export const getPeerAnalysesTool = tool({
 
       let analyses = state.discussion.analyses
 
+      const roundFilter = args.round_id ?? state.rounds.find((r) => r.status === "open")?.id
+      if (roundFilter) {
+        analyses = analyses.filter((a) => a.roundId === roundFilter)
+      }
       if (args.turn !== undefined) {
         analyses = analyses.filter((a) => a.turn === args.turn)
       }
@@ -600,7 +348,7 @@ export const getPeerAnalysesTool = tool({
           kind: a.kind ?? "full",
           turnType: a.turnType ?? "analysis",
           turn: a.turn,
-          round: a.round,
+          roundId: a.roundId,
           contentPreview,
           reconciled: false as boolean,
         }
@@ -619,12 +367,12 @@ export const getPeerAnalysesTool = tool({
       }
 
       const tableRows = results.map((r) =>
-        `| ${r.agentName} | turn ${r.turn} | ${r.kind} | ${r.turnType} | ${r.filePath ?? "(inline)"} |${r.reconciled ? " ⚠️ missing" : ""}|`
+        `| ${r.agentName} | ${r.roundId ?? "-"} | turn ${r.turn} | ${r.kind} | ${r.turnType} | ${r.filePath ?? "(inline)"} |${r.reconciled ? " ⚠️ missing" : ""}|`
       )
 
       const table = [
-        `| Specialist | Turn | Kind | Type | File | Status |`,
-        `|------------|------|------|------|------|--------|`,
+        `| Specialist | Round | Turn | Kind | Type | File | Status |`,
+        `|------------|-------|------|------|------|------|--------|`,
         ...tableRows,
       ].join("\n")
 
@@ -651,376 +399,26 @@ export const getPeerAnalysesTool = tool({
   },
 })
 
-export const requestConsensusTool = tool({
-  description:
-    "Initiates the consensus phase. Specialists vote on the analyses. If disagreements exist, a debate round may follow.",
-  args: {
-    votes: tool.schema
-      .array(
-        tool.schema.object({
-          agent_id: tool.schema.string(),
-          agent_name: tool.schema.string(),
-          vote: tool.schema.union([tool.schema.literal(0), tool.schema.literal(1), tool.schema.literal(2)]),
-          reason: tool.schema.string(),
-        })
-      )
-      .describe("Array of votes: 0=DISAGREE, 1=AGREE, 2=AGREE_WITH_RESERVATIONS"),
-    round: tool.schema.number().describe("Consensus round number (1 for first round)"),
-  },
-  async execute(args, context) {
-    try {
-      const state = await loadState(context.directory, context.sessionID)
-      const phaseError = requirePhase(state, "DISCUSSION", "EXECUTION")
-      if (phaseError) throw new PhaseError(phaseError)
-
-      // P1-3: Enforce maxConsensusRounds circuit breaker
-      const maxRounds = state.discussion.maxConsensusRounds ?? 2
-      if (args.round > maxRounds) {
-        return errorResponse(
-          `Consensus round ${args.round} exceeds maximum (${maxRounds}). ` +
-          `Escalate to the human with the open tensions enumerated.`
-        )
-      }
-
-      const VALID_VOTES = new Set([0, 1, 2])
-      for (const v of args.votes) {
-        if (!VALID_VOTES.has(v.vote)) {
-          return errorResponse(`Invalid vote value ${v.vote} for ${v.agent_name}. Must be 0 (DISAGREE), 1 (AGREE), or 2 (AGREE_WITH_RESERVATIONS).`)
-        }
-      }
-
-      // BUG-04: Completeness gate — verify all participants completed all turns
-      const participants = state.discussion.participants
-      if (participants.length > 0) {
-        // Completeness gate: each participant must have at least ONE analysis
-        // (at any turn). Does NOT require all at the same turn — the adaptive
-        // workflow may have specialists who completed at different turn numbers.
-        const participantsWithAnalyses = new Set(
-          state.discussion.analyses.map((a) => a.agentId)
-        )
-        const missing = participants.filter((id) => {
-          return !participantsWithAnalyses.has(id) &&
-            !Array.from(participantsWithAnalyses).some(cid => cid.endsWith(id) || id.endsWith(cid))
-        })
-        if (missing.length > 0) {
-          const missingNames = missing.map(
-            (id) => state.team.find((t) => t.personaId === id)?.name ?? id
-          )
-          return errorResponse(
-            `Cannot proceed to consensus. Not all participants have registered analyses.\n` +
-            `Missing: ${missingNames.join(", ")}.\n` +
-            `Each participant must call register_analysis at least once before voting.`
-          )
-        }
-      }
-
-      const existingVotes = state.discussion.votes.filter((v) => v.round === args.round)
-      for (const v of args.votes) {
-        if (existingVotes.some((ev) => ev.agentId === v.agent_id)) {
-          return errorResponse(`Vote already registered for ${v.agent_name} in round ${args.round}.`)
-        }
-      }
-
-      // Consensus now lives WITHIN the DISCUSSION phase (spec-4dcc492f, Decision 3).
-      // request_consensus is a first-class audit event equivalent to a phase transition,
-      // but it only advances discussion.mode → "voting"; the phase stays DISCUSSION.
-      const modeError = requireMode(state, "analysis", "debate")
-      if (modeError) throw new PhaseError(modeError)
-      state.discussion.mode = "voting"
-      state.discussion.consensusRound = args.round
-
-      // BUG-05/13: Validate votes come from participants
-      for (const v of args.votes) {
-        const matchedVoter = participants.length > 0
-          ? matchParticipant(v.agent_id, participants)
-          : v.agent_id
-        if (participants.length > 0 && !matchedVoter) {
-          return errorResponse(
-            `${v.agent_name} (${v.agent_id}) is not a participant in this round and cannot vote. ` +
-            `Participants: ${participants.join(", ")}`
-          )
-        }
-        // Use matched ID for vote recording
-        v.agent_id = matchedVoter ?? v.agent_id
-      }
-
-      for (const v of args.votes) {
-        const entry: ConsensusVoteEntry = {
-          agentId: v.agent_id,
-          agentName: v.agent_name,
-          vote: v.vote as ConsensusVote,
-          reason: v.reason,
-          round: args.round,
-        }
-        state.discussion.votes.push(entry)
-      }
-
-      const allAgree = args.votes.every((v) => v.vote === 1 || v.vote === 2)
-      const hasDisagreement = args.votes.some((v) => v.vote === 0)
-
-      state.discussion.debateNeeded = hasDisagreement
-
-      await saveState(context.directory, state, context.sessionID)
-      await logAction(context.directory, "consensus_requested", state.currentPhase, { round: args.round })
-
-      const voteSummary = args.votes
-        .map((v) => {
-          const label =
-            v.vote === 0
-              ? "DISAGREE"
-              : v.vote === 1
-                ? "AGREE"
-                : "AGREE_WITH_RESERVATIONS"
-          return `  ${v.agent_name}: ${label} — ${v.reason}`
-        })
-        .join("\n")
-
-      if (allAgree) {
-        return successResponse(
-          "Consensus Reached",
-          `${formatPhaseHeader(state.currentPhase, { topic: state.discussion.topic })}\n\nAll specialists agree.\n\nVotes:\n${voteSummary}\n\nConsensus achieved. Proceed to specification generation.`
-        )
-      }
-
-      if (hasDisagreement) {
-        const disagreeing = args.votes
-          .filter((v) => v.vote === 0)
-          .map((v) => v.agent_name)
-          .join(", ")
-
-        return successResponse(
-          "Consensus Not Reached — Debate Required",
-          `${formatPhaseHeader(state.currentPhase, { topic: state.discussion.topic })}\n\nVotes:\n${voteSummary}\n\nDisagreeing: ${disagreeing}\n\nA debate round is needed. Ask disagreeing specialists to present their concerns and re-vote.`
-        )
-      }
-
-      return successResponse(
-        "Consensus Phase",
-        `${formatPhaseHeader(state.currentPhase, { topic: state.discussion.topic })}\n\nVotes:\n${voteSummary}`
-      )
-    } catch (err) {
-      if (err instanceof MesaError) return errorResponse(err.message)
-      return errorResponse(`Error requesting consensus: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  },
-})
-
-export const generateSpecificationOverviewTool = tool({
-  description:
-    "Generates a human-readable overview document for the approved specification. This is a concise, visual summary (1-5 pages, ideally 1-3) with diagrams that the human uses to understand and approve the proposed architecture/solution. The technical specification remains the authoritative source.",
-  args: {
-    content: tool.schema
-      .string()
-      .describe("The complete overview content in Markdown. Should be concise, visual, and human-friendly — not a copy of the full spec."),
-    topic: tool.schema.string().describe("The overview topic/title"),
-  },
-  async execute(args, context) {
-    try {
-      const state = await loadState(context.directory, context.sessionID)
-      const phaseError = requirePhase(state, "SPECIFICATION")
-      if (phaseError) throw new PhaseError(phaseError)
-
-      if (state.specification.status !== "draft" || !state.specification.path) {
-        return errorResponse(
-          "No draft specification found. Generate the specification first using generate_specification."
-        )
-      }
-
-      if (args.content.length > MAX_OVERVIEW_CHARS) {
-        return errorResponse(
-          `Overview exceeds maximum length: ${args.content.length} chars (max ${MAX_OVERVIEW_CHARS}).\n` +
-          `Reduce the content to fit within 1-5 pages (ideally 1-3).`
-        )
-      }
-
-      // Decision P5 + 3.2 (spec-6886df4f): the spec is now a fixed-name
-      // `specification.md` inside the session folder. There is no spec ID to
-      // extract — overview.md lives alongside it. The previous regex
-      // /spec-([a-zA-Z0-9]+)\.md$/ was dead code once the filename became fixed.
-      const sessionId = getSessionId(context.directory, context.sessionID)
-      if (!sessionId) {
-        throw new Error("No active session. Ensure loadState() was called.")
-      }
-      const sessionInput = await ensureSessionInput(
-        context.directory, state, sessionId, getDb
-      )
-      const overviewRelPath = buildOverviewPath(sessionInput)
-      const overviewPath = join(context.directory, overviewRelPath)
-
-      const document = [
-        `# Overview: ${args.topic}`,
-        ``,
-        `**Generated at:** ${new Date().toISOString()}`,
-        `**Technical specification:** ${state.specification.path}`,
-        ``,
-        args.content,
-      ].join("\n")
-
-      await fs.mkdir(join(overviewPath, ".."), { recursive: true })
-      await fs.writeFile(overviewPath, document, "utf-8")
-
-      // Store RELATIVE path in state (spec-6886df4f, TD3).
-      state.specification.overviewPath = overviewRelPath
-      await saveState(context.directory, state, context.sessionID)
-      await logAction(context.directory, "specification_overview_generated", state.currentPhase, {
-        overviewPath: overviewRelPath,
-        specPath: state.specification.path,
-      })
-
-      return successResponse(
-        "Specification Overview Generated",
-        `${formatPhaseHeader(state.currentPhase, { topic: args.topic })}\n\nOverview saved to: ${overviewRelPath}\n\n` +
-        `This is the human-readable summary for approval. The full technical specification remains at: ${state.specification.path}`,
-        { overviewPath: overviewRelPath, specPath: state.specification.path }
-      )
-    } catch (err) {
-      if (err instanceof MesaError) return errorResponse(err.message)
-      return errorResponse(`Error generating overview: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  },
-})
-
-export const generateSpecificationTool = tool({
-  description:
-    "Generates the specification document. The Manager writes a single coherent document (up to 100k tokens) covering: executive summary, context, technical decisions, execution plan with tasks and priorities. Analyses are stored separately — they do NOT appear in the spec.",
-  args: {
-    content: tool.schema
-      .string()
-      .describe("The complete specification document content written by the Manager. This should be a coherent, unified document — not disconnected sections."),
-    topic: tool.schema.string().describe("The specification topic/title"),
-  },
-  async execute(args, context) {
-    try {
-      const state = await loadState(context.directory, context.sessionID)
-
-      // Transition DISCUSSION → SPECIFICATION (spec-4dcc492f, Decision 3)
-      const toSpec = transitionPhase(state.currentPhase, "SPECIFICATION")
-      if (!toSpec.ok) throw new PhaseError(toSpec.error)
-      state.currentPhase = toSpec.phase
-
-      // Decision P5 + 3.2 (spec-6886df4f): fixed filename `specification.md`
-      // inside the session folder. Eliminates the non-deterministic
-      // `spec-{randomUUID().slice(0,8)}.md` naming.
-      const sessionId = getSessionId(context.directory, context.sessionID)
-      if (!sessionId) {
-        throw new Error("No active session. Ensure loadState() was called.")
-      }
-      const sessionInput = await ensureSessionInput(
-        context.directory, state, sessionId, getDb
-      )
-      const specRelPath = buildSpecificationPath(sessionInput)
-      const specPath = join(context.directory, specRelPath)
-
-      const document = [
-        `# Specification: ${args.topic}`,
-        ``,
-        `**Generated at:** ${new Date().toISOString()}`,
-        ``,
-        args.content,
-      ].join("\n")
-
-      // Budget Gate: Total document size validation
-      if (document.length > MAX_TOTAL_CHARS) {
-        // Revert phase change — back to DISCUSSION
-        state.currentPhase = "DISCUSSION"
-        return errorResponse(
-          `Specification exceeds total budget: ${document.length} chars (max ${MAX_TOTAL_CHARS}).\n` +
-          `Reduce content length to fit within the budget.`
-        )
-      }
-
-      await fs.mkdir(join(specPath, ".."), { recursive: true })
-      await fs.writeFile(specPath, document, "utf-8")
-
-      // Decision M6 (spec-6886df4f): ELIMINATE the analyses snapshot.
-      // The live `analyses/` directory inside the session folder already has
-      // canonical copies written by register_analysis. Duplicating them under
-      // `specifications/analyses-{id}/` was pure redundancy.
-
-      // Store RELATIVE path in state (spec-6886df4f, TD3).
-      state.specification.path = specRelPath
-      state.specification.status = "draft"
-
-      // In SPECIFICATION phase, spec is ready for approval (no phase transition needed)
-      await saveState(context.directory, state, context.sessionID)
-      await logAction(context.directory, "specification_generated", state.currentPhase, { path: specRelPath })
-
-      return successResponse(
-        "Specification Generated",
-        `${formatPhaseHeader(state.currentPhase, { topic: args.topic })}\n\nSpecification saved to: ${specRelPath}\n\nThe specification is now awaiting human approval.`,
-        { path: specRelPath }
-      )
-    } catch (err) {
-      if (err instanceof MesaError) return errorResponse(err.message)
-      return errorResponse(`Error generating specification: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  },
-})
-
-export const approveSpecificationTool = tool({
-  description:
-    "Marks the specification as approved (or rejected). If rejected, returns to DOCUMENTATION phase.",
-  args: {
-    approved: tool.schema.boolean().describe("Whether the human approved the specification"),
-    feedback: tool.schema
-      .string()
-      .optional()
-      .describe("Optional feedback/rejection reason"),
-  },
-  async execute(args, context) {
-    try {
-      const state = await loadState(context.directory, context.sessionID)
-
-      if (args.approved) {
-        const result = transitionPhase(state.currentPhase, "EXECUTION")
-        if (!result.ok) throw new PhaseError(result.error)
-
-        state.currentPhase = result.phase
-        state.specification.status = "approved"
-        await saveState(context.directory, state, context.sessionID)
-        await logAction(context.directory, "specification_approved", state.currentPhase)
-
-        const overviewNote = state.specification.overviewPath
-          ? `Human overview: ${state.specification.overviewPath}`
-          : "Note: no human overview was generated. The full technical specification was approved directly."
-
-        return successResponse(
-          "Specification Approved",
-          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification approved. Phase changed to EXECUTION. The Manager may now delegate implementation tasks.\n\n${overviewNote}\n\n**Tip:** Human approval via chat is not sufficient to advance the workflow — this tool (approve_specification) must be called explicitly to record the decision and transition phases.`
-        )
-      } else {
-        // Rejection: stay in SPECIFICATION (no back-edge needed — spec revision happens in same phase)
-        state.specification.status = "rejected"
-        await saveState(context.directory, state, context.sessionID)
-        await logAction(context.directory, "specification_rejected", state.currentPhase, { feedback: args.feedback })
-
-        return successResponse(
-          "Specification Rejected",
-          `${formatPhaseHeader(state.currentPhase)}\n\nSpecification rejected.${args.feedback ? ` Feedback: ${args.feedback}` : ""}\n\nRemains in SPECIFICATION phase for revision.`
-        )
-      }
-    } catch (err) {
-      if (err instanceof MesaError) return errorResponse(err.message)
-      return errorResponse(`Error approving specification: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  },
-})
+// ---------------------------------------------------------------------------
+// Lifecycle: pause / resume / cancel — status-field only (spec: legacy compat)
+// ---------------------------------------------------------------------------
 
 export const pauseDiscussionTool = tool({
-  description: "Pauses the current discussion. State is preserved for later resumption.",
+  description: "Pauses the current session. State is preserved for later resumption.",
   args: {},
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
-      // Pause sets status, not phase — phase is preserved for resume
+      if (state.status === "cancelled") {
+        return errorResponse("Cannot pause a cancelled session.")
+      }
       state.status = "paused"
-      state.previousPhase = state.currentPhase
       await saveState(context.directory, state, context.sessionID)
-      await logAction(context.directory, "discussion_paused", state.currentPhase, { previousPhase: state.previousPhase })
+      await logAction(context.directory, "discussion_paused", state.currentPhase)
 
       return successResponse(
         "Discussion Paused",
-        `${formatPhaseHeader(state.currentPhase)}\n\nDiscussion paused at phase: ${state.currentPhase}. Use resume_discussion to resume.`
+        `${formatPhaseHeader(state.currentPhase)}\n\nSession paused. Use resume_discussion to resume.`
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -1030,38 +428,22 @@ export const pauseDiscussionTool = tool({
 })
 
 export const resumeDiscussionTool = tool({
-  description: "Resumes a paused discussion, returning to the previous phase.",
-  args: {
-    target_phase: tool.schema.string().optional().describe("Optional: phase to resume to (e.g. 'DISCUSSION'). Defaults to previous phase."),
-  },
-  async execute(args, context) {
+  description: "Resumes a paused session.",
+  args: {},
+  async execute(_args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
       if (state.status !== "paused") {
         return errorResponse(`Discussion is not paused. Current status: ${state.status}`)
       }
 
-      // Resume: set status back to active
       state.status = "active"
-
-      // If target_phase provided, validate and use it
-      if (args.target_phase) {
-        const allPhasesSet = new Set(ALL_PHASES)
-        if (!allPhasesSet.has(args.target_phase as DiscussionPhase)) {
-          return errorResponse(`Invalid phase "${args.target_phase}". Valid phases: ${ALL_PHASES.join(", ")}`)
-        }
-        state.currentPhase = args.target_phase as DiscussionPhase
-      } else if (state.previousPhase) {
-        state.currentPhase = state.previousPhase
-      }
-
-      state.previousPhase = null
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "discussion_resumed", state.currentPhase)
 
       return successResponse(
         "Discussion Resumed",
-        `${formatPhaseHeader(state.currentPhase)}\n\nDiscussion resumed at phase: ${state.currentPhase}.`
+        `${formatPhaseHeader(state.currentPhase)}\n\nSession resumed. Re-orient before acting: read the workflow plan and the round trace, and declare your position out loud.`
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)
@@ -1071,22 +453,20 @@ export const resumeDiscussionTool = tool({
 })
 
 export const cancelDiscussionTool = tool({
-  description: "Cancels the current discussion and clears analysis data.",
+  description: "Cancels the current session and clears analysis data.",
   args: {},
   async execute(_args, context) {
     try {
       const state = await loadState(context.directory, context.sessionID)
-      // Cancel sets status, not phase — phase is kept for audit
       state.status = "cancelled"
       state.discussion.analyses = []
-      state.discussion.votes = []
       state.discussion.currentTurn = 0
       await saveState(context.directory, state, context.sessionID)
       await logAction(context.directory, "discussion_cancelled", state.currentPhase)
 
       return successResponse(
         "Discussion Cancelled",
-        `${formatPhaseHeader(state.currentPhase)}\n\nThe discussion has been cancelled and analysis data cleared. You may start a new round.`
+        `${formatPhaseHeader(state.currentPhase)}\n\nThe session has been cancelled and analysis data cleared.`
       )
     } catch (err) {
       if (err instanceof MesaError) return errorResponse(err.message)

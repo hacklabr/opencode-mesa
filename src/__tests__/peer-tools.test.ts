@@ -18,8 +18,7 @@ import {
   setSdkClient,
 } from "../tools/peer-tools.js"
 import { loadState, saveState, closeStorage } from "../state.js"
-import { createInitialState } from "../config.js"
-import { peerConsultationCap } from "../workflow/profiles.js"
+import { createInitialState, PEER_CONSULTATION_CAP } from "../config.js"
 import type { SuccessResponse } from "../utils/responses.js"
 
 const FIXTURES = join(import.meta.dirname, "__test_fixtures__", "peer-tools")
@@ -162,11 +161,10 @@ describe("askPeerTool.execute (integration, mock SDK client)", () => {
     await fs.rm(FIXTURES, { recursive: true, force: true }).catch(() => {})
   })
 
-  async function seedDiscussion(directory: string, rigor: "standard" | "deep" = "standard"): Promise<void> {
+  async function seedDiscussion(directory: string): Promise<void> {
     await fs.mkdir(join(directory, ".mesa"), { recursive: true })
     const state = createInitialState(directory)
     state.currentPhase = "DISCUSSION"
-    state.discussion.rigor = rigor
     state.discussion.currentTurn = 1 // stable turn so the cap accumulates across calls
     await saveState(directory, state, callerSession)
   }
@@ -204,13 +202,12 @@ describe("askPeerTool.execute (integration, mock SDK client)", () => {
     expect(promptCalls).toBe(0)
   })
 
-  it("respects the D6 per-turn consultation cap (standard → 2)", async () => {
+  it("respects the per-turn consultation cap (constant = 2)", async () => {
     const dir = freshDir("cap")
-    await seedDiscussion(dir, "standard")
+    await seedDiscussion(dir)
     installMockClient(false)
 
-    // Confirm the cap the tool will enforce.
-    expect(peerConsultationCap("standard")).toBe(2)
+    expect(PEER_CONSULTATION_CAP).toBe(2)
 
     const call = () =>
       askPeerTool.execute(
@@ -230,24 +227,6 @@ describe("askPeerTool.execute (integration, mock SDK client)", () => {
     expect(typeof r3).toBe("string")
     expect(r3).toContain("cap")
     expect(promptCalls).toBe(2) // unchanged — blocked before prompt
-  })
-
-  it("does not apply the cap under the 'deep' profile (unlimited)", async () => {
-    const dir = freshDir("deep")
-    await seedDiscussion(dir, "deep")
-    installMockClient(false)
-
-    expect(peerConsultationCap("deep")).toBe(Infinity)
-
-    // Three consultations all succeed past the standard cap of 2.
-    for (let i = 0; i < 3; i++) {
-      const r = (await askPeerTool.execute(
-        { peer_id: peerId, question: `q${i}?` },
-        makeContext(dir, callerSession)
-      )) as SuccessResponse
-      expect(r.output).toContain("peer answer")
-    }
-    expect(promptCalls).toBe(3)
   })
 
   it("errors when the SDK client is unavailable", async () => {

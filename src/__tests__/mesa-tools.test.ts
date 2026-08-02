@@ -44,7 +44,7 @@ describe("mesa_status tool", () => {
     expect(result).toHaveProperty("title", "Mesa Status")
     const output = (result as { output: string }).output
     expect(output).toContain(`v${PLUGIN_VERSION}`)
-    expect(output).toContain("PLANNING")
+    expect(output).toContain("Status: active")
     expect(output).toContain("Team: 1 specialists")
     expect(output).toContain("Analyses: 1")
 
@@ -64,20 +64,25 @@ describe("mesa_status tool", () => {
     expect(result).toHaveProperty("title", "Mesa Status")
     const output = (result as { output: string }).output
     expect(output).toContain(`v${PLUGIN_VERSION}`)
-    expect(output).toContain("PLANNING")
+    expect(output).toContain("Status: active")
     expect(output).toContain("Team: 0 specialists")
   })
 
-  test("returns correct vote count after consensus", async () => {
+  test("reports rounds, deliverables and plan from state", async () => {
     const state = createInitialState(TEST_DIR)
-    state.discussion.votes = [
-      { agentId: "a", agentName: "A", vote: 1, reason: "ok", round: 1 },
-      { agentId: "b", agentName: "B", vote: 0, reason: "no", round: 1 },
+    state.rounds = [
+      { id: "r1", topic: "t", participants: ["a"], status: "open", openedAt: new Date().toISOString() },
     ]
+    state.deliverables = [
+      { path: ".mesa/x/spec.md", kind: "specification", status: "draft", provenance: { roundIds: ["r1"] } },
+    ]
+    state.plan = { path: ".mesa/x/workflow-plan.md", version: 2, status: "approved" }
     await saveState(TEST_DIR, state, "test-session")
 
     const result = await mesaStatusTool.execute({}, makeContext())
     const output = (result as { output: string }).output
-    expect(output).toContain("Votes: 2")
+    expect(output).toContain("Rounds: 1 (open: r1)")
+    expect(output).toContain("Deliverables: 1")
+    expect(output).toContain("Plan: v2 approved")
   })
 })

@@ -1,43 +1,15 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { mesaStatusTool } from "./tools/mesa-tools.js"
 import { listSpecialistsTool, getSpecialistTool } from "./tools/catalog-tools.js"
-import { createBriefingTool, approveBriefingTool, deliverBriefingTool, importBriefingTool } from "./tools/briefing-tools.js"
+import { createBriefingTool, approveBriefingTool, importBriefingTool } from "./tools/briefing-tools.js"
+import { proposeTeamTool, summonTeamTool } from "./tools/manager-tools.js"
 import {
-  analyzeBriefingTool,
-  proposeTeamTool,
-  summonTeamTool,
-  delegateTaskTool,
-  definePhasesTool,
-  checkExecutionPhasesTool,
-  selectPhasesForAnalysisTool,
-  configurePhaseObservationTool,
-  verifyImplementationTool,
-  replanImplementationTeamTool,
-} from "./tools/manager-tools.js"
-import {
-  detectUserJourneysTool,
-  configureJourneyWorkshopTool,
-  openJourneyWorkshopRoundTool,
-  completeJourneyWorkshopTool,
-} from "./tools/journey-workshop-tools.js"
-import {
-  openAnalysisRoundTool,
   registerAnalysisTool,
   getPeerAnalysesTool,
-  requestConsensusTool,
-  generateSpecificationTool,
-  generateSpecificationOverviewTool,
-  approveSpecificationTool,
   pauseDiscussionTool,
   resumeDiscussionTool,
   cancelDiscussionTool,
 } from "./tools/discussion-tools.js"
-import {
-  detectPhasesTool,
-  openPhaseAnalysisRoundTool,
-  requestPhaseConsensusTool,
-  generatePhaseAppendixTool,
-} from "./tools/phase-analysis-tools.js"
 import { openRoundTool, closeRoundTool } from "./tools/round-tools.js"
 import { recordDecisionTool, produceDeliverableTool, approveDeliverableTool } from "./tools/decision-tools.js"
 import { checkForUpdate } from "./updater/checker.js"
@@ -64,47 +36,25 @@ export const mesa: Plugin = async (input) => {
       get_specialist: getSpecialistTool,
       create_briefing: createBriefingTool,
       approve_briefing: approveBriefingTool,
-      deliver_briefing: deliverBriefingTool,
       import_briefing: importBriefingTool,
-      analyze_briefing: analyzeBriefingTool,
-      detect_user_journeys: detectUserJourneysTool,
-      configure_journey_workshop: configureJourneyWorkshopTool,
-      open_journey_workshop_round: openJourneyWorkshopRoundTool,
-      complete_journey_workshop: completeJourneyWorkshopTool,
       propose_team: proposeTeamTool,
       summon_team: summonTeamTool,
-      delegate_task: delegateTaskTool,
-      replan_implementation_team: replanImplementationTeamTool,
-      define_phases: definePhasesTool,
-      check_execution_phases: checkExecutionPhasesTool,
-      select_phases_for_analysis: selectPhasesForAnalysisTool,
-      configure_phase_observation: configurePhaseObservationTool,
-      verify_implementation: verifyImplementationTool,
-      open_analysis_round: openAnalysisRoundTool,
+      open_round: openRoundTool,
       register_analysis: registerAnalysisTool,
       get_peer_analyses: getPeerAnalysesTool,
-      request_consensus: requestConsensusTool,
-      generate_specification: generateSpecificationTool,
-      generate_specification_overview: generateSpecificationOverviewTool,
-      approve_specification: approveSpecificationTool,
-      pause_discussion: pauseDiscussionTool,
-      resume_discussion: resumeDiscussionTool,
-      cancel_discussion: cancelDiscussionTool,
-      detect_phases: detectPhasesTool,
-      open_phase_analysis_round: openPhaseAnalysisRoundTool,
-      request_phase_consensus: requestPhaseConsensusTool,
-      generate_phase_appendix: generatePhaseAppendixTool,
-      open_round: openRoundTool,
       close_round: closeRoundTool,
       record_decision: recordDecisionTool,
       produce_deliverable: produceDeliverableTool,
       approve_deliverable: approveDeliverableTool,
-      mesa_check_update: mesaCheckUpdateTool,
-      mesa_update: mesaUpdateTool,
       ask_peer: askPeerTool,
+      pause_discussion: pauseDiscussionTool,
+      resume_discussion: resumeDiscussionTool,
+      cancel_discussion: cancelDiscussionTool,
       memory_store: memoryStoreTool,
       memory_recall: memoryRecallTool,
       memory_forget: memoryForgetTool,
+      mesa_check_update: mesaCheckUpdateTool,
+      mesa_update: mesaUpdateTool,
     },
 
     "tool.execute.before": async (toolInput, output) => {
@@ -191,19 +141,14 @@ export const mesa: Plugin = async (input) => {
     "tool.definition": async (toolDefInput, output) => {
       const mesaTools = [
       "mesa_status", "list_specialists", "get_specialist",
-      "create_briefing", "approve_briefing", "deliver_briefing", "import_briefing",
-      "analyze_briefing", "detect_user_journeys", "configure_journey_workshop",
-      "open_journey_workshop_round", "complete_journey_workshop",
+      "create_briefing", "approve_briefing", "import_briefing",
       "propose_team", "summon_team",
-      "delegate_task", "define_phases",
-      "check_execution_phases", "select_phases_for_analysis", "configure_phase_observation",
-      "verify_implementation",
-      "open_analysis_round", "register_analysis", "get_peer_analyses", "request_consensus",
-      "generate_specification", "generate_specification_overview", "approve_specification",
-      "open_round", "close_round", "record_decision", "produce_deliverable", "approve_deliverable",
+      "open_round", "register_analysis", "get_peer_analyses", "close_round",
+      "record_decision", "produce_deliverable", "approve_deliverable",
+      "ask_peer",
       "pause_discussion", "resume_discussion", "cancel_discussion",
-      "mesa_check_update", "mesa_update", "ask_peer",
       "memory_store", "memory_recall", "memory_forget",
+      "mesa_check_update", "mesa_update",
       ]
 
       if (mesaTools.includes(toolDefInput.toolID)) {

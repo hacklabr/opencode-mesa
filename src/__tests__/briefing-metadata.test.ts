@@ -12,7 +12,6 @@ import { openDatabase } from "../db/driver.js"
 import {
   createBriefingTool,
   approveBriefingTool,
-  deliverBriefingTool,
   importBriefingTool,
 } from "../tools/briefing-tools.js"
 import type { DiscussionState } from "../types.js"
@@ -271,9 +270,7 @@ describe("approve_briefing metadata default (folded from deliver_briefing)", () 
     expect(state.briefing.metadata!.nonTechnicalDimensions).toEqual([])
     expect(state.briefing.metadata!.nonTechnicalFlag).toBe(false)
 
-    // deliver_briefing remains an idempotent backward-compatible shim.
-    await deliverBriefingTool.execute({}, makeContext())
-
+    // Re-loading keeps the backfilled metadata (approve is the single delivery step).
     state = await loadState(TEST_DIR, "test-session")
     expect(state.briefing.metadata!.scopeMagnitude).toBe("composite")
   })
@@ -291,8 +288,6 @@ describe("approve_briefing metadata default (folded from deliver_briefing)", () 
       makeContext()
     )
     await approveBriefingTool.execute({}, makeContext())
-
-    await deliverBriefingTool.execute({}, makeContext())
 
     const state = await loadState(TEST_DIR, "test-session")
     expect(state.briefing.metadata!.scopeMagnitude).toBe("simple")

@@ -1,28 +1,16 @@
 // E2E integration test for the ask_peer flow — the most fragile invariant of
 // the flexible-workflow redesign (spec Phase 0 characterization test).
 //
-// Flow under test:
-//   open_analysis_round → register_analysis (session capture via
-//   recordAgentSession) → ask_peer (routing + busy-check + tool lockdown)
-//   → peer session resume (a SECOND round must not break routing).
-//
-// Case 4 asserts the CORRECT desired behavior for the multi-round model:
-// routing must survive a second open_analysis_round. The current code calls
-// clearAgentSessions() on every round open (discussion-tools.ts), wiping the
-// in-memory session map; the SQLite fallback (findSessionFromDb) then either
-// finds nothing (saveState DELETEs analysis rows on force-clear) or returns
-// the MANAGER session id stored on the analysis rows — contaminating the
-// Manager session instead of resuming the peer. A concurrent fix removes the
-// per-round clear; until it lands, case 4 is expected to FAIL. Do not work
-// around it.
+// Flow under test (kernel model):
+//   open_round → register_analysis (session capture via recordAgentSession)
+//   → ask_peer (routing + busy-check + tool lockdown) → peer session resume
+//   (a SECOND round must not break routing — the session map survives).
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
-import {
-  openAnalysisRoundTool,
-  registerAnalysisTool,
-} from "../tools/discussion-tools.js"
+import { openRoundTool, closeRoundTool } from "../tools/round-tools.js"
+import { registerAnalysisTool } from "../tools/discussion-tools.js"
 import {
   askPeerTool,
   clearAgentSessions,
@@ -97,9 +85,11 @@ function installMockClient(peerBusy = false): void {
   setSdkClient(client)
 }
 
-/** Seed a Manager-owned state with a two-specialist summoned team (PLANNING). */
+/** Seed a Manager-owned state satisfying every open_round precondition. */
 async function seedManagerState(directory: string): Promise<void> {
   const state = createInitialState(directory)
+  state.briefing = { path: ".mesa/x/briefing.md", status: "approved", slug: "x", metadata: null }
+  state.plan = { path: ".mesa/x/workflow-plan.md", version: 1, status: "approved" }
   state.team = [
     { personaId: PEER_ID, name: PEER_NAME, division: "test", status: "summoned" },
     { personaId: CALLER_ID, name: CALLER_NAME, division: "test", status: "summoned" },
@@ -107,13 +97,29 @@ async function seedManagerState(directory: string): Promise<void> {
   await saveState(directory, state, MANAGER_SESSION)
 }
 
-async function openRound(directory: string, topic: string, force = false): Promise<void> {
-  const result = await openAnalysisRoundTool.execute(
-    { topic, participants: [PEER_ID, CALLER_ID], force },
+async function openRound(directory: string, topic: string): Promise<void> {
+  const result = await openRoundTool.execute(
+    { topic, participants: [PEER_ID, CALLER_ID] },
     makeContext(directory, MANAGER_SESSION)
   )
   if (typeof result === "string") {
-    throw new Error(`open_analysis_round failed: ${result}`)
+    throw new Error(`open_round failed: ${result}`)
+  }
+}
+
+async function closeOpenRound(directory: string): Promise<void> {
+  const result = await closeRoundTool.execute(
+    {
+      decision: "converged",
+      summary: "done",
+      tensions: [],
+      evidencePaths: [".mesa/analyses/r1/x.md"],
+      humanOverride: true,
+    },
+    makeContext(directory, MANAGER_SESSION)
+  )
+  if (typeof result === "string") {
+    throw new Error(`close_round failed: ${result}`)
   }
 }
 
@@ -193,9 +199,9 @@ describe("ask_peer e2e — register → capture → consult → resume", () => {
     // Least privilege: orchestration tools are locked down in the
     // consulted session.
     expect(lastPrompt!.body.tools?.task).toBe(false)
-    expect(lastPrompt!.body.tools?.delegate_task).toBe(false)
-    expect(lastPrompt!.body.tools?.open_analysis_round).toBe(false)
-    expect(lastPrompt!.body.tools?.request_consensus).toBe(false)
+    expect(lastPrompt!.body.tools?.open_round).toBe(false)
+    expect(lastPrompt!.body.tools?.close_round).toBe(false)
+    expect(lastPrompt!.body.tools?.record_decision).toBe(false)
   })
 
   it("2. consulting a busy peer returns the busy error without prompting", async () => {
@@ -231,20 +237,14 @@ describe("ask_peer e2e — register → capture → consult → resume", () => {
     expect(promptCalls).toBe(0)
   })
 
-  it("4. routing survives a SECOND open_analysis_round (multi-round resume)", async () => {
+  it("4. routing survives a SECOND round (multi-round resume)", async () => {
     const dir = FIXTURES
     await seedManagerState(dir)
     await openRound(dir, "Round 1")
     await selfRegister(dir, PEER_ID, PEER_NAME, PEER_SESSION)
     await selfRegister(dir, CALLER_ID, CALLER_NAME, CALLER_SESSION)
-
-    // Manager returns to PLANNING (valid back-edge) and opens round 2.
-    // force=true clears round-1 analyses from state — as the flexible model
-    // will do when composing sequential rounds.
-    const state = await loadState(dir, MANAGER_SESSION)
-    state.currentPhase = "PLANNING"
-    await saveState(dir, state, MANAGER_SESSION)
-    await openRound(dir, "Round 2 — conflict subset", true)
+    await closeOpenRound(dir)
+    await openRound(dir, "Round 2 — conflict subset")
 
     // The peer has NOT re-registered in round 2. A consult now must still
     // route to the peer's captured session (task_id sessions are stable

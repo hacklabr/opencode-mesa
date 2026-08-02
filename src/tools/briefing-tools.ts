@@ -145,7 +145,7 @@ export const createBriefingTool = tool({
       ].join("\n")
 
       // Dual-write: prepend the metadata projection block when metadata is present
-      // so the manager LLM sees it via analyze_briefing (which reads the markdown file).
+      // so the manager LLM sees it when reading the briefing markdown file.
       const projectionBlock = metadata ? buildMetadataProjection(metadata) : ""
       await fs.mkdir(join(filePath, ".."), { recursive: true })
       await fs.writeFile(filePath, frontmatter + projectionBlock + args.content, "utf-8")
@@ -168,7 +168,7 @@ export const createBriefingTool = tool({
 
 export const approveBriefingTool = tool({
   description:
-    "Marks the current briefing as approved and delivers it to the Manager (sets phase to PLANNING). Must be called after human approval. Absorbs the former deliver_briefing step.",
+    "Marks the current briefing as approved and delivers it to the Manager. Approval is a FACT, not a phase gate — it is the only path to briefing status 'approved'. Must be called after human approval. Absorbs the former deliver_briefing step.",
   args: {},
   async execute(_args, context) {
     try {
@@ -296,70 +296,21 @@ export const importBriefingTool = tool({
       state.discussion = {
         ...state.discussion,
         analyses: [],
-        votes: [],
         currentTurn: 0,
-        consensusRound: 0,
       }
-      state.specification = {
-        path: null,
-        overviewPath: null,
-        status: "pending",
-      }
-      state.previousPhase = null
+      // A new briefing starts a fresh workflow: execution trace and plan reset.
+      state.rounds = []
+      state.deliverables = []
+      state.plan = null
 
       await saveState(context.directory, state, context.sessionID)
 
       return successResponse(
         "Briefing Imported",
-        `${formatPhaseHeader(state.currentPhase)}\n\nExisting briefing imported from ${args.file_path}.\n\nSlug: ${args.slug}\nStatus: approved (pre-approved)\nPhase: PLANNING\n\nThe workflow has been reset. The Manager can now analyze the briefing and propose a team.`
+        `${formatPhaseHeader(state.currentPhase)}\n\nExisting briefing imported from ${args.file_path}.\n\nSlug: ${args.slug}\nStatus: approved (pre-approved)\n\nThe workflow has been reset. The Manager can now analyze the briefing and propose a team.`
       )
     } catch (err) {
       return errorResponse(`Error importing briefing: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  },
-})
-
-export const deliverBriefingTool = tool({
-  description:
-    "DEPRECATED — approve_briefing now delivers (sets phase to PLANNING and backfills metadata). Kept as an idempotent backward-compatible shim; will be removed in the v4 workflow (spec D5).",
-  args: {},
-  async execute(_args, context) {
-    try {
-      const state = await loadState(context.directory, context.sessionID)
-      if (state.briefing.status !== "approved") {
-        return errorResponse("Briefing must be approved before delivery. Use approve_briefing first.")
-      }
-      if (!state.briefing.path) {
-        return errorResponse("No briefing path found.")
-      }
-
-      // Decision M4 (spec-6886df4f): ELIMINATE briefing-current-{sessionId}.md.
-      // The Manager reads briefing.md directly from state.briefing.path.
-      // This tool now only updates state — no file copy is created.
-
-      state.currentPhase = "PLANNING"
-      state.briefing.status = "delivered"
-      // Composite-default-on-unknown: if the briefing-writer never classified
-      // the scope, default to composite so the manager doesn't under-treat it
-      // (spec-fb0ba2d7, Decision 6).
-      if (state.briefing.metadata === null) {
-        state.briefing.metadata = {
-          scopeMagnitude: "composite",
-          classificationReason: "default — no explicit classification during discovery",
-          nonTechnicalDimensions: [],
-          nonTechnicalFlag: false,
-        }
-      }
-      await saveState(context.directory, state, context.sessionID)
-      await logAction(context.directory, "briefing_delivered", state.currentPhase, { slug: state.briefing.slug })
-
-      return successResponse(
-        "Briefing Delivered to Manager",
-        `${formatPhaseHeader(state.currentPhase)}\n\nBriefing is ready for the Manager at ${state.briefing.path}.\n\nNext step: analyze the briefing and propose a team. If you are not already acting as the Manager agent, switch by typing \`/agent manager\`.`,
-        { briefingPath: state.briefing.path }
-      )
-    } catch (err) {
-      return errorResponse(`Error delivering briefing: ${err instanceof Error ? err.message : String(err)}`)
     }
   },
 })

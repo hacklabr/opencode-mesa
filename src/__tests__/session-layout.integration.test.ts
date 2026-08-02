@@ -2,17 +2,15 @@ import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
 import { join } from "node:path"
 import { loadState, saveState, closeStorage } from "../state.js"
+import { createInitialState } from "../config.js"
 import {
   createBriefingTool,
   approveBriefingTool,
-  deliverBriefingTool,
 } from "../tools/briefing-tools.js"
-import {
-  openAnalysisRoundTool,
-  registerAnalysisTool,
-  generateSpecificationTool,
-  generateSpecificationOverviewTool,
-} from "../tools/discussion-tools.js"
+import { openRoundTool, closeRoundTool } from "../tools/round-tools.js"
+import { registerAnalysisTool } from "../tools/discussion-tools.js"
+import { produceDeliverableTool } from "../tools/decision-tools.js"
+import type { DiscussionState } from "../types.js"
 
 const TEST_DIR = join(import.meta.dirname, "__test_fixtures__", "session-layout")
 
@@ -52,7 +50,42 @@ async function listFiles(dir: string, base: string = dir): Promise<string[]> {
   return results
 }
 
-describe("session layout integration — full workflow", () => {
+/** State satisfying every open_round precondition. */
+function readyState(participants: string[] = ["eng-1"]): DiscussionState {
+  const state = createInitialState(TEST_DIR)
+  state.briefing = { path: ".mesa/x/briefing.md", status: "approved", slug: "layout", metadata: null }
+  state.plan = { path: ".mesa/x/workflow-plan.md", version: 1, status: "approved" }
+  state.team = participants.map((id) => ({
+    personaId: id,
+    name: id,
+    division: "test",
+    status: "summoned" as const,
+  }))
+  return state
+}
+
+/** Run a full round: open → register all participants → close (override). */
+async function runRound(participants: string[]): Promise<void> {
+  await openRoundTool.execute({ topic: "Layout round", participants }, makeContext())
+  for (const id of participants) {
+    await registerAnalysisTool.execute(
+      { agent_id: id, agent_name: id, content: `Analysis by ${id}`, turn: 1 },
+      makeContext()
+    )
+  }
+  await closeRoundTool.execute(
+    {
+      decision: "converged",
+      summary: "done",
+      tensions: [],
+      evidencePaths: participants.map((id) => `.mesa/analyses/r1/${id}.md`),
+      humanOverride: true,
+    },
+    makeContext()
+  )
+}
+
+describe("session layout integration — kernel workflow", () => {
   beforeEach(async () => {
     await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
   })
@@ -84,18 +117,16 @@ describe("session layout integration — full workflow", () => {
     expect(state.sessionFolder).toContain("sessions")
   })
 
-  test("approve and deliver preserve session folder path", async () => {
+  test("approve preserves session folder path (single delivery step)", async () => {
     await createBriefingTool.execute(
       { slug: "deliver-layout", title: "Deliver", content: "# Content" },
       makeContext()
     )
     await approveBriefingTool.execute({}, makeContext())
-    await deliverBriefingTool.execute({}, makeContext())
 
     const state = await loadState(TEST_DIR, "test-session")
-    expect(state.briefing.status).toBe("delivered")
+    expect(state.briefing.status).toBe("approved")
     expect(state.briefing.path).toContain("sessions")
-    expect(state.currentPhase).toBe("PLANNING")
   })
 
   test("no legacy artifacts at .mesa root or legacy dirs after briefing", async () => {
@@ -123,15 +154,9 @@ describe("session layout integration — full workflow", () => {
   })
 
   test("briefing-for-discussion lands in session folder (not root)", async () => {
-    const { createInitialState } = await import("../config.js")
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "PLANNING"
-    state.team = [
-      { personaId: "eng-1", name: "Engineer", division: "engineering", status: "summoned" },
-    ]
-    await saveState(TEST_DIR, state, "test-session")
+    await saveState(TEST_DIR, readyState(), "test-session")
 
-    await openAnalysisRoundTool.execute(
+    await openRoundTool.execute(
       {
         topic: "Test Topic",
         participants: ["eng-1"],
@@ -154,24 +179,12 @@ describe("session layout integration — full workflow", () => {
     expect(rootBfdFiles.length).toBe(0)
   })
 
-  test("specification lands in session folder with fixed name", async () => {
-    const { createInitialState } = await import("../config.js")
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "DISCUSSION"
-    state.discussion.consensusRound = 1
-    state.discussion.votes = [
-      { agentId: "a", agentName: "Alice", vote: 1, reason: "ok", round: 1 },
-    ]
-    state.team = [
-      { personaId: "a", name: "Alice", division: "eng", status: "summoned" },
-    ]
-    state.discussion.analyses = [
-      { agentId: "a", agentName: "Alice", content: "Analysis", turn: 1, timestamp: new Date().toISOString() },
-    ]
-    await saveState(TEST_DIR, state, "test-session")
+  test("deliverable lands in session folder with canonical name", async () => {
+    await saveState(TEST_DIR, readyState(), "test-session")
+    await runRound(["eng-1"])
 
-    const result = await generateSpecificationTool.execute(
-      { content: "## Spec\n\nContent.", topic: "Test" },
+    const result = await produceDeliverableTool.execute(
+      { kind: "specification", topic: "Test", content: "## Spec\n\nContent." },
       makeContext()
     )
 
@@ -185,91 +198,68 @@ describe("session layout integration — full workflow", () => {
     const specAbs = join(TEST_DIR, metadata!.path)
     const content = await fs.readFile(specAbs, "utf-8")
     expect(content).toContain("Specification: Test")
+
+    // Registered in state with provenance
+    const loaded = await loadState(TEST_DIR, "test-session")
+    expect(loaded.deliverables).toHaveLength(1)
+    expect(loaded.deliverables[0].status).toBe("draft")
+    expect(loaded.deliverables[0].provenance.roundIds).toContain("r1")
   })
 
-  test("overview lands in session folder with fixed name", async () => {
-    const { createInitialState } = await import("../config.js")
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "DISCUSSION"
-    state.discussion.consensusRound = 1
-    state.discussion.votes = [
-      { agentId: "a", agentName: "Alice", vote: 1, reason: "ok", round: 1 },
-    ]
-    state.team = [
-      { personaId: "a", name: "Alice", division: "eng", status: "summoned" },
-    ]
-    await saveState(TEST_DIR, state, "test-session")
+  test("overview deliverable lands in session folder with canonical name", async () => {
+    await saveState(TEST_DIR, readyState(), "test-session")
+    await runRound(["eng-1"])
 
-    await generateSpecificationTool.execute(
-      { content: "## Spec\n\nContent.", topic: "Overview Test" },
+    await produceDeliverableTool.execute(
+      { kind: "specification", topic: "Overview Test", content: "## Spec\n\nContent." },
+      makeContext()
+    )
+    const result = await produceDeliverableTool.execute(
+      { kind: "overview", topic: "Overview Test", content: "## Overview\n\nHuman-friendly summary." },
       makeContext()
     )
 
-    const result = await generateSpecificationOverviewTool.execute(
-      { content: "## Overview\n\nHuman-friendly summary.", topic: "Overview Test" },
-      makeContext()
-    )
+    const metadata = (result as { metadata?: { path: string } }).metadata
+    expect(metadata?.path).toContain("sessions")
+    expect(metadata?.path).toContain("overview.md")
 
-    const metadata = (result as { metadata?: { overviewPath: string } }).metadata
-    expect(metadata?.overviewPath).toContain("sessions")
-    expect(metadata?.overviewPath).toContain("overview.md")
-
-    // Verify the file exists
-    const overviewAbs = join(TEST_DIR, metadata!.overviewPath)
+    const overviewAbs = join(TEST_DIR, metadata!.path)
     const content = await fs.readFile(overviewAbs, "utf-8")
     expect(content).toContain("Overview: Overview Test")
   })
 
   test("all artifacts co-located in a single session folder", async () => {
-    const { createInitialState } = await import("../config.js")
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "DISCUSSION"
-    state.discussion.consensusRound = 1
-    state.discussion.votes = [
-      { agentId: "a", agentName: "Alice", vote: 1, reason: "ok", round: 1 },
-    ]
-    state.team = [
-      { personaId: "a", name: "Alice", division: "eng", status: "summoned" },
-    ]
-    state.discussion.analyses = [
-      { agentId: "a", agentName: "Alice", content: "Analysis content", turn: 1, timestamp: new Date().toISOString() },
-    ]
-    await saveState(TEST_DIR, state, "test-session")
+    await saveState(TEST_DIR, readyState(), "test-session")
+    await runRound(["eng-1"])
 
-    // Generate spec + overview
-    await generateSpecificationTool.execute(
-      { content: "## Spec\n\nContent.", topic: "Co-located" },
+    await produceDeliverableTool.execute(
+      { kind: "specification", topic: "Co-located", content: "## Spec\n\nContent." },
       makeContext()
     )
-    await generateSpecificationOverviewTool.execute(
-      { content: "## Overview\n\nSummary.", topic: "Co-located" },
+    await produceDeliverableTool.execute(
+      { kind: "overview", topic: "Co-located", content: "## Overview\n\nSummary." },
       makeContext()
     )
 
     const loaded = await loadState(TEST_DIR, "test-session")
-    expect(loaded.sessionFolder).not.toBeNull()
     const folder = loaded.sessionFolder!
 
-    // All three artifacts should be in the SAME session folder
-    expect(loaded.specification.path).toContain(folder)
-    expect(loaded.specification.overviewPath).toContain(folder)
+    // All artifacts should be in the SAME session folder
+    for (const d of loaded.deliverables) {
+      expect(d.path).toContain(folder)
+    }
 
-    // Verify the files exist in the folder
     const filesInFolder = await listFiles(join(TEST_DIR, folder))
     expect(filesInFolder).toContain("specification.md")
     expect(filesInFolder).toContain("overview.md")
   })
 
   test("analysis files land in sessions/{folder}/analyses/turn1/", async () => {
-    const { createInitialState } = await import("../config.js")
-    const state = createInitialState(TEST_DIR)
-    state.currentPhase = "DISCUSSION"
-    state.discussion.currentTurn = 1
-    state.team = [
-      { personaId: "backend-arch", name: "Backend", division: "eng", status: "summoned" },
-    ]
-    state.discussion.participants = ["backend-arch"]
-    await saveState(TEST_DIR, state, "test-session")
+    await saveState(TEST_DIR, readyState(["backend-arch"]), "test-session")
+    await openRoundTool.execute(
+      { topic: "T", participants: ["backend-arch"] },
+      makeContext()
+    )
 
     await registerAnalysisTool.execute(
       {
@@ -301,41 +291,30 @@ describe("session layout integration — full workflow", () => {
     expect(content).toContain("My analysis")
   })
 
-  test("full workflow: all artifacts in single session folder, no legacy pollution", async () => {
-    // Step 1: Create briefing
+  test("full kernel workflow: all artifacts in single session folder, no legacy pollution", async () => {
+    // Step 1: Create + approve briefing (single delivery step)
     await createBriefingTool.execute(
       { slug: "full-flow", title: "Full Flow", content: "# Full Flow Briefing" },
       makeContext()
     )
-
-    // Step 2: Approve + deliver
     await approveBriefingTool.execute({}, makeContext())
-    await deliverBriefingTool.execute({}, makeContext())
 
-    // Step 3: Set up DISCUSSION phase for analysis + spec generation
-    const state1 = await loadState(TEST_DIR, "test-session")
-    state1.currentPhase = "DISCUSSION"
-    state1.discussion.consensusRound = 1
-    state1.discussion.votes = [
-      { agentId: "a", agentName: "Alice", vote: 1, reason: "ok", round: 1 },
-    ]
-    state1.team = [
+    // Step 2: Plan approved (gate 0) + team, then run a round
+    const state = await loadState(TEST_DIR, "test-session")
+    state.plan = { path: `${state.sessionFolder}/workflow-plan.md`, version: 1, status: "approved" }
+    state.team = [
       { personaId: "a", name: "Alice", division: "eng", status: "summoned" },
     ]
-    state1.discussion.analyses = [
-      { agentId: "a", agentName: "Alice", content: "Good analysis", turn: 1, timestamp: new Date().toISOString() },
-    ]
-    await saveState(TEST_DIR, state1, "test-session")
+    await saveState(TEST_DIR, state, "test-session")
+    await runRound(["a"])
 
-    // Step 4: Generate specification
-    await generateSpecificationTool.execute(
-      { content: "## Spec\n\nFull flow spec.", topic: "Full Flow" },
+    // Step 3: Produce deliverables
+    await produceDeliverableTool.execute(
+      { kind: "specification", topic: "Full Flow", content: "## Spec\n\nFull flow spec." },
       makeContext()
     )
-
-    // Step 5: Generate overview
-    await generateSpecificationOverviewTool.execute(
-      { content: "## Overview\n\nFull flow overview.", topic: "Full Flow" },
+    await produceDeliverableTool.execute(
+      { kind: "overview", topic: "Full Flow", content: "## Overview\n\nFull flow overview." },
       makeContext()
     )
 

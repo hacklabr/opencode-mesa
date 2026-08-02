@@ -380,7 +380,7 @@ describe("close_round", () => {
 describe("register_analysis roundId assignment", () => {
   test("assigns the open round's id to new analyses", async () => {
     const state = readyState((s) => {
-      s.currentPhase = "DISCUSSION" // legacy guard still in place until Batch 5
+      s.currentPhase = "DISCUSSION"
       s.rounds = [openRound()]
     })
     await saveState(TEST_DIR, state, SESSION_ID)
@@ -396,25 +396,18 @@ describe("register_analysis roundId assignment", () => {
     expect(loaded.discussion.analyses[0].roundId).toBe("r1")
   })
 
-  test("legacy flow (no open round): the v14 backfill links the analysis to legacy-round-1 on next open", async () => {
+  test("rejects registration when no round is open (v15: open round is a hard precondition)", async () => {
     const state = readyState((s) => {
       s.currentPhase = "DISCUSSION"
       s.plan = null
     })
     await saveState(TEST_DIR, state, SESSION_ID)
 
-    await registerAnalysisTool.execute(
+    const result = await registerAnalysisTool.execute(
       { agent_id: "eng-1", agent_name: "Engineer", content: "body", turn: 1 },
       makeContext()
     )
 
-    // The analysis is registered WITHOUT a roundId (no open round). On the
-    // next DB open, the v14 migration backfill (T6) synthesizes the closed
-    // "legacy-round-1" round and links the analysis to it — the intended
-    // lazy mapping for legacy flows.
-    const loaded = await loadState(TEST_DIR, SESSION_ID)
-    expect(loaded.discussion.analyses).toHaveLength(1)
-    expect(loaded.discussion.analyses[0].roundId).toBe("legacy-round-1")
-    expect(loaded.rounds[0].status).toBe("closed")
+    expect(result as string).toContain("No open round")
   })
 })

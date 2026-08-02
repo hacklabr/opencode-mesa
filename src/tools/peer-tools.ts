@@ -2,7 +2,7 @@ import { tool } from "@opencode-ai/plugin"
 import { openDatabase } from "../db/driver.js"
 import { join } from "node:path"
 import { successResponse, errorResponse } from "../utils/responses.js"
-import { peerConsultationCap, type RigorProfile } from "../workflow/profiles.js"
+import { PEER_CONSULTATION_CAP } from "../config.js"
 import { loadState } from "../state.js"
 import { PLUGIN_STATE_DIR } from "../config.js"
 
@@ -162,27 +162,22 @@ export const askPeerTool = tool({
         // Status check failed — proceed anyway (best-effort, don't block on status)
       }
 
-      // D6: per-turn consultation rate cap (profile-gated).
-      // `standard`: max 2 consultations per specialist per turn.
-      // `deep`: unlimited. `light`: not applicable (single turn).
+      // Per-turn consultation rate cap (K4 circuit breaker — constant since
+      // the rigor profiles were removed, spec D6). Prevents N×N mesh explosion.
       const state = await loadState(context.directory, context.sessionID)
-      const rigor: RigorProfile = state.discussion.rigor ?? "standard"
       const currentTurn = state.discussion.currentTurn ?? 0
 
-      if (rigor !== "deep") {
-        const cap = peerConsultationCap(rigor)
-        const callerKey = (context.sessionID && findCallerAgentId(context.sessionID)) || context.sessionID || "unknown"
-        const turnCounts = peerConsultations.get(callerKey) ?? new Map<number, number>()
-        const used = turnCounts.get(currentTurn) ?? 0
-        if (used >= cap) {
-          return errorResponse(
-            `Per-turn consultation cap reached: ${used}/${cap} consultations for ${callerKey} in turn ${currentTurn} ` +
-            `("${rigor}" profile). Use the "deep" profile or escalate to the human for additional consultations.`
-          )
-        }
-        turnCounts.set(currentTurn, used + 1)
-        peerConsultations.set(callerKey, turnCounts)
+      const callerKey = (context.sessionID && findCallerAgentId(context.sessionID)) || context.sessionID || "unknown"
+      const turnCounts = peerConsultations.get(callerKey) ?? new Map<number, number>()
+      const used = turnCounts.get(currentTurn) ?? 0
+      if (used >= PEER_CONSULTATION_CAP) {
+        return errorResponse(
+          `Per-turn consultation cap reached: ${used}/${PEER_CONSULTATION_CAP} consultations for ${callerKey} in turn ${currentTurn}. ` +
+          `Escalate to the human for additional consultations.`
+        )
       }
+      turnCounts.set(currentTurn, used + 1)
+      peerConsultations.set(callerKey, turnCounts)
 
       // Identify the caller via reverse-lookup in agentSessions
       const callerId = findCallerAgentId(context.sessionID) || "a peer specialist"
@@ -196,10 +191,11 @@ export const askPeerTool = tool({
           parts: [{ type: "text", text: `[Peer consultation from ${callerId}]\n\n${question}` }],
           tools: {
             task: false,
-            delegate_task: false,
-            open_analysis_round: false,
-            request_consensus: false,
-            generate_specification: false,
+            open_round: false,
+            close_round: false,
+            record_decision: false,
+            produce_deliverable: false,
+            approve_deliverable: false,
           },
         },
       })

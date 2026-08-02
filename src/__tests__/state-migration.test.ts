@@ -26,11 +26,13 @@ describe("v1 state migration", () => {
     const mesaDir = join(TEST_DIR, ".mesa")
     await fs.mkdir(mesaDir, { recursive: true })
 
-    // Create a v1 state JSON without the appendices field (nor the v14 fields —
-    // the Zod schema defaults cover both on parse)
-    const v1State: Omit<DiscussionState, "appendices" | "rounds" | "deliverables" | "plan"> = {
+    // Create a v1 state JSON — legacy fields (votes, specification,
+    // journeyWorkshop, appendices, phases) no longer exist on DiscussionState;
+    // the Zod schema strips unknown keys and defaults the v14 fields on parse.
+    const v1State: DiscussionState = {
       workspaceId: TEST_DIR,
       currentPhase: "EXECUTION",
+      status: "active",
       briefing: {
         path: join(mesaDir, "briefings", "test.md"),
         status: "approved",
@@ -58,36 +60,15 @@ describe("v1 state migration", () => {
             timestamp: new Date().toISOString(),
           },
         ],
-        votes: [],
-        consensusRound: 0,
         participants: ["eng-1"],
-        debateNeeded: false,
-        progress: { currentTurn: 0, completedParticipants: [], activeProfile: 'standard', deviations: 0 },
-        mode: "analysis",
-        maxConsensusRounds: 2,
-        rigor: "standard",
-        analysisMode: "parallel",
-        deviations: 0,
       },
-      specification: {
-        path: join(mesaDir, "specifications", "spec-test.md"),
-        overviewPath: null,
-        status: "approved",
-      },
-      journeyWorkshop: {
-        status: "not_started",
-        detectedAt: new Date().toISOString(),
-        signals: [],
-        suggestedJourneys: [],
-        confidence: "low",
-      },
-      phases: ["PLANNING", "DISCUSSION", "DISCUSSION", "SPECIFICATION", "SPECIFICATION", "EXECUTION"],
+      rounds: [],
+      deliverables: [],
+      plan: null,
       sessionFolder: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       stateVersion: 1,
-      previousPhase: null,
-  status: 'active',
     }
 
     await fs.writeFile(
@@ -99,8 +80,9 @@ describe("v1 state migration", () => {
     // Load state should migrate from JSON to SQLite
     const loaded = await loadState(TEST_DIR)
 
-    // Verify appendices defaults to empty array
-    expect(loaded.appendices).toEqual([])
+    // Verify v14 fields default on parse
+    expect(loaded.rounds).toEqual([])
+    expect(loaded.deliverables).toEqual([])
 
     // Verify other fields preserved
     expect(loaded.workspaceId).toBe(TEST_DIR)
@@ -111,7 +93,6 @@ describe("v1 state migration", () => {
     expect(loaded.team[0].personaId).toBe("eng-1")
     expect(loaded.discussion.analyses).toHaveLength(1)
     expect(loaded.discussion.analyses[0].agentId).toBe("eng-1")
-    expect(loaded.specification.status).toBe("approved")
     expect(loaded.stateVersion).toBe(2) // Should be migrated to v2
 
     // Verify JSON file was backed up
@@ -129,37 +110,23 @@ describe("v1 state migration", () => {
     expect(dbExists).toBe(true)
   })
 
-  test.skip("v1 state with votes and participants migrates correctly", async () => {
+  test.skip("v1 state with participants migrates correctly", async () => {
     const mesaDir = join(TEST_DIR, ".mesa")
     await fs.mkdir(mesaDir, { recursive: true })
 
     const v1State = createInitialState(TEST_DIR)
     v1State.currentPhase = "DISCUSSION"
-    v1State.discussion.votes = [
-      {
-        agentId: "eng-1",
-        agentName: "Engineer One",
-        vote: 1,
-        reason: "Looks good",
-        round: 1,
-      },
-    ]
     v1State.discussion.participants = ["eng-1", "prod-1"]
     v1State.stateVersion = 1
-    // Explicitly omit appendices to simulate v1
-    const { appendices: _, ...v1StateWithoutAppendices } = v1State
 
     await fs.writeFile(
       join(mesaDir, "state.json"),
-      JSON.stringify(v1StateWithoutAppendices),
+      JSON.stringify(v1State),
       "utf-8"
     )
 
     const loaded = await loadState(TEST_DIR)
 
-    expect(loaded.appendices).toEqual([])
-    expect(loaded.discussion.votes).toHaveLength(1)
-    expect(loaded.discussion.votes[0].vote).toBe(1)
     expect(loaded.discussion.participants).toEqual(["eng-1", "prod-1"])
     expect(loaded.stateVersion).toBe(2)
   })

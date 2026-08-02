@@ -20,33 +20,12 @@ describe("config", () => {
     expect(state.briefing.path).toBeNull()
     expect(state.team).toEqual([])
     expect(state.discussion.analyses).toEqual([])
-    expect(state.discussion.votes).toEqual([])
     expect(state.discussion.currentTurn).toBe(0)
-    expect(state.specification.status).toBe("pending")
+    expect(state.rounds).toEqual([])
+    expect(state.deliverables).toEqual([])
+    expect(state.plan).toBeNull()
     expect(state.createdAt).toBeDefined()
     expect(state.updatedAt).toBeDefined()
-  })
-
-  // Phase enum collapsed 8→4 (spec-4dcc492f, Decision 3). PAUSED/CANCELLED are no
-  // longer phases — they live on the orthogonal `status` field (see transitions.ts).
-  const VALID_PHASES: DiscussionPhase[] = [
-    "PLANNING", "DISCUSSION", "SPECIFICATION", "EXECUTION",
-  ]
-
-  test("all phases are covered", () => {
-    const transitions: Record<DiscussionPhase, DiscussionPhase[]> = {
-      PLANNING: ["DISCUSSION"],
-      DISCUSSION: ["SPECIFICATION", "PLANNING"],
-      SPECIFICATION: ["EXECUTION", "DISCUSSION"],
-      EXECUTION: ["PLANNING"],
-    }
-
-    for (const phase of VALID_PHASES) {
-      expect(transitions[phase]).toBeDefined()
-      for (const target of transitions[phase]) {
-        expect(VALID_PHASES).toContain(target)
-      }
-    }
   })
 })
 

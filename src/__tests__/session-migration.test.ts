@@ -81,11 +81,21 @@ describe("session file migration (v10 → v11)", () => {
     expect(state.briefing.path!.startsWith(join(PLUGIN_STATE_DIR, "sessions"))).toBe(true)
     expect(state.briefing.path!.endsWith("briefing.md")).toBe(true)
 
-    expect(state.specification.path).not.toBeNull()
-    expect(state.specification.path!.endsWith("specification.md")).toBe(true)
-
-    expect(state.specification.overviewPath).not.toBeNull()
-    expect(state.specification.overviewPath!.endsWith("overview.md")).toBe(true)
+    // specification_path/overview_path are legacy columns (post-v15 they are
+    // no longer exposed on DiscussionState) — assert at the DB level, where
+    // the v10→v11 relocation still rewrites them.
+    const dbPath = join(TEST_DIR, PLUGIN_STATE_DIR, "state.db")
+    const { openDatabase } = await import("../db/driver.js")
+    const checkDb = openDatabase(dbPath, { readonly: true })
+    try {
+      const row = checkDb
+        .query("SELECT specification_path, specification_overview_path FROM mesa_session_state WHERE session_id = ?")
+        .get(sessionId) as { specification_path: string; specification_overview_path: string }
+      expect(row.specification_path.endsWith("specification.md")).toBe(true)
+      expect(row.specification_overview_path.endsWith("overview.md")).toBe(true)
+    } finally {
+      checkDb.close()
+    }
   })
 
   test("sets sessionFolder column after migration", async () => {
@@ -124,11 +134,25 @@ describe("session file migration (v10 → v11)", () => {
 
     await loadState(TEST_DIR, sessionId)
 
-    const state = await loadState(TEST_DIR, sessionId)
-    expect(state.appendices.length).toBeGreaterThan(0)
+    // The appendices column is legacy (post-v15 not exposed on
+    // DiscussionState) — assert at the DB level, where the relocation
+    // rewrites basenames to relative paths.
+    const dbPath = join(TEST_DIR, PLUGIN_STATE_DIR, "state.db")
+    const { openDatabase } = await import("../db/driver.js")
+    const checkDb = openDatabase(dbPath, { readonly: true })
+    let appendices: string[] = []
+    try {
+      const row = checkDb
+        .query("SELECT appendices FROM mesa_session_state WHERE session_id = ?")
+        .get(sessionId) as { appendices: string }
+      appendices = JSON.parse(row.appendices)
+    } finally {
+      checkDb.close()
+    }
+    expect(appendices.length).toBeGreaterThan(0)
 
     // The new appendix reference should be a relative path, not a bare basename
-    const ref = state.appendices[0]
+    const ref = appendices[0]
     expect(ref).toContain("sessions")
     expect(ref).toContain("appendices")
     expect(ref.endsWith(".md")).toBe(true)
