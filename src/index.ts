@@ -20,6 +20,7 @@ import { openDatabase } from "./db/driver.js"
 import { PLUGIN_STATE_DIR } from "./config.js"
 import { setStateSdkClient } from "./state.js"
 import { buildSpecialistPrompt, type TaskToolArgs } from "./workflow/specialist-injection.js"
+import { applySpecialistToolPermissions } from "./workflow/tool-visibility.js"
 import { join } from "node:path"
 
 export const mesa: Plugin = async (input) => {
@@ -29,32 +30,42 @@ export const mesa: Plugin = async (input) => {
   // Fire-and-forget update check — populates cache for tools
   checkForUpdate().catch(() => {})
 
+  const mesaTools = {
+    mesa_status: mesaStatusTool,
+    list_specialists: listSpecialistsTool,
+    get_specialist: getSpecialistTool,
+    create_briefing: createBriefingTool,
+    approve_briefing: approveBriefingTool,
+    import_briefing: importBriefingTool,
+    propose_team: proposeTeamTool,
+    summon_team: summonTeamTool,
+    open_round: openRoundTool,
+    register_analysis: registerAnalysisTool,
+    get_peer_analyses: getPeerAnalysesTool,
+    close_round: closeRoundTool,
+    record_decision: recordDecisionTool,
+    produce_deliverable: produceDeliverableTool,
+    approve_deliverable: approveDeliverableTool,
+    ask_peer: askPeerTool,
+    pause_discussion: pauseDiscussionTool,
+    resume_discussion: resumeDiscussionTool,
+    cancel_discussion: cancelDiscussionTool,
+    memory_store: memoryStoreTool,
+    memory_recall: memoryRecallTool,
+    memory_forget: memoryForgetTool,
+    mesa_check_update: mesaCheckUpdateTool,
+    mesa_update: mesaUpdateTool,
+  }
+
   return {
-    tool: {
-      mesa_status: mesaStatusTool,
-      list_specialists: listSpecialistsTool,
-      get_specialist: getSpecialistTool,
-      create_briefing: createBriefingTool,
-      approve_briefing: approveBriefingTool,
-      import_briefing: importBriefingTool,
-      propose_team: proposeTeamTool,
-      summon_team: summonTeamTool,
-      open_round: openRoundTool,
-      register_analysis: registerAnalysisTool,
-      get_peer_analyses: getPeerAnalysesTool,
-      close_round: closeRoundTool,
-      record_decision: recordDecisionTool,
-      produce_deliverable: produceDeliverableTool,
-      approve_deliverable: approveDeliverableTool,
-      ask_peer: askPeerTool,
-      pause_discussion: pauseDiscussionTool,
-      resume_discussion: resumeDiscussionTool,
-      cancel_discussion: cancelDiscussionTool,
-      memory_store: memoryStoreTool,
-      memory_recall: memoryRecallTool,
-      memory_forget: memoryForgetTool,
-      mesa_check_update: mesaCheckUpdateTool,
-      mesa_update: mesaUpdateTool,
+    tool: mesaTools,
+
+    // Spec D8: per-agent tool visibility. Denied tools are removed from the
+    // LLM request payload (resolveTools) — real token savings per specialist
+    // session, not just execution blocking. Derived from the live registry
+    // so the deny list can never drift from the registered tools.
+    config: async (config) => {
+      applySpecialistToolPermissions(config, Object.keys(mesaTools))
     },
 
     "tool.execute.before": async (toolInput, output) => {
@@ -135,27 +146,6 @@ export const mesa: Plugin = async (input) => {
         }
       } catch {
         // Silently skip — memory hint is non-critical
-      }
-    },
-
-    "tool.definition": async (toolDefInput, output) => {
-      const mesaTools = [
-      "mesa_status", "list_specialists", "get_specialist",
-      "create_briefing", "approve_briefing", "import_briefing",
-      "propose_team", "summon_team",
-      "open_round", "register_analysis", "get_peer_analyses", "close_round",
-      "record_decision", "produce_deliverable", "approve_deliverable",
-      "ask_peer",
-      "pause_discussion", "resume_discussion", "cancel_discussion",
-      "memory_store", "memory_recall", "memory_forget",
-      "mesa_check_update", "mesa_update",
-      ]
-
-      if (mesaTools.includes(toolDefInput.toolID)) {
-        output.description = output.description.replace(
-          "$",
-          "\n\nIMPORTANT: This tool is part of the Mesa structured workflow. It should be used by the `manager` or `briefing-writer` agents, not by the default agent directly."
-        )
       }
     },
   }
