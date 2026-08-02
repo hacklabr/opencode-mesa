@@ -85,4 +85,80 @@ describe("mesa_status tool", () => {
     expect(output).toContain("Deliverables: 1")
     expect(output).toContain("Plan: v2 approved")
   })
+
+  test("approved plan → no plan-gate instruction", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.plan = { path: ".mesa/x/workflow-plan.md", version: 1, status: "approved" }
+    await saveState(TEST_DIR, state, "test-session")
+
+    const result = await mesaStatusTool.execute({}, makeContext())
+    const output = (result as { output: string }).output
+    expect(output).not.toContain("ACTION REQUIRED")
+    expect(output).not.toContain("LEGACY SESSION")
+  })
+
+  test("fresh session without plan → standard write-your-plan instruction", async () => {
+    const state = createInitialState(TEST_DIR) // no rounds, no plan
+    await saveState(TEST_DIR, state, "test-session")
+
+    const result = await mesaStatusTool.execute({}, makeContext())
+    const output = (result as { output: string }).output
+    expect(output).toContain("ACTION REQUIRED")
+    expect(output).toContain("No approved workflow plan")
+    expect(output).toContain("write workflow-plan.md")
+    expect(output).not.toContain("LEGACY SESSION")
+
+    const metadata = (result as { metadata: Record<string, unknown> }).metadata
+    expect(metadata.planGateRequired).toBe(true)
+    expect(metadata.legacySession).toBe(false)
+  })
+
+  test("legacy migrated session without plan → prominent legacy resume-gate instruction", async () => {
+    const state = createInitialState(TEST_DIR)
+    // Simulate a v14/v15-migrated session: synthetic closed legacy round, no plan.
+    state.rounds = [
+      {
+        id: "legacy-round-1",
+        topic: "Legacy discussion",
+        participants: ["eng-1"],
+        status: "closed",
+        openedAt: new Date().toISOString(),
+        closedAt: new Date().toISOString(),
+      },
+    ]
+    await saveState(TEST_DIR, state, "test-session")
+
+    const result = await mesaStatusTool.execute({}, makeContext())
+    const output = (result as { output: string }).output
+    expect(output).toContain("ACTION REQUIRED")
+    expect(output).toContain("LEGACY SESSION — no approved plan")
+    expect(output).toContain("synthesize a workflow-plan.md")
+    expect(output).toContain("present it to the human as a plan gate")
+    expect(output).toContain('record_decision type:"gate" target:"plan"')
+
+    const metadata = (result as { metadata: Record<string, unknown> }).metadata
+    expect(metadata.planGateRequired).toBe(true)
+    expect(metadata.legacySession).toBe(true)
+  })
+
+  test("legacy session WITH approved plan → no instruction (gate satisfied)", async () => {
+    const state = createInitialState(TEST_DIR)
+    state.rounds = [
+      {
+        id: "legacy-round-1",
+        topic: "Legacy discussion",
+        participants: ["eng-1"],
+        status: "closed",
+        openedAt: new Date().toISOString(),
+        closedAt: new Date().toISOString(),
+      },
+    ]
+    state.plan = { path: ".mesa/x/workflow-plan.md", version: 1, status: "approved" }
+    await saveState(TEST_DIR, state, "test-session")
+
+    const result = await mesaStatusTool.execute({}, makeContext())
+    const output = (result as { output: string }).output
+    expect(output).not.toContain("ACTION REQUIRED")
+    expect(output).not.toContain("LEGACY SESSION")
+  })
 })

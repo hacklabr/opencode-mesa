@@ -7,6 +7,7 @@ import { successResponse, errorResponse } from "../utils/responses.js"
 import { MAX_ROUNDS_PER_SESSION } from "../config.js"
 import { MesaError } from "../errors.js"
 import { buildBriefingPath, ensureSessionInput, resolveAbsolutePath } from "../utils/paths.js"
+import { planGateInstruction } from "../utils/plan-gate.js"
 import type { Round, RoundOutcome, DiscussionState } from "../types.js"
 
 /**
@@ -92,10 +93,12 @@ export const openRoundTool = tool({
       }
 
       if (state.plan?.status !== "approved") {
+        // planGateInstruction is the single source of truth for this guidance
+        // (spec D9: legacy migrated sessions get the synthesize-and-present
+        // variant; fresh sessions get the write-your-plan variant).
+        const instruction = planGateInstruction(state)
         return errorResponse(
-          `open_round requires an approved workflow plan (current: ${state.plan ? `v${state.plan.version}, ${state.plan.status}` : "none"}). ` +
-          `Path: write workflow-plan.md in the session folder, present it to the human (gate 0), ` +
-          `then record the approval with record_decision type:"gate" target:"plan".`
+          `open_round requires an approved workflow plan (current: ${state.plan ? `v${state.plan.version}, ${state.plan.status}` : "none"}).\n${instruction}`
         )
       }
 

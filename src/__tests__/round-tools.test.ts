@@ -139,6 +139,28 @@ describe("open_round", () => {
     expect(result as string).toContain("approved workflow plan")
   })
 
+  test("plan-gate refusal distinguishes a LEGACY migrated session (synthesize + present)", async () => {
+    await saveState(TEST_DIR, readyState((s) => {
+      s.plan = null
+      s.rounds = [
+        {
+          id: "legacy-round-1",
+          topic: "Legacy discussion",
+          participants: ["eng-1"],
+          status: "closed",
+          openedAt: new Date().toISOString(),
+          closedAt: new Date().toISOString(),
+        },
+      ]
+    }), SESSION_ID)
+    const result = await openRoundTool.execute(
+      { topic: "T", participants: ["eng-1"] }, makeContext()
+    )
+    expect(result as string).toContain("LEGACY SESSION")
+    expect(result as string).toContain("synthesize a workflow-plan.md")
+    expect(result as string).toContain('record_decision type:"gate" target:"plan"')
+  })
+
   test("rejects when another round is still open (names the open round)", async () => {
     await saveState(TEST_DIR, readyState((s) => { s.rounds = [openRound()] }), SESSION_ID)
     const result = await openRoundTool.execute(
