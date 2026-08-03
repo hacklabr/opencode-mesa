@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-08-03
+
+A ground-up rearchitecture. The fixed 8-phase software pipeline is gone,
+replaced by a flexible **24-tool kernel** that lets the Manager design
+the workflow for any domain. Data preconditions replace the phase state
+machine; emergent consensus replaces scripted voting.
+
+### Removed (Breaking)
+- **Recipe tools and phase state machine** — deleted the journey-workshop and phase-analysis subsystems, consensus voting (`mesa_votes` exported to the audit log then dropped), verification, phase gate, `define_phases`, `delegate_task`, and the entire `requirePhase`/`requireMode` guard layer with its feeding state fields (~8,200 lines removed). Rigor profiles became circuit-breaker constants.
+- **`deliver_briefing`** folded into `approve_briefing` (kept as a deprecated idempotent shim).
+- The kernel is now **16 workflow tools + 8 peripherals** per specification D5.
+
+### Added
+- **Kernel round and decision tools** — `open_round`, `close_round`, `record_decision`, `produce_deliverable`, `approve_deliverable`. Data preconditions replace phase guards: plan-approved gate via `record_decision`, completeness checked via lexical `POSITION` blocks, `disagree` vetoes `converged`, manager-registered entries excluded from declared positions, evidence paths required, override paths audited with `planVersion`. `register_analysis` now links entries to the open round.
+- **State v14 → v15 migrations** — additive idempotent migration backfills `rounds[]` from legacy discussion analyses (synthetic `legacy-round-1`) and `deliverables[]` from the legacy specification; audit entries gain `planVersion`; v15 recreates the analyses `UNIQUE` constraint with `round_id`.
+- **Manager prompt rewritten as a v4 domain-agnostic workflow designer** — the 6 Workflow Invariants floor, `workflow-plan.md` gate 0, emergent consensus (Manager decides *whether*, never *who*), a plan-reorientation ritual, and 3 contrastive exemplars (software / delegated / academic). ~5.6k tokens (was ~10.1k).
+- **Specialist tool-visibility filtering** — the plugin config hook injects permission deny rules derived from the live tool registry (no hardcoded list to drift). Specialists keep only their seam tools (`register_analysis`, `get_peer_analyses`, `ask_peer`, memory, `mesa_status`), saving ~5.3k tokens per specialist session. The stale `tool.definition` suffix hook was deleted in the same commit (~1.4k tokens/session).
+- **Generic `mesa/specialist` subagent with prompt injection** — replaces per-persona subagents.
+- **Inline `<specialist-persona>` block** — a primary persona resolution path for runtimes that reject non-`ses_` task IDs.
+- **Legacy session resume plan gate** — migrated sessions (legacy-round-1, no approved plan) get a synthesize-and-present instruction in `mesa_status` and a matching `open_round` refusal, so the workflow agreed under the old pipeline is re-approved as a plan gate, not silently adopted.
+- **Uninstall script** — `uninstall.sh` (with `src/setup/remove-plugin.cjs` helper) removes Mesa agents, the clone, and the `opencode.json` plugin entry.
+
+### Fixed
+- **Agent session mappings preserved across analysis rounds.**
+- **Inline persona blocks no longer trigger a spurious setup error** — the inline block is validated against the catalog and passed through untouched; the setup error only fires when no persona exists anywhere.
+
+### Docs
+- README, architecture, workflow, and troubleshooting rewritten for the kernel-shell model, emergent consensus, and state v15. Pre-flexibilization design docs marked as superseded.
+
 ## [3.6.0] - 2026-07-18
 
 ### Added

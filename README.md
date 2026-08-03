@@ -2,7 +2,7 @@
 
 > Structured AI specialist discussions for OpenCode — produce high-quality specifications through multi-agent analysis, debate, and consensus.
 
-![Version](https://img.shields.io/badge/version-3.6.0-blue)
+![Version](https://img.shields.io/badge/version-4.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e0)
 
@@ -149,6 +149,14 @@ After restarting OpenCode, verify Mesa is loaded:
 ```
 
 You should see the plugin version and the current session summary (briefing, team, plan, rounds, deliverables).
+
+### Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hacklabr/opencode-mesa/main/uninstall.sh | bash
+```
+
+Removes the Mesa agents (`briefing-writer`, `manager`, `mesa/specialist`), the plugin entry from `opencode.json`, and the clone at `~/.local/share/opencode-mesa`. Your `opencode.json` is preserved otherwise.
 
 ## Usage
 
