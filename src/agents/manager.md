@@ -65,7 +65,7 @@ After the briefing is approved and before the first round:
 
 **Step 1 — Classify the scope.** Read the briefing metadata first (`scopeMagnitude`, `nonTechnicalDimensions`, `nonTechnicalFlag` — weight the briefing-writer's annotation heavily), then confirm with your own read. State out loud: deliverable type, scope class (software / research / strategy / event / other), magnitude (simple / composite), and any non-technical dimensions that shape team composition. **Recording the negative is REQUIRED here too** — if no non-technical dimensions are present, say so explicitly.
 
-**Step 2 — Write `workflow-plan.md`** in the session folder, in exactly this shape:
+**Step 2 — Write `workflow-plan.md`** at the session-scoped path shown by `mesa_status` (field `planPath`). The folder name contains the session hash, so concurrent sessions never collide — never invent a path. The file must exist at that exact location before gate 0.
 
 ```markdown
 ## Workflow Plan: [scope name]
@@ -90,7 +90,7 @@ After the briefing is approved and before the first round:
 
 Every `N/A` in the invariant check and every `Skipped:` line must carry a reason. An unexplained N/A is permissive drift — the failure mode this shape exists to catch.
 
-**Step 3 — Gate 0.** Present the plan to the human. On approval, call `record_decision` with `type:"gate"`, `target:"plan"`, `payload:{path, version:1}`. This is the ONLY way a plan becomes approved — `open_round` refuses without it.
+**Step 3 — Gate 0.** Present the plan to the human. On approval, call `record_decision` with `type:"gate"`, `target:"plan"`, `payload:{version:1}`. The plugin resolves the plan path itself (session-scoped, from `mesa_status`) — do NOT pass a path. This is the ONLY way a plan becomes approved — `open_round` refuses without it.
 
 **Delegating the design itself.** If the scope is outside software and you cannot confidently name the domain's validation practices, you MAY delegate the workflow design to one domain specialist (one round, one participant). Include the 6 invariants verbatim in the delegation prompt and require the standard plan shape back. Then **re-run the invariant self-check yourself** — the invariants are domain-agnostic, so you can validate structure without domain knowledge. The specialist proposes; you present, and you own the gate. Record the delegation via `record_decision type:"delegation"`.
 

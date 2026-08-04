@@ -5,14 +5,15 @@
 
 import { describe, expect, test, beforeEach, afterEach } from "vitest"
 import { promises as fs } from "node:fs"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
 import {
   recordDecisionTool,
   produceDeliverableTool,
   approveDeliverableTool,
 } from "../tools/decision-tools.js"
-import { loadState, saveState, closeStorage } from "../state.js"
+import { loadState, saveState, closeStorage, getDb } from "../state.js"
 import { createInitialState } from "../config.js"
+import { resolveSessionInput, buildPlanPath } from "../utils/paths.js"
 import type { DiscussionState } from "../types.js"
 import type { SuccessResponse } from "../utils/responses.js"
 
@@ -87,6 +88,17 @@ async function readAudit(): Promise<AuditLine[]> {
     .map((line) => JSON.parse(line) as AuditLine)
 }
 
+/** Write a stub workflow-plan.md at the canonical session-scoped path. */
+async function writeCanonicalPlan(session = SESSION): Promise<string> {
+  const state = await loadState(TEST_DIR, session)
+  const input = await resolveSessionInput(TEST_DIR, state, session, getDb)
+  const rel = buildPlanPath(input)
+  const abs = join(TEST_DIR, rel)
+  await fs.mkdir(dirname(abs), { recursive: true })
+  await fs.writeFile(abs, "# Workflow Plan\n")
+  return rel
+}
+
 describe("record_decision", () => {
   beforeEach(async () => {
     await fs.mkdir(join(TEST_DIR, ".mesa"), { recursive: true })
@@ -109,14 +121,14 @@ describe("record_decision", () => {
     expect(result as string).toContain("paused")
   })
 
-  test("gate on plan sets AND approves the plan pointer (gate 0)", async () => {
+  test("gate on plan sets AND approves the plan pointer at the canonical session-scoped path (gate 0)", async () => {
     await seed()
+    const planRel = await writeCanonicalPlan()
     const result = (await recordDecisionTool.execute(
       {
         type: "gate",
         target: "plan",
         reason: "Human approved the workflow plan at gate 0",
-        payload: { path: ".mesa/sessions/x/workflow-plan.md" },
       },
       makeContext()
     )) as SuccessResponse
@@ -124,7 +136,9 @@ describe("record_decision", () => {
     expect(result.title).toContain("gate")
     const state = await loadState(TEST_DIR, SESSION)
     expect(state.plan).not.toBeNull()
-    expect(state.plan!.path).toBe(".mesa/sessions/x/workflow-plan.md")
+    expect(state.plan!.path).toBe(planRel)
+    expect(state.plan!.path).toContain(state.sessionFolder!)
+    expect(state.plan!.path).toMatch(/workflow-plan\.md$/)
     expect(state.plan!.version).toBe(1)
     expect(state.plan!.status).toBe("approved")
     expect(state.plan!.approvedAt).toBeDefined()
@@ -136,26 +150,69 @@ describe("record_decision", () => {
     expect(entry!.details).toMatchObject({ type: "gate", target: "plan" })
   })
 
-  test("gate on plan without payload.path fails with recovery guidance", async () => {
+  test("gate ignores a caller-supplied payload.path — the plugin owns the session-scoped path", async () => {
+    await seed()
+    await writeCanonicalPlan()
+    const result = (await recordDecisionTool.execute(
+      {
+        type: "gate",
+        target: "plan",
+        reason: "Human approved",
+        payload: { path: ".mesa/workflow-plan.md" }, // must be ignored, not trusted
+      },
+      makeContext()
+    )) as SuccessResponse
+
+    expect(result.title).toContain("gate")
+    const state = await loadState(TEST_DIR, SESSION)
+    expect(state.plan!.path).toContain(state.sessionFolder!)
+    expect(state.plan!.path).not.toBe(".mesa/workflow-plan.md")
+  })
+
+  test("gate fails when the plan file is missing at the canonical location (recovery guidance)", async () => {
     await seed()
     const result = await recordDecisionTool.execute(
-      { type: "gate", target: "plan", reason: "forgot the path" },
+      { type: "gate", target: "plan", reason: "forgot to write the file" },
       makeContext()
     )
     expect(typeof result).toBe("string")
-    expect(result as string).toContain("payload.path")
+    expect(result as string).toContain("workflow-plan.md not found")
+    expect(result as string).toContain("sessions")
     const state = await loadState(TEST_DIR, SESSION)
     expect(state.plan).toBeNull()
   })
 
+  test("concurrent sessions get DIFFERENT plan paths (session-hash isolation)", async () => {
+    await seed()
+    const planA = await writeCanonicalPlan(SESSION)
+    await recordDecisionTool.execute(
+      { type: "gate", target: "plan", reason: "session A gate" },
+      { ...makeContext(), sessionID: SESSION }
+    )
+    const stateA = await loadState(TEST_DIR, SESSION)
+    expect(stateA.plan!.path).toBe(planA)
+
+    // A second session in the same workspace must resolve its own folder.
+    const seedB = createInitialState(TEST_DIR)
+    await saveState(TEST_DIR, seedB, "test-session-b")
+    const planB = await writeCanonicalPlan("test-session-b")
+    await recordDecisionTool.execute(
+      { type: "gate", target: "plan", reason: "session B gate" },
+      { ...makeContext(), sessionID: "test-session-b" }
+    )
+    const stateB = await loadState(TEST_DIR, "test-session-b")
+    expect(stateB.plan!.path).toBe(planB)
+    expect(planA).not.toBe(planB)
+  })
+
   test("plan-amendment bumps the version and keeps status; audit carries new planVersion", async () => {
     await seed()
+    await writeCanonicalPlan()
     await recordDecisionTool.execute(
       {
         type: "gate",
         target: "plan",
         reason: "gate 0",
-        payload: { path: ".mesa/sessions/x/workflow-plan.md" },
       },
       makeContext()
     )
@@ -193,12 +250,12 @@ describe("record_decision", () => {
 
   test("plan-amendment that does not increase the version fails (anti silent-replanning)", async () => {
     await seed()
+    await writeCanonicalPlan()
     await recordDecisionTool.execute(
       {
         type: "gate",
         target: "plan",
         reason: "gate 0",
-        payload: { path: ".mesa/sessions/x/workflow-plan.md" },
       },
       makeContext()
     )
@@ -463,12 +520,12 @@ describe("approve_deliverable", () => {
   test("approves a draft deliverable and audits with planVersion", async () => {
     await seedWithRounds()
     // Establish a plan so planVersion flows into the audit entry.
+    await writeCanonicalPlan()
     await recordDecisionTool.execute(
       {
         type: "gate",
         target: "plan",
         reason: "gate 0",
-        payload: { path: ".mesa/sessions/x/workflow-plan.md" },
       },
       makeContext()
     )

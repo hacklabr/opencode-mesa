@@ -30,6 +30,7 @@ machine; emergent consensus replaces scripted voting.
 ### Fixed
 - **Agent session mappings preserved across analysis rounds.**
 - **Inline persona blocks no longer trigger a spurious setup error** — the inline block is validated against the catalog and passed through untouched; the setup error only fires when no persona exists anywhere.
+- **Concurrency hazard: `workflow-plan.md` path is now plugin-owned and session-scoped.** Previously the plan was the only artifact whose path came from the agent (`record_decision` gate `payload.path`), so two concurrent sessions could collide on a shared `.mesa/workflow-plan.md`. The gate now computes the canonical `.mesa/sessions/{folder}/workflow-plan.md` (the folder name carries the session hash), ignores any caller-supplied path, and requires the file to exist there before approval. `mesa_status` exposes `planPath` so the Manager knows exactly where to write.
 
 ### Docs
 - README, architecture, workflow, and troubleshooting rewritten for the kernel-shell model, emergent consensus, and state v15. Pre-flexibilization design docs marked as superseded.

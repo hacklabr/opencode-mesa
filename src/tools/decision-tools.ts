@@ -9,6 +9,7 @@ import {
   buildSessionFolderPath,
   sanitizeSlugForFs,
   validateWorkspacePath,
+  resolveAbsolutePath,
 } from "../utils/paths.js"
 import type { DiscussionState, Deliverable, PlanPointer } from "../types.js"
 
@@ -26,14 +27,27 @@ function activeGuard(state: DiscussionState): string | null {
   return null
 }
 
-function payloadString(payload: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = payload?.[key]
-  return typeof value === "string" && value.length > 0 ? value : undefined
-}
-
 function payloadVersion(payload: Record<string, unknown> | undefined): number | undefined {
   const value = payload?.version
   return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : undefined
+}
+
+/**
+ * Resolve the canonical, session-scoped workflow-plan path. The plugin OWNS this
+ * path (the agent never supplies it) so concurrent sessions cannot collide on a
+ * shared `.mesa/workflow-plan.md` (spec-6886df4f, K2 containment).
+ */
+async function resolveCanonicalPlanPath(
+  context: { directory: string; sessionID: string },
+  state: DiscussionState
+): Promise<string> {
+  const sessionId = getSessionId(context.directory, context.sessionID)
+  if (!sessionId) {
+    throw new Error("No active session. Ensure loadState() was called.")
+  }
+  const sessionInput = await ensureSessionInput(context.directory, state, sessionId, getDb)
+  const sessionFolder = state.sessionFolder ?? buildSessionFolderPath(sessionInput)
+  return join(sessionFolder, "workflow-plan.md")
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +73,7 @@ export const recordDecisionTool = tool({
     payload: tool.schema
       .record(tool.schema.string(), tool.schema.unknown())
       .optional()
-      .describe("Free-form details. For target='plan': {path: string, version?: number}"),
+      .describe("Free-form details. For target='plan': {version?: number}. The plan path is session-scoped and computed by the plugin — do NOT supply a path."),
   },
   async execute(args, context) {
     try {
@@ -72,23 +86,32 @@ export const recordDecisionTool = tool({
 
       if (args.target === "plan") {
         if (args.type === "gate") {
-          const path = payloadString(args.payload, "path")
-          if (!path) {
-            return errorResponse(
-              `type="gate" target="plan" requires payload.path (the workflow-plan.md location). ` +
-              `Write the plan file first, then record the gate decision with its path.`
-            )
-          }
-          const pathCheck = validateWorkspacePath(context.directory, path)
+          // The plan path is session-scoped and owned by the plugin — never
+          // trusted from payload. This guarantees concurrent sessions cannot
+          // collide on a shared workflow-plan.md (K2 containment).
+          const planPath = await resolveCanonicalPlanPath(context, state)
+          const pathCheck = validateWorkspacePath(context.directory, planPath)
           if (!pathCheck.valid) return errorResponse(pathCheck.error)
 
+          // Data precondition (gate 0 honesty): the plan file must already
+          // exist at its canonical location before it can be approved.
+          try {
+            await fs.access(resolveAbsolutePath(context.directory, planPath))
+          } catch {
+            return errorResponse(
+              `workflow-plan.md not found at its canonical session-scoped location:\n  ${planPath}\n` +
+              `Write the plan file there first (the session hash in the path isolates concurrent sessions), ` +
+              `then record the gate decision.`
+            )
+          }
+
           state.plan = {
-            path,
+            path: planPath,
             version: payloadVersion(args.payload) ?? 1,
             status: "approved",
             approvedAt: now,
           } satisfies PlanPointer
-          planSideEffect = `plan pointer set and APPROVED at ${path} (v${state.plan.version})`
+          planSideEffect = `plan pointer set and APPROVED at ${planPath} (v${state.plan.version})`
         } else if (args.type === "plan-amendment") {
           if (!state.plan) {
             return errorResponse(
@@ -102,12 +125,6 @@ export const recordDecisionTool = tool({
               `Silent replanning is the cardinal sin of this system — bump the version and state the reason.`
             )
           }
-          const newPath = payloadString(args.payload, "path")
-          if (newPath) {
-            const pathCheck = validateWorkspacePath(context.directory, newPath)
-            if (!pathCheck.valid) return errorResponse(pathCheck.error)
-            state.plan.path = newPath
-          }
           state.plan.version = nextVersion
           planSideEffect = `plan version bumped to v${nextVersion} (status kept: ${state.plan.status})`
         } else if (args.type === "override") {
@@ -116,21 +133,19 @@ export const recordDecisionTool = tool({
             state.plan.approvedAt = now
             planSideEffect = `plan force-approved via OVERRIDE at ${state.plan.path} (v${state.plan.version})`
           } else {
-            const path = payloadString(args.payload, "path")
-            if (!path) {
-              return errorResponse(
-                `type="override" target="plan" with no existing plan requires payload.path.`
-              )
-            }
-            const pathCheck = validateWorkspacePath(context.directory, path)
+            // No existing plan: create the pointer at the canonical session-scoped
+            // path. Existence is NOT required — a human override takes
+            // responsibility for the artifact (audited).
+            const planPath = await resolveCanonicalPlanPath(context, state)
+            const pathCheck = validateWorkspacePath(context.directory, planPath)
             if (!pathCheck.valid) return errorResponse(pathCheck.error)
             state.plan = {
-              path,
+              path: planPath,
               version: payloadVersion(args.payload) ?? 1,
               status: "approved",
               approvedAt: now,
             }
-            planSideEffect = `plan pointer created and force-approved via OVERRIDE at ${path}`
+            planSideEffect = `plan pointer created and force-approved via OVERRIDE at ${planPath}`
           }
         }
       }

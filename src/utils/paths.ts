@@ -111,6 +111,18 @@ export function buildOverviewPath(input: SessionFolderInput): string {
 }
 
 /**
+ * Build the canonical workflow-plan path inside the session folder.
+ * Returns a workspace-relative path: `.mesa/sessions/{folder}/workflow-plan.md`
+ *
+ * The plan path is OWNED by the plugin (never supplied by the agent), so that
+ * concurrent sessions never collide on a shared `.mesa/workflow-plan.md`.
+ * Mirrors buildBriefingPath / buildSpecificationPath (spec-6886df4f, K2).
+ */
+export function buildPlanPath(input: SessionFolderInput): string {
+  return join(buildSessionFolderPath(input), "workflow-plan.md")
+}
+
+/**
  * Build a session-scoped analysis file path.
  *
  * Format:
