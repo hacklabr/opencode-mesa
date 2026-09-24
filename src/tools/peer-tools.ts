@@ -5,9 +5,11 @@ import { successResponse, errorResponse } from "../utils/responses.js"
 import { PEER_CONSULTATION_CAP } from "../config.js"
 import { loadState } from "../state.js"
 import { PLUGIN_STATE_DIR } from "../config.js"
+import { getPeerTransport } from "./peer-transport.js"
 
-// Module-level SDK client reference (set from index.ts)
-let sdkClient: unknown = null
+// Backwards-compatible re-export: tests and older callers install the SDK
+// client through this module.
+export { setSdkClient } from "./peer-transport.js"
 
 // Map: agentId → opencodeSessionId
 // Populated when a specialist calls register_analysis from their OWN session.
@@ -18,10 +20,6 @@ const agentSessions = new Map<string, string>()
 // D6 (ask_peer governance): per-turn consultation rate cap.
 // Map<callerAgentId, Map<turn, count>> — prevents N×N mesh explosion.
 const peerConsultations = new Map<string, Map<number, number>>()
-
-export function setSdkClient(client: unknown): void {
-  sdkClient = client
-}
 
 export function recordAgentSession(agentId: string, sessionID: string): void {
   agentSessions.set(agentId, sessionID)
@@ -99,27 +97,12 @@ export const askPeerTool = tool({
   async execute(args, context) {
     const { peer_id, question } = args
 
-    if (!sdkClient) {
+    const transport = getPeerTransport()
+    if (!transport) {
       return errorResponse("SDK client not available.")
     }
 
     try {
-      const client = sdkClient as {
-        session: {
-          status: (opts?: {
-            query?: { directory?: string }
-          }) => Promise<{ data?: Record<string, { type: string }> }>
-          prompt: (opts: {
-            path: { id: string }
-            body: {
-              agent?: string
-              parts: Array<{ type: string; text: string }>
-              tools?: Record<string, boolean>
-            }
-          }) => Promise<{ data?: unknown }>
-        }
-      }
-
       // Look up the peer's session ID.
       // First try the in-memory Map (fast). If empty (e.g., after restart),
       // fall back to SQLite query (survives restarts).
@@ -146,20 +129,13 @@ export const askPeerTool = tool({
       // During parallel turns, specialists are mid-analysis and cannot respond.
       // Calling ask_peer on a busy peer would block indefinitely (deadlock if
       // both specialists call ask_peer on each other simultaneously).
-      try {
-        const statusResult = await client.session.status({
-          query: { directory: context.directory },
-        })
-        const peerStatus = statusResult.data?.[peerSessionId]
-        if (peerStatus && peerStatus.type === "busy") {
-          return errorResponse(
-            `Peer ${peer_id} is currently busy (session status: ${peerStatus.type}). ` +
-            `Peer consultation is only available during sequential turns when the peer is idle. ` +
-            `Wait for the Manager to initiate the consensus turn before consulting peers.`
-          )
-        }
-      } catch {
-        // Status check failed — proceed anyway (best-effort, don't block on status)
+      const busy = await transport.isBusy(peerSessionId)
+      if (busy === true) {
+        return errorResponse(
+          `Peer ${peer_id} is currently busy. ` +
+          `Peer consultation is only available during sequential turns when the peer is idle. ` +
+          `Wait for the Manager to initiate the consensus turn before consulting peers.`
+        )
       }
 
       // Per-turn consultation rate cap (K4 circuit breaker — constant since
@@ -185,36 +161,11 @@ export const askPeerTool = tool({
       // Send the question to the peer's REAL session — contamination path.
       // The question enters the peer's session history alongside their Turn 1, Turn 2, etc.
       // When the Manager resumes the peer, they remember everything INCLUDING this question.
-      const promptResult = await client.session.prompt({
-        path: { id: peerSessionId },
-        body: {
-          parts: [{ type: "text", text: `[Peer consultation from ${callerId}]\n\n${question}` }],
-          tools: {
-            task: false,
-            open_round: false,
-            close_round: false,
-            record_decision: false,
-            produce_deliverable: false,
-            approve_deliverable: false,
-          },
-        },
+      const { responseText } = await transport.promptPeer({
+        sessionId: peerSessionId,
+        directory: context.directory,
+        text: `[Peer consultation from ${callerId}]\n\n${question}`,
       })
-
-      // Extract the response text
-      let responseText = "(no response)"
-      const data = promptResult.data as {
-        info?: unknown
-        parts?: Array<{ type: string; text?: string }>
-      } | undefined
-
-      if (data?.parts) {
-        const textParts = data.parts
-          .filter((p) => p.type === "text" && p.text)
-          .map((p) => p.text!)
-        if (textParts.length > 0) {
-          responseText = textParts.join("\n")
-        }
-      }
 
       return successResponse(
         `Peer consultation with ${peer_id}`,

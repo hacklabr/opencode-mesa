@@ -5,10 +5,28 @@ export const PERSONA_TASK_ID_PREFIX = "mesa-"
 export const SESSION_ID_PREFIX = "ses_"
 
 export interface TaskToolArgs {
+  /** V1 `task` tool: selected subagent type. */
   subagent_type?: unknown
+  /** V2 `subagent` tool: selected agent ID. */
+  agent?: unknown
+  /** V1 `task` tool: resume/session key. */
   task_id?: unknown
+  /** V2 `subagent` tool: resume key for a previous child session. */
+  sessionID?: unknown
   prompt?: unknown
   [key: string]: unknown
+}
+
+function agentTypeOf(args: TaskToolArgs): string {
+  if (typeof args.subagent_type === "string") return args.subagent_type
+  if (typeof args.agent === "string") return args.agent
+  return ""
+}
+
+function resumeIdOf(args: TaskToolArgs): string {
+  if (typeof args.task_id === "string") return args.task_id
+  if (typeof args.sessionID === "string") return args.sessionID
+  return ""
 }
 
 export type PersonaLookup = (
@@ -38,16 +56,17 @@ export function extractInlinePersonaId(prompt: string): string | null {
 }
 
 /**
- * Builds the task prompt for the generic `mesa/specialist` subagent with the
- * persona system prompt injected. Returns null when the call should pass
- * through untouched.
+ * Builds the delegation prompt for the generic `mesa/specialist` subagent
+ * with the persona system prompt injected. Returns null when the call should
+ * pass through untouched.
  *
  * Persona resolution order (spec D10.2/D10.3):
- * 1. Session resumption (task_id="ses_...") — persona is already in history.
+ * 1. Session resumption (task_id/sessionID = "ses_...") — persona is already
+ *    in history.
  * 2. INLINE persona block in the prompt — the PRIMARY path. Runtimes that
- *    reject non-"ses_" task_ids force the Manager to inline the persona;
+ *    reject non-"ses_" resume ids force the Manager to inline the persona;
  *    the block is self-contained, so the prompt passes through untouched.
- * 3. task_id slug ("mesa-{personaId}") — for runtimes that accept it; the
+ * 3. Resume-id slug ("mesa-{personaId}") — V1 runtimes that accept it; the
  *    hook injects the persona block from the catalog.
  *
  * The setup-error notice fires ONLY when no persona exists anywhere
@@ -57,13 +76,13 @@ export async function buildSpecialistPrompt(
   args: TaskToolArgs,
   lookup: PersonaLookup = getPersonaById
 ): Promise<string | null> {
-  if (args.subagent_type !== SPECIALIST_SUBAGENT_TYPE) return null
+  if (agentTypeOf(args) !== SPECIALIST_SUBAGENT_TYPE) return null
 
   const originalPrompt = typeof args.prompt === "string" ? args.prompt : ""
-  const taskId = typeof args.task_id === "string" ? args.task_id : ""
+  const resumeId = resumeIdOf(args)
 
   // Path 1: resuming an existing specialist session — persona is already in history.
-  if (taskId.startsWith(SESSION_ID_PREFIX)) return null
+  if (resumeId.startsWith(SESSION_ID_PREFIX)) return null
 
   // Path 2: inline persona block (primary). Validate the id against the
   // catalog as a sanity check, but never re-inject — the block already
@@ -80,15 +99,15 @@ export async function buildSpecialistPrompt(
     return null
   }
 
-  // Path 3: task_id slug.
-  if (!taskId.startsWith(PERSONA_TASK_ID_PREFIX)) {
+  // Path 3: resume-id slug (V1 runtimes that accept arbitrary task ids).
+  if (!resumeId.startsWith(PERSONA_TASK_ID_PREFIX)) {
     return errorNotice(
-      `No persona specified. Provide the specialist persona either inline (a <specialist-persona id="..."> block in the prompt) or via task_id="mesa-{personaId}" (got task_id=${JSON.stringify(taskId || undefined)}).`,
+      `No persona specified. Provide the specialist persona either inline (a <specialist-persona id="..."> block in the prompt) or via the delegation tool's resume key (task_id/sessionID = "mesa-{personaId}") (got ${JSON.stringify(resumeId || undefined)}).`,
       originalPrompt
     )
   }
 
-  const personaId = taskId.slice(PERSONA_TASK_ID_PREFIX.length)
+  const personaId = resumeId.slice(PERSONA_TASK_ID_PREFIX.length)
   const persona = await lookup(personaId)
 
   if (!persona) {

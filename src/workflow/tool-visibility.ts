@@ -1,15 +1,21 @@
 import type { Config } from "@opencode-ai/plugin"
+import type { AgentEditor } from "@opencode/plugin/promise/agent"
 
 /**
  * Per-agent tool visibility filtering (spec D8, spike verdict path a —
  * named-agent permission allowlist).
  *
  * OpenCode removes permission-denied tools from the LLM request payload at
- * request-build time (`resolveTools`, refs/opencode session/llm/request.ts),
- * so deny rules here are a real token saving (~5.3k per specialist session),
- * not just execution blocking. The plugin `config` hook applies these rules
- * at load time — self-healing, derived from the live tool registry, no
+ * request-build time, so deny rules here are a real token saving (~5.3k per
+ * specialist session), not just execution blocking. The plugin applies these
+ * rules at load time — self-healing, derived from the live tool registry, no
  * hardcoded deny list to drift.
+ *
+ * Two appliers, one per host:
+ * - V1: the `config` hook mutates `agent["mesa/specialist"].permission`
+ *   (legacy map form).
+ * - V2: `ctx.agent.transform` appends `Permission.Rule` list entries
+ *   (last matching rule wins, so appended denies take effect).
  */
 
 export const SPECIALIST_AGENT = "mesa/specialist"
@@ -57,4 +63,32 @@ export function applySpecialistToolPermissions(
       permission[toolName] = "deny"
     }
   }
+}
+
+/**
+ * V2 applier: appends deny rules (list form) to the mesa/specialist agent's
+ * permissions inside an `ctx.agent.transform` editor. A no-op when the
+ * agent is not registered — the agent .md (generate-agents) is required for
+ * delegation to work at all, and the V2 editor cannot create agents.
+ * Explicit pre-existing rules for a tool are never clobbered.
+ */
+export function applySpecialistToolPermissionsV2(
+  editor: AgentEditor,
+  registeredToolNames: string[]
+): void {
+  const specialist = editor.get(SPECIALIST_AGENT)
+  if (!specialist) return
+
+  const deniedTools = registeredToolNames.filter(
+    (name) => !SPECIALIST_ALLOWED_TOOLS.includes(name)
+  )
+
+  editor.update(SPECIALIST_AGENT, (agent) => {
+    agent.permissions ??= []
+    for (const toolName of deniedTools) {
+      if (!agent.permissions.some((rule) => rule.action === toolName)) {
+        agent.permissions.push({ action: toolName, resource: "*", effect: "deny" })
+      }
+    }
+  })
 }

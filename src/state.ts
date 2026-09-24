@@ -7,12 +7,30 @@ import type { DiscussionState, AnalysisEntry, AnalysisKind, AnalysisTurnType, Ro
 import { PLUGIN_STATE_DIR, CURRENT_STATE_VERSION, createInitialState } from "./config.js"
 import { buildSessionFolderPath } from "./utils/paths.js"
 import { reconcileMemories, purgeStaleMemoryFiles } from "./tools/memory-sync.js"
+import { isV2Context } from "./utils/host.js"
 
-// SDK client for parent session lookup (set from index.ts)
+// SDK client for parent session lookup (set from index.ts). Works with both
+// hosts: V1 SDK clients and V2 plugin contexts.
 type SessionGetter = (sessionId: string) => Promise<{ parentID?: string } | null>
 let sessionGetter: SessionGetter | null = null
 
 export function setStateSdkClient(client: unknown): void {
+  if (isV2Context(client)) {
+    const ctx = client as unknown as {
+      session: { get: (input: { sessionID: string }) => Promise<{ parentID?: string } | undefined> }
+    }
+    if (typeof ctx.session?.get === "function") {
+      sessionGetter = async (sessionId: string) => {
+        try {
+          return (await ctx.session.get({ sessionID: sessionId })) ?? null
+        } catch {
+          return null
+        }
+      }
+    }
+    return
+  }
+
   const c = client as {
     session?: {
       get?: (opts: { path: { id: string } }) => Promise<{ data?: { parentID?: string } | null }>

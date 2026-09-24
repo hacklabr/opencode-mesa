@@ -141,7 +141,34 @@ describe("buildSpecialistPrompt", () => {
     expect(result).toContain("<specialist-setup-error>")
     // The message must document the two legitimate resolution paths.
     expect(result).toContain("<specialist-persona id=")
-    expect(result).toContain('task_id="mesa-{personaId}"')
+    expect(result).toContain('task_id/sessionID = "mesa-{personaId}"')
     expect(result!.endsWith("do work")).toBe(true)
+  })
+
+  // --- V2 host: `subagent` tool arg names ---
+
+  test("V2 shape: agent + sessionID resume key passes through untouched on resumption", async () => {
+    const result = await buildSpecialistPrompt(
+      { agent: SPECIALIST_SUBAGENT_TYPE, sessionID: "ses_abc123", prompt: "turn 2" },
+      foundLookup
+    )
+    expect(result).toBeNull()
+  })
+
+  test("V2 shape: agent + mesa- slug resolves the persona from the catalog", async () => {
+    const result = await buildSpecialistPrompt(
+      { agent: SPECIALIST_SUBAGENT_TYPE, sessionID: "mesa-engineering-backend-architect", prompt: "do work" },
+      foundLookup
+    )
+    expect(result).toContain('<specialist-persona id="engineering-backend-architect"')
+    expect(result!.endsWith("do work")).toBe(true)
+  })
+
+  test("V2 shape: non-specialist agent passes through untouched", async () => {
+    const result = await buildSpecialistPrompt(
+      { agent: "general", prompt: "do work" },
+      foundLookup
+    )
+    expect(result).toBeNull()
   })
 })
