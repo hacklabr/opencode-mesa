@@ -22,18 +22,20 @@ do {
 
 const cfg = JSON.parse(json)
 
-if (Array.isArray(cfg.plugin)) {
-  const before = cfg.plugin.length
-  cfg.plugin = cfg.plugin.filter(p => typeof p === 'string' && !p.includes('opencode-mesa'))
-  const removed = before - cfg.plugin.length
-
-  fs.writeFileSync(configFile, JSON.stringify(cfg, null, 2) + '\n')
-
-  if (removed > 0) {
-    console.log(`Removed ${removed} plugin entry(ies) from ${configFile}`)
-  } else {
-    console.log(`No plugin entries found in ${configFile}`)
+let removed = 0
+// Covers both the V1 key ("plugin") and the V2 key ("plugins").
+for (const key of ['plugin', 'plugins']) {
+  if (Array.isArray(cfg[key])) {
+    const before = cfg[key].length
+    cfg[key] = cfg[key].filter(p => typeof p === 'string' && !p.includes('opencode-mesa'))
+    removed += before - cfg[key].length
+    if (cfg[key].length === 0) delete cfg[key]
   }
+}
+
+if (removed > 0) {
+  fs.writeFileSync(configFile, JSON.stringify(cfg, null, 2) + '\n')
+  console.log(`Removed ${removed} plugin entry(ies) from ${configFile}`)
 } else {
-  console.log(`No plugin array in ${configFile}`)
+  console.log(`No plugin entries found in ${configFile}`)
 }

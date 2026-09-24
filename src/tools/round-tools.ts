@@ -170,7 +170,7 @@ export const openRoundTool = tool({
       const participantList = args.participants
         .map((id) => {
           const name = state.team.find((t) => t.personaId === id)?.name ?? id
-          return `  ${name} (task_id="mesa-${id}")`
+          return `  ${name} (persona: ${id})`
         })
         .join("\n")
 
@@ -186,7 +186,7 @@ export const openRoundTool = tool({
             ? `Briefing file: **${briefingFilePath}** — tell each participant to READ this file in full. Never summarize it.`
             : `No briefing file provided. Pass relevant context directly to each participant.`,
           ``,
-          `Invoke participants via the task tool with task_id="mesa-{personaId}" (stable task_id preserves memory across rounds).`,
+          `Invoke participants via the delegation tool (\`task\`/\`subagent\`) targeting \`mesa/specialist\`, with an inline <specialist-persona id="{personaId}"> block in each prompt (see Delegation Mechanics). Save each returned session id (\`ses_...\`) per specialist — it resumes them in later rounds with memory intact.`,
           `Each participant's final artifact must end with a POSITION: agree | agree-with-reservations | disagree block — close_round requires it.`,
         ].join("\n"),
         { roundId: round.id, briefingFilePath }

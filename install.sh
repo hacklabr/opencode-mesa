@@ -83,6 +83,20 @@ PLUGIN_PATH="file://$INSTALL_DIR/dist/index.js"
 CONFIG_DIR="$HOME/.config/opencode"
 CONFIG_FILE="$CONFIG_DIR/opencode.json"
 
+# Plugin config key: "plugins" on OpenCode V2, "plugin" on V1 (V2 also
+# auto-normalizes the legacy key, but writing the native one is cleaner).
+CONFIG_KEY="plugin"
+OC_VERSION="$(opencode --version 2>/dev/null | head -1 || true)"
+OC_MAJOR="$(printf '%s' "$OC_VERSION" | grep -oE '[0-9]+' | head -1 || true)"
+if [ -n "$OC_MAJOR" ] && [ "$OC_MAJOR" -ge 2 ]; then
+  CONFIG_KEY="plugins"
+  info "Detected OpenCode V2 (${OC_VERSION}) — using \"plugins\" config key"
+elif [ -n "$OC_MAJOR" ]; then
+  info "Detected OpenCode V1 (${OC_VERSION}) — using \"plugin\" config key"
+else
+  info "Could not detect OpenCode version — defaulting to legacy \"plugin\" key (auto-normalized by V2)"
+fi
+
 info ""
 info "Configuring plugin globally..."
 mkdir -p "$CONFIG_DIR"
@@ -90,16 +104,16 @@ mkdir -p "$CONFIG_DIR"
 if [ -f "$CONFIG_FILE" ]; then
   if grep -q "opencode-mesa" "$CONFIG_FILE" 2>/dev/null; then
     info "Plugin already configured in $CONFIG_FILE — updating path"
-    node "$INSTALL_DIR/src/setup/add-plugin.cjs" "$CONFIG_FILE" "$PLUGIN_PATH"
+    node "$INSTALL_DIR/src/setup/add-plugin.cjs" "$CONFIG_FILE" "$PLUGIN_PATH" "$CONFIG_KEY"
   else
-    node "$INSTALL_DIR/src/setup/add-plugin.cjs" "$CONFIG_FILE" "$PLUGIN_PATH"
+    node "$INSTALL_DIR/src/setup/add-plugin.cjs" "$CONFIG_FILE" "$PLUGIN_PATH" "$CONFIG_KEY"
     info "Plugin added to $CONFIG_FILE"
   fi
 else
   cat > "$CONFIG_FILE" <<EOCFG
 {
   "\$schema": "https://opencode.ai/config.json",
-  "plugin": ["$PLUGIN_PATH"]
+  "$CONFIG_KEY": ["$PLUGIN_PATH"]
 }
 EOCFG
   info "Created $CONFIG_FILE with plugin configured"

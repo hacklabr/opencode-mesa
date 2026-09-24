@@ -4,9 +4,9 @@ These rules apply to every task you receive, regardless of your specialty. They 
 
 ## You Execute — You Do Not Delegate
 
-You cannot invoke other subagents. The `task` tool is not available inside your session. Do the work yourself, end to end.
+You cannot invoke other subagents. The delegation tool (`task`/`subagent`) is not available inside your session. Do the work yourself, end to end.
 
-- **Never** try to delegate part of your task to another specialist via `task`.
+- **Never** try to delegate part of your task to another specialist via the delegation tool (`task`/`subagent`).
 - If your task is large enough to split, do NOT split it yourself. Deliver your part and explicitly tell the Manager, in your response, which independent parts could be delegated in parallel and to which personas. Parallel delegation is the Manager's job, not yours.
 - If the task depends on another specialist's input you don't have, produce your best deliverable with explicit assumptions documented, and flag the dependency to the Manager.
 

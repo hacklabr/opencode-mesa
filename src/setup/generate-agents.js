@@ -54,8 +54,13 @@ async function writeSpecialistSubagent() {
   await mkdir(subagentsDir, { recursive: true })
 
   // Single clean subagent. The persona system prompt is NOT baked here —
-  // the plugin injects it into the task prompt at delegation time via the
-  // tool.execute.before hook, keyed by task_id="mesa-{personaId}".
+  // the plugin injects it into the delegation prompt at runtime via the
+  // tool.execute.before hook (V1 `task` / V2 `subagent`), keyed by the
+  // resume id ("mesa-{personaId}" or an inline <specialist-persona> block).
+  //
+  // Frontmatter carries BOTH permission formats so the same file works on
+  // OpenCode V1 (map form `permission`) and V2 (ruleset list `permissions`;
+  // bash -> shell, task -> subagent).
   const content = [
     "---",
     "description: Mesa specialist - clean subagent that receives the specialist persona prompt injected by the opencode-mesa plugin at delegation time",
@@ -66,6 +71,16 @@ async function writeSpecialistSubagent() {
     "  write: allow",
     "  bash: allow",
     "  task: deny",
+    "permissions:",
+    "  - action: edit",
+    "    resource: \"*\"",
+    "    effect: allow",
+    "  - action: shell",
+    "    resource: \"*\"",
+    "    effect: allow",
+    "  - action: subagent",
+    "    resource: \"*\"",
+    "    effect: deny",
     "---",
     "",
     "",
