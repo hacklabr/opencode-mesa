@@ -19,6 +19,29 @@ type V1ToolResult = string | { title?: string; output: string; metadata?: Record
 
 const z = tool.schema
 
+/**
+ * Code Mode namespace for every Mesa tool. Without it, each tool forms its
+ * own single-tool group in the `execute` catalog and the round-robin budget
+ * inlines all 24 signatures into the system prompt; namespaced, the catalog
+ * collapses to `mesa (24 tools, N shown)` with the rest behind `search`.
+ */
+export const MESA_NAMESPACE = "mesa"
+
+export const MESA_NAMESPACE_INFO = {
+  name: MESA_NAMESPACE,
+  description:
+    "Mesa multi-specialist discussion workflow: briefings, discussion rounds, decisions, deliverables, peers, memory",
+} as const
+
+export interface V2RegistrationOptions {
+  /**
+   * Escape hatch for hosts where Code Mode is inactive: `false` registers
+   * plain direct tools (pre-4.2 behavior). Catalog-only tools would be
+   * invisible to models without the `execute` tool.
+   */
+  codemode?: boolean
+}
+
 export function toV2Result(result: V1ToolResult): V2ToolResult {
   if (typeof result === "string") return { content: result }
   const content = result.title ? `${result.title}\n\n${result.output}` : result.output
@@ -39,15 +62,25 @@ function argsToJsonSchema(name: string, shape: Parameters<typeof z.object>[0]): 
 export function buildV2Tool(
   name: string,
   def: ToolDefinition,
-  directory: string
+  directory: string,
+  registration?: V2RegistrationOptions
 ): V2ToolInfo {
   const schema = z.object(def.args)
   const input = argsToJsonSchema(name, def.args)
+
+  // `permission` keeps the bare name so existing deny rules (specialist
+  // visibility), agent prompts, and user overrides keep matching the
+  // unnamespaced id even though the effective tool id gains the prefix.
+  const options: V2ToolInfo["options"] =
+    registration?.codemode === false
+      ? undefined
+      : { namespace: MESA_NAMESPACE, codemode: true, permission: name }
 
   return {
     name,
     description: def.description,
     input,
+    options,
     async execute(rawInput, v2Context: V2ToolContext): Promise<V2ToolResult> {
       let args: Record<string, unknown>
       try {

@@ -20,6 +20,7 @@ function makeHookRegistry() {
 function makeCtx() {
   const hookRegistry = makeHookRegistry()
   const registeredTools: string[] = []
+  const registeredNamespaces: Array<{ name: string; description: string }> = []
 
   const sessions = new Map<string, { agent: string; history: unknown[] }>()
 
@@ -30,6 +31,9 @@ function makeCtx() {
         cb({
           add: (t: { name: string }) => {
             registeredTools.push(t.name)
+          },
+          namespace: (ns: { name: string; description: string }) => {
+            registeredNamespaces.push(ns)
           },
         })
         return { dispose: async () => {} }
@@ -58,7 +62,7 @@ function makeCtx() {
     },
   }
 
-  return { ctx, registeredTools, hookRegistry, sessions }
+  return { ctx, registeredTools, registeredNamespaces, hookRegistry, sessions }
 }
 
 describe("dual-host entrypoint", () => {
@@ -76,12 +80,15 @@ describe("dual-host entrypoint", () => {
   })
 
   test("V2 setup: registers all tools, system blocks, and a cleanup function", async () => {
-    const { ctx, registeredTools, hookRegistry } = makeCtx()
+    const { ctx, registeredTools, registeredNamespaces, hookRegistry } = makeCtx()
 
     const cleanup = await setup(ctx as never)
     expect(typeof cleanup).toBe("function")
 
     expect(registeredTools.sort()).toEqual(Object.keys(mesaTools).sort())
+    expect(registeredNamespaces).toEqual([
+      { name: "mesa", description: expect.stringContaining("Mesa") },
+    ])
 
     const contextEvent = { system: [] as { type: string; text: string }[], sessionID: "ses_x", agent: "build" }
     await hookRegistry.dispatch("context", contextEvent)

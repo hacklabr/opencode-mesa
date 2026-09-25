@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-09-25
+
+### Added
+- **Mesa tools join the Code Mode catalog on OpenCode V2** — the 24 tools now register under the `mesa` namespace with `codemode: true`, collapsing the `execute` tool description from ~24 inline signatures to `mesa (24 tools, N shown)` with the rest discoverable via Code Mode `search` (same behavior as MCP servers like chrome). Saves several thousand tokens per session on hosts with Code Mode active.
+- **Escape hatch `codemode` plugin option** — register with `{ "options": { "codemode": false } }` to restore direct tool exposure on hosts where Code Mode is inactive (catalog-only tools would be invisible without the `execute` tool).
+
+### Changed
+- **V2 effective tool ids gain the `mesa_` prefix** (e.g. `mesa_create_briefing`), but each tool sets `permission` to its bare name — specialist deny rules, agent prompts, and user permission overrides keep matching the unnamespaced id. V1 is unchanged.
+
 ## [4.1.0] - 2026-09-24
 
 ### Added

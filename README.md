@@ -2,7 +2,7 @@
 
 > Structured AI specialist discussions for OpenCode — produce high-quality specifications through multi-agent analysis, debate, and consensus.
 
-![Version](https://img.shields.io/badge/version-4.1.0-blue)
+![Version](https://img.shields.io/badge/version-4.2.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e0)
 
@@ -137,6 +137,8 @@ bun install && bun run build && bun run setup:agents
 ```js
 export { default } from "file:///home/YOURUSER/.local/share/opencode-mesa/dist/index.js"
 ```
+
+On OpenCode V2, Mesa tools live in the Code Mode catalog under the `mesa` namespace (one catalog line instead of 24 inline tool descriptions, with `search` for discovery). If your environment runs without Code Mode, register the plugin with `{ "options": { "codemode": false } }` to restore direct tool exposure.
 
 **OpenCode V1** — add to `~/.config/opencode/opencode.json`:
 

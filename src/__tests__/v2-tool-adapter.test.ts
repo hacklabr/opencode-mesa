@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest"
 import { tool } from "@opencode-ai/plugin/tool"
 import type { ToolContext as V2ToolContext } from "@opencode/plugin/promise/tool"
 import { successResponse, errorResponse } from "../utils/responses.js"
-import { buildV2Tool, toV2Result } from "../v2/tool-adapter.js"
+import { buildV2Tool, MESA_NAMESPACE, toV2Result } from "../v2/tool-adapter.js"
 import { mesaTools } from "../tools/registry.js"
 
 function makeV2Context(): V2ToolContext {
@@ -76,6 +76,22 @@ describe("buildV2Tool", () => {
     const result = await v2Tool.execute({ wrong: true }, makeV2Context())
     expect(result.content).toContain("Error: invalid arguments for adapter_probe")
   })
+
+  test("registers into the Code Mode catalog under the mesa namespace", () => {
+    expect(v2Tool.options).toEqual({
+      namespace: MESA_NAMESPACE,
+      codemode: true,
+      permission: "adapter_probe",
+    })
+  })
+
+  test("escape hatch: codemode false registers a plain direct tool", () => {
+    const direct = buildV2Tool("adapter_probe", def, "/tmp/mesa-adapter-dir", {
+      codemode: false,
+    })
+    expect(direct.options).toBeUndefined()
+    expect(direct.name).toBe("adapter_probe")
+  })
 })
 
 describe("registry × V2 adapter (all 24 tools)", () => {
@@ -88,6 +104,15 @@ describe("registry × V2 adapter (all 24 tools)", () => {
       expect(converted.description.length).toBeGreaterThan(0)
       const input = converted.input as { type?: string }
       expect(input.type).toBe("object")
+    }
+  })
+
+  test("every registry tool joins the mesa Code Mode namespace with bare permission", () => {
+    for (const [name, def] of Object.entries(mesaTools)) {
+      const converted = buildV2Tool(name, def, "/tmp/mesa-registry")
+      expect(converted.options?.namespace).toBe(MESA_NAMESPACE)
+      expect(converted.options?.codemode).toBe(true)
+      expect(converted.options?.permission).toBe(name)
     }
   })
 

@@ -1,6 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import { mesaTools } from "../tools/registry.js"
-import { buildV2Tool } from "./tool-adapter.js"
+import { buildV2Tool, MESA_NAMESPACE_INFO } from "./tool-adapter.js"
 import { applySpecialistToolPermissionsV2, SPECIALIST_AGENT } from "../workflow/tool-visibility.js"
 import {
   checkSpecialistDelegation,
@@ -30,9 +30,15 @@ export async function setup(ctx: Plugin.Context): Promise<Plugin.Cleanup> {
 
   const directory = ctx.location.directory
 
+  // `codemode: false` in plugin options reverts to direct tool exposure —
+  // for hosts where Code Mode is inactive (catalog-only tools would be
+  // invisible to models without the `execute` tool).
+  const codemode = ctx.options?.codemode !== false
+
   await ctx.tool.transform((editor) => {
+    if (codemode) editor.namespace(MESA_NAMESPACE_INFO)
     for (const [name, def] of Object.entries(mesaTools)) {
-      editor.add(buildV2Tool(name, def, directory))
+      editor.add(buildV2Tool(name, def, directory, { codemode }))
     }
   })
 
