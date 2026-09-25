@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-09-24
+
+### Added
+- **OpenCode V2 support (dual-host plugin)** — OpenCode V2 replaced the V1 plugin API outright; V1 plugin implementations do not run on it. Mesa now default-exports a dual entrypoint: V2 reads `id` + `setup()`, V1 (≥ 1.18.29) calls `server()`. Verified end-to-end on OpenCode 2.0.13: plugin load, all 24 tools, state persistence, agents, and the specialist delegation loop.
+- **V2 tool adapter** — one zod-based tool registry feeds both hosts. The V2 registration converts each tool to JSON Schema input (`z.toJSONSchema` from the same zod namespace the args were built with), re-validates arguments at execute time, reinjects the plugin location directory into the tool context, and maps `{title, output, metadata}` results to V2 `Tool.Result`.
+- **`ask_peer` on V2** — the V2 API has no bulk session-status endpoint and no synchronous prompt-with-reply. Peer consultations now run through a host-agnostic transport: V2 tracks busy sessions from the public event stream (`session.execution.started` / `session.idle`) and collects the peer's reply via `prompt → wait → context` with a defensive timeout.
+- **Specialist tool visibility on V2** — the V1 `config` hook became an `ctx.agent.transform` appending `Permission.Rule` deny entries (list form) to `mesa/specialist`.
+- **Version-aware installer** — `install.sh` detects the OpenCode major version: V2 installs get a discovery stub in `~/.config/opencode/plugins/mesa.js` (the `plugins` config key does not load local `file://` entries on V2) and legacy config entries are cleaned; V1 installs keep the `plugin` config key. `uninstall.sh` removes the V2 entry.
+- `mesa_status` metadata now includes `phase`.
+
+### Changed
+- **Delegation prompts are runtime-agnostic** — `manager.md`, the specialist global instructions, and `open_round` output name both delegation tools (`task` on V1, `subagent` on V2) and both resume keys (`task_id` / `sessionID`). The inline `<specialist-persona>` block is the primary path everywhere; the `mesa-{personaId}` slug remains a V1-only convenience.
+- **Generated `mesa/specialist` frontmatter carries both permission formats** — the V1 `permission` map and the V2 `permissions` ruleset (`bash`→`shell`, `task`→`subagent`).
+
+### Fixed
+- **Specialist persona guard on V2** — OpenCode V2 freezes the `subagent` tool input against hook mutation and does not propagate prompt-hook rewrites for subagent child sessions (both verified empirically). The V2 guard therefore *blocks* invalid delegations with an instructive error via `tool.execute.before`; the Manager receives it directly and re-sends the delegation with the inline persona block (one-hop self-correction, verified live).
+- Dual-runtime smoke was failing since v4.0.0 (`mesa_status` stopped reporting the phase the script asserts on) — fixed by the metadata addition above.
+
 ## [4.0.1] - 2026-08-05
 
 ### Fixed

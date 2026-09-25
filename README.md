@@ -2,7 +2,7 @@
 
 > Structured AI specialist discussions for OpenCode — produce high-quality specifications through multi-agent analysis, debate, and consensus.
 
-![Version](https://img.shields.io/badge/version-4.0.1-blue)
+![Version](https://img.shields.io/badge/version-4.1.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e0)
 
@@ -104,6 +104,11 @@ That's it. The Briefing Writer will guide you through discovery, and the workflo
 
 ## Installation
 
+### Requirements
+
+- **OpenCode V2** (any recent version) or **OpenCode V1 ≥ 1.18.29** — the plugin ships a dual-host entrypoint (`setup()` for V2, `server()` for V1). On V1, the object entrypoint requires 1.18.29 or newer; older 1.x releases must pin Mesa v4.0.x.
+- Node ≥ 22.5.0 (the SQLite driver uses `node:sqlite`) or Bun ≥ 1.3.0.
+
 ### Quick Install
 
 ```bash
@@ -115,7 +120,9 @@ This single command:
 - Clones the repository to `~/.local/share/opencode-mesa`
 - Installs dependencies and builds the plugin
 - Generates the Mesa agents (`briefing-writer`, `manager`, and the generic `mesa/specialist` subagent)
-- Prints the plugin path for your `opencode.json`
+- Configures the plugin for your OpenCode version:
+  - **V2**: writes a discovery stub to `~/.config/opencode/plugins/mesa.js`
+  - **V1**: adds the plugin path to `~/.config/opencode/opencode.json` (`plugin` key)
 
 ### Manual Install
 
@@ -125,7 +132,13 @@ cd ~/.local/share/opencode-mesa
 bun install && bun run build && bun run setup:agents
 ```
 
-Then add to your project's `opencode.json`:
+**OpenCode V2** — create `~/.config/opencode/plugins/mesa.js` (the `plugins` config key does not load local `file://` entries on V2):
+
+```js
+export { default } from "file:///home/YOURUSER/.local/share/opencode-mesa/dist/index.js"
+```
+
+**OpenCode V1** — add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
