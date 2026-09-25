@@ -71,6 +71,15 @@ if [ -f "$CONFIG_FILE" ] && grep -q "opencode-mesa" "$CONFIG_FILE" 2>/dev/null; 
   TO_REMOVE+=("plugin entry in $CONFIG_FILE")
 fi
 
+# OpenCode V2 discovery stub (and any legacy directory variant)
+V2_STUB="$CONFIG_DIR/plugins/mesa.js"
+V2_STUB_DIR="$CONFIG_DIR/plugins/mesa"
+STUB_FOUND=false
+if [ -f "$V2_STUB" ] || [ -L "$V2_STUB" ] || [ -d "$V2_STUB_DIR" ]; then
+  STUB_FOUND=true
+  TO_REMOVE+=("V2 discovery entry in $CONFIG_DIR/plugins/")
+fi
+
 if [ -d "$CLONE_DIR" ] && ! is_local_repo; then
   CLONE_PATH="$CLONE_DIR"
   TO_REMOVE+=("$CLONE_PATH (clone)")
@@ -135,6 +144,12 @@ if $PLUGIN_ENTRY; then
     info "Removed plugin entry from $CONFIG_FILE (fallback sed)"
     warn "Config may need manual cleanup — verify $CONFIG_FILE is valid JSON"
   fi
+fi
+
+if $STUB_FOUND; then
+  rm -f "$V2_STUB"
+  rm -rf "$V2_STUB_DIR"
+  info "Removed V2 discovery entry from $CONFIG_DIR/plugins/"
 fi
 
 if [ -n "$CLONE_PATH" ]; then

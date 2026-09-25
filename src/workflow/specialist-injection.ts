@@ -56,6 +56,52 @@ export function extractInlinePersonaId(prompt: string): string | null {
 }
 
 /**
+ * Shared delegation validator. Returns an instructive error MESSAGE when
+ * the delegation prompt is invalid (no persona, or unknown persona id), or
+ * null when it is valid:
+ *
+ * - V1 (task execute.before): the message is wrapped into an error notice
+ *   and PREPENDED to the prompt so the specialist reports it upstream.
+ * - V2 (subagent execute.before): the input is frozen against mutation, so
+ *   the message is THROWN — the Manager receives it directly and re-sends
+ *   the delegation with the inline persona block.
+ */
+export async function checkSpecialistDelegation(
+  prompt: string,
+  lookup: PersonaLookup = getPersonaById
+): Promise<string | null> {
+  const inlinePersonaId = extractInlinePersonaId(prompt)
+  if (!inlinePersonaId) {
+    return (
+      `Mesa delegation guard: the subagent prompt has no <specialist-persona id="..."> block. ` +
+      `Read the persona with get_specialist and re-send the delegation with the full persona ` +
+      `wrapped in a <specialist-persona> block (see Delegation Mechanics).`
+    )
+  }
+  const persona = await lookup(inlinePersonaId)
+  if (!persona) {
+    return (
+      `Mesa delegation guard: persona "${inlinePersonaId}" (inline <specialist-persona> block) ` +
+      `not found in the Mesa catalog. Use list_specialists to find a valid persona ID and retry.`
+    )
+  }
+  return null
+}
+
+/**
+ * V1 helper: wraps `checkSpecialistDelegation` into an error notice
+ * prepended to the original prompt (the specialist reports it upstream).
+ * Returns null to pass through untouched.
+ */
+export async function validateInlinePersona(
+  prompt: string,
+  lookup: PersonaLookup = getPersonaById
+): Promise<string | null> {
+  const problem = await checkSpecialistDelegation(prompt, lookup)
+  return problem === null ? null : errorNotice(problem, prompt)
+}
+
+/**
  * Builds the delegation prompt for the generic `mesa/specialist` subagent
  * with the persona system prompt injected. Returns null when the call should
  * pass through untouched.
@@ -87,16 +133,8 @@ export async function buildSpecialistPrompt(
   // Path 2: inline persona block (primary). Validate the id against the
   // catalog as a sanity check, but never re-inject — the block already
   // carries the full persona content.
-  const inlinePersonaId = extractInlinePersonaId(originalPrompt)
-  if (inlinePersonaId) {
-    const persona = await lookup(inlinePersonaId)
-    if (!persona) {
-      return errorNotice(
-        `Persona "${inlinePersonaId}" (inline <specialist-persona> block) not found in the Mesa catalog. Use list_specialists to find a valid persona ID and retry.`,
-        originalPrompt
-      )
-    }
-    return null
+  if (extractInlinePersonaId(originalPrompt)) {
+    return validateInlinePersona(originalPrompt, lookup)
   }
 
   // Path 3: resume-id slug (V1 runtimes that accept arbitrary task ids).

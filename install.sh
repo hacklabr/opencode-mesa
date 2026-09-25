@@ -83,40 +83,57 @@ PLUGIN_PATH="file://$INSTALL_DIR/dist/index.js"
 CONFIG_DIR="$HOME/.config/opencode"
 CONFIG_FILE="$CONFIG_DIR/opencode.json"
 
-# Plugin config key: "plugins" on OpenCode V2, "plugin" on V1 (V2 also
-# auto-normalizes the legacy key, but writing the native one is cleaner).
-CONFIG_KEY="plugin"
+# Deployment strategy:
+# - OpenCode V2 ignores local file:// entries in the `plugins` config key,
+#   so V2 uses a discovery stub in ~/.config/opencode/plugins/ (same
+#   mechanism as other local plugins).
+# - OpenCode V1 uses the legacy `plugin` config key.
+# - Unknown version: deploy both (each host ignores the other's mechanism).
 OC_VERSION="$(opencode --version 2>/dev/null | head -1 || true)"
 OC_MAJOR="$(printf '%s' "$OC_VERSION" | grep -oE '[0-9]+' | head -1 || true)"
+OC_V2=false
 if [ -n "$OC_MAJOR" ] && [ "$OC_MAJOR" -ge 2 ]; then
-  CONFIG_KEY="plugins"
-  info "Detected OpenCode V2 (${OC_VERSION}) — using \"plugins\" config key"
-elif [ -n "$OC_MAJOR" ]; then
-  info "Detected OpenCode V1 (${OC_VERSION}) — using \"plugin\" config key"
-else
-  info "Could not detect OpenCode version — defaulting to legacy \"plugin\" key (auto-normalized by V2)"
+  OC_V2=true
 fi
 
 info ""
 info "Configuring plugin globally..."
 mkdir -p "$CONFIG_DIR"
 
-if [ -f "$CONFIG_FILE" ]; then
-  if grep -q "opencode-mesa" "$CONFIG_FILE" 2>/dev/null; then
-    info "Plugin already configured in $CONFIG_FILE — updating path"
-    node "$INSTALL_DIR/src/setup/add-plugin.cjs" "$CONFIG_FILE" "$PLUGIN_PATH" "$CONFIG_KEY"
-  else
-    node "$INSTALL_DIR/src/setup/add-plugin.cjs" "$CONFIG_FILE" "$PLUGIN_PATH" "$CONFIG_KEY"
-    info "Plugin added to $CONFIG_FILE"
+# V2 discovery stub (always written — inert on V1)
+PLUGINS_DIR="$CONFIG_DIR/plugins"
+STUB_FILE="$PLUGINS_DIR/mesa.js"
+mkdir -p "$PLUGINS_DIR"
+cat > "$STUB_FILE" <<EOstub
+// Managed by the opencode-mesa installer — OpenCode V2 discovery entry.
+export { default } from "$PLUGIN_PATH"
+EOstub
+info "V2 discovery stub: $STUB_FILE"
+
+if $OC_V2; then
+  info "Detected OpenCode V2 (${OC_VERSION:-unknown})"
+  # Remove legacy config-key entries so V1 hosts cannot double-load.
+  if [ -f "$CONFIG_FILE" ] && grep -q "opencode-mesa" "$CONFIG_FILE" 2>/dev/null; then
+    node "$INSTALL_DIR/src/setup/remove-plugin.cjs" "$CONFIG_FILE" || true
   fi
 else
-  cat > "$CONFIG_FILE" <<EOCFG
+  if [ -n "$OC_MAJOR" ]; then
+    info "Detected OpenCode V1 (${OC_VERSION})"
+  else
+    info "OpenCode version not detected — also writing the legacy V1 config key"
+  fi
+  if [ -f "$CONFIG_FILE" ]; then
+    node "$INSTALL_DIR/src/setup/add-plugin.cjs" "$CONFIG_FILE" "$PLUGIN_PATH" plugin
+    info "Plugin added to $CONFIG_FILE (plugin key)"
+  else
+    cat > "$CONFIG_FILE" <<EOCFG
 {
   "\$schema": "https://opencode.ai/config.json",
-  "$CONFIG_KEY": ["$PLUGIN_PATH"]
+  "plugin": ["$PLUGIN_PATH"]
 }
 EOCFG
-  info "Created $CONFIG_FILE with plugin configured"
+    info "Created $CONFIG_FILE with plugin configured"
+  fi
 fi
 
 info ""

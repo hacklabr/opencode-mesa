@@ -46,6 +46,7 @@ export const mesaStatusTool = tool({
       return successResponse("Mesa Status", summary, {
         version: PLUGIN_VERSION,
         status: state.status,
+        phase: state.currentPhase,
         briefingStatus: state.briefing.status,
         teamSize: state.team.length,
         analysesCount: state.discussion.analyses.length,
