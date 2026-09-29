@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.1] - 2026-09-28
+
+### Added
+- **Automated tests for the version-aware installer decision matrix** (`src/__tests__/installer.test.ts`, 16 tests) — covers OC major >= 2 → V2 stub strategy, OC 1.x → V1 legacy key, undetectable version → deploy both, and the Node < 22.5 error gate. Also exercises `add-plugin.cjs` / `remove-plugin.cjs` behavior against temp configs (creation, append, stale-entry replacement, legacy-key removal on V2, no-op/exit-0 paths). Closes the validation gap identified in the v4.2.0 test report.
+
 ## [4.2.0] - 2026-09-25
 
 ### Added
